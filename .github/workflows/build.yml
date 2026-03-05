@@ -68,7 +68,15 @@ jobs:
           pip install pyinstaller
           pip install -r requirements.txt || true
 
-      - name: Prepare build directory
+      - name: Prepare build directory (Windows)
+        if: ${{ matrix.os == 'windows-latest' }}
+        shell: powershell
+        run: |
+          Remove-Item -LiteralPath dist -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+
+      - name: Prepare build directory (non-Windows)
+        if: ${{ matrix.os != 'windows-latest' }}
         run: |
           rm -rf dist || true
           mkdir -p dist
@@ -185,7 +193,6 @@ jobs:
     name: Create Release and attach artifacts
     runs-on: ubuntu-latest
     needs: build
-    if: ${{ always() }}
     steps:
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
