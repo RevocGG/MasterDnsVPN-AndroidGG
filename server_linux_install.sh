@@ -84,7 +84,46 @@ if check_port53; then
 fi
 log_success "Port 53 is available."
 
-# 3. Detection & Download
+# 3. Firewall Configuration
+log_header "Configuring Firewall (Port 53 UDP)"
+
+# Check for UFW (Common on Ubuntu/Debian)
+if command -v ufw >/dev/null 2>&1 && ufw status | grep -qw active; then
+    log_info "UFW detected and active. Opening port 53/udp..."
+    ufw allow 53/udp >/dev/null 2>&1
+    log_success "Port 53 opened via UFW."
+
+# Check for Firewalld (Common on CentOS/RHEL/Alma/Rocky)
+elif command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld; then
+    log_info "Firewalld detected and active. Opening port 53/udp..."
+    firewall-cmd --permanent --add-port=53/udp >/dev/null 2>&1
+    firewall-cmd --reload >/dev/null 2>&1
+    log_success "Port 53 opened via Firewalld."
+
+# Check for generic iptables as a fallback
+elif command -v iptables >/dev/null 2>&1; then
+    log_info "Checking iptables rules..."
+    # Check if the rule already exists to avoid duplicates
+    if ! iptables -C INPUT -p udp --dport 53 -j ACCEPT 2>/dev/null; then
+        log_info "Adding iptables rule for port 53/udp..."
+        iptables -I INPUT -p udp --dport 53 -j ACCEPT
+        
+        # Try to save the rules so they persist across reboots
+        if command -v netfilter-persistent >/dev/null 2>&1; then
+            netfilter-persistent save >/dev/null 2>&1
+        elif command -v iptables-save >/dev/null 2>&1 && [ -d /etc/iptables ]; then
+            iptables-save > /etc/iptables/rules.v4
+        fi
+        log_success "Port 53 opened via iptables."
+    else
+        log_success "iptables rule for Port 53 already exists."
+    fi
+else
+    log_warn "No recognized firewall (UFW/Firewalld/iptables) found or active. Skipping..."
+fi
+
+
+# 4. Detection & Download
 log_header "Fetching Latest Release"
 ARCH=$(uname -m)
 [ -f /etc/os-release ] && . /etc/os-release || log_error "OS detection failed."
@@ -120,7 +159,7 @@ EXECUTABLE=$(ls -t ${PREFIX}_v* 2>/dev/null | head -n 1)
 [ -z "$EXECUTABLE" ] && log_error "Binary not found in the package."
 chmod +x "$EXECUTABLE"
 
-# 4. Configuration
+# 5. Configuration
 log_header "Configuration"
 
 if [ -f "server_config.toml.backup" ]; then
@@ -137,7 +176,7 @@ if [ -f "server_config.toml" ] && grep -q '"v.domain.com"' server_config.toml; t
     fi
 fi
 
-# 5. Initialization & Key
+# 6. Initialization & Key
 log_header "Security Initialization"
 log_info "Starting server to generate encryption key..."
 ./"$EXECUTABLE" > init_logs.tmp 2>&1 &
@@ -162,7 +201,7 @@ echo -e "${GREEN}${BOLD}------------------------------------------------------"
 echo -e "  YOUR ENCRYPTION KEY: ${NC}${CYAN}$(cat encrypt_key.txt 2>/dev/null)${NC}"
 echo -e "${GREEN}${BOLD}------------------------------------------------------${NC}"
 
-# 6. Service Installation
+# 7. Service Installation
 log_header "Installing System Service"
 SVC="/etc/systemd/system/masterdnsvpn.service"
 cat <<EOF > "$SVC"
@@ -187,7 +226,7 @@ systemctl enable masterdnsvpn
 systemctl start masterdnsvpn
 log_success "MasterDnsVPN service is now running."
 
-# 7. Final Instructions
+# 8. Final Instructions
 echo -e "\n${CYAN}======================================================${NC}"
 echo -e " ${GREEN}${BOLD}       INSTALLATION COMPLETED SUCCESSFULLY!${NC}"
 echo -e "${CYAN}======================================================${NC}"
