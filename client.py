@@ -1615,13 +1615,18 @@ class MasterDnsVPNClient:
                         try:
                             writer.write(reply)
                             await writer.drain()
+
+                            stream_obj = self.active_streams[stream_id].get("stream")
+                            if (
+                                stream_obj
+                                and hasattr(stream_obj, "socks_connected")
+                                and not stream_obj.socks_connected.is_set()
+                            ):
+                                stream_obj.socks_connected.set()
+
                         except Exception as e:
                             self.logger.debug(
                                 f"Failed to write SOCKS5 reply to local client: {e}"
-                            )
-                            await self.close_stream(
-                                stream_id,
-                                reason="Local client disconnected during handshake",
                             )
                     else:
                         raise ConnectionError(
@@ -1891,6 +1896,9 @@ class MasterDnsVPNClient:
                         self.track_ack.discard(popped[4])
                         self.count_ack -= 1
                         packed_buffer.extend(_pack(popped[2], popped[3], popped[4]))
+                        blocks += 1
+                    else:
+                        break
 
                 if blocks < max_blocks and active_sids:
                     start_idx = self.round_robin_index
@@ -2055,20 +2063,8 @@ class MasterDnsVPNClient:
                 self._send_ping_packet()
         elif ptype == Packet_Type.SOCKS5_SYN_ACK and stream_id_exists:
             stream_data = self.active_streams[stream_id]
-            stream_obj = stream_data.get("stream")
-
             if "handshake_event" in stream_data:
                 stream_data["handshake_event"].set()
-
-            if (
-                stream_obj
-                and hasattr(stream_obj, "socks_connected")
-                and not stream_obj.socks_connected.is_set()
-            ):
-                stream_obj.socks_connected.set()
-                self.logger.debug(
-                    f"<green>Socks5 Stream <cyan>{stream_id}</cyan> connection established.</green>"
-                )
             self._send_ping_packet()
         elif (
             ptype in (Packet_Type.STREAM_DATA, Packet_Type.STREAM_RESEND)
@@ -2116,20 +2112,9 @@ class MasterDnsVPNClient:
                     and b_stream_id in self.active_streams
                 ):
                     stream_data = self.active_streams[b_stream_id]
-                    stream_obj = stream_data.get("stream")
-
                     if "handshake_event" in stream_data:
                         stream_data["handshake_event"].set()
-
-                    if (
-                        stream_obj
-                        and hasattr(stream_obj, "socks_connected")
-                        and not stream_obj.socks_connected.is_set()
-                    ):
-                        stream_obj.socks_connected.set()
-                        self.logger.debug(
-                            f"<green>Socks5 Stream <cyan>{b_stream_id}</cyan> connection established.</green>"
-                        )
+                    self._send_ping_packet()
             self._send_ping_packet()
         elif ptype == Packet_Type.ERROR_DROP:
             if not self.session_restart_event.is_set():

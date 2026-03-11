@@ -487,7 +487,7 @@ class MasterDnsVPNServer:
                     await arq.receive_ack(sn)
 
         elif packet_type == Packet_Type.STREAM_SYN:
-            await self._handle_stream_syn(session_id, stream_id)
+            self.loop.create_task(self._handle_stream_syn(session_id, stream_id))
         elif packet_type == Packet_Type.SOCKS5_SYN:
             if stream_id in session.get("closed_streams", {}):
                 await self._server_enqueue_tx(
