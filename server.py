@@ -1680,88 +1680,6 @@ class MasterDnsVPNServer(PacketQueueMixin):
             payload or b"",
         )
 
-    def _effective_priority_for_packet(self, packet_type: int, priority: int) -> int:
-        ptype = int(packet_type)
-        eff = int(priority)
-        if ptype in (
-            Packet_Type.STREAM_DATA_ACK,
-            Packet_Type.STREAM_RST,
-            Packet_Type.STREAM_RST_ACK,
-            Packet_Type.STREAM_FIN_ACK,
-            Packet_Type.STREAM_SYN_ACK,
-            Packet_Type.SOCKS5_SYN_ACK,
-        ):
-            return 0
-        if ptype == Packet_Type.STREAM_FIN:
-            return 4
-        if ptype == Packet_Type.STREAM_RESEND:
-            return 1
-        return eff
-
-    def _track_session_packet_once(self, session: dict, ptype: int, sn: int) -> bool:
-        if ptype == Packet_Type.STREAM_RESEND:
-            if sn in session.get("track_data", set()) or sn in session["track_resend"]:
-                return False
-            session["track_resend"].add(sn)
-            return True
-        if ptype in (
-            Packet_Type.STREAM_FIN,
-            Packet_Type.STREAM_SYN,
-            Packet_Type.STREAM_SYN_ACK,
-            Packet_Type.SOCKS5_SYN_ACK,
-        ):
-            if ptype in session["track_types"]:
-                return False
-            session["track_types"].add(ptype)
-            return True
-        if ptype == Packet_Type.STREAM_DATA_ACK:
-            if sn in session["track_ack"]:
-                return False
-            session["track_ack"].add(sn)
-            return True
-        if ptype == Packet_Type.STREAM_DATA:
-            if sn in session.setdefault("track_data", set()):
-                return False
-            session["track_data"].add(sn)
-            return True
-        return True
-
-    def _track_stream_packet_once(self, stream_data: dict, ptype: int, sn: int) -> bool:
-        if ptype == Packet_Type.STREAM_RESEND:
-            if sn in stream_data["track_data"] or sn in stream_data["track_resend"]:
-                return False
-            stream_data["track_resend"].add(sn)
-            return True
-        if ptype == Packet_Type.STREAM_FIN:
-            if ptype in stream_data["track_fin"]:
-                return False
-            stream_data["track_fin"].add(ptype)
-            return True
-        if ptype in (Packet_Type.STREAM_SYN_ACK, Packet_Type.SOCKS5_SYN_ACK):
-            if ptype in stream_data["track_syn_ack"]:
-                return False
-            stream_data["track_syn_ack"].add(ptype)
-            return True
-        if ptype == Packet_Type.STREAM_DATA_ACK:
-            if sn in stream_data["track_ack"]:
-                return False
-            stream_data["track_ack"].add(sn)
-            return True
-        if ptype == Packet_Type.STREAM_DATA:
-            if sn in stream_data["track_data"]:
-                return False
-            stream_data["track_data"].add(sn)
-            return True
-        return True
-
-    def _push_session_queue_item(self, session: dict, queue_item: tuple) -> None:
-        heapq.heappush(session["main_queue"], queue_item)
-        self._inc_priority_counter(session, queue_item[0])
-
-    def _push_stream_queue_item(self, stream_data: dict, queue_item: tuple) -> None:
-        heapq.heappush(stream_data["tx_queue"], queue_item)
-        self._inc_priority_counter(stream_data, queue_item[0])
-
     async def _enqueue_packet(
         self, session_id, priority, stream_id, sn, packet_type, data
     ):
@@ -1777,9 +1695,9 @@ class MasterDnsVPNServer(PacketQueueMixin):
         queue_item = (eff_priority, session["enqueue_seq"], ptype, stream_id, sn, data)
 
         if stream_id == 0:
-            if not self._track_session_packet_once(session, ptype, sn):
+            if not self._track_main_packet_once(session, ptype, sn):
                 return
-            self._push_session_queue_item(session, queue_item)
+            self._push_queue_item(session["main_queue"], session, queue_item)
             return
 
         stream_data = session.get("streams", {}).get(stream_id)
@@ -1789,12 +1707,14 @@ class MasterDnsVPNServer(PacketQueueMixin):
                 Packet_Type.STREAM_RST_ACK,
                 Packet_Type.STREAM_FIN_ACK,
             ):
-                self._push_session_queue_item(session, queue_item)
+                self._push_queue_item(session["main_queue"], session, queue_item)
             return
 
-        if not self._track_stream_packet_once(stream_data, ptype, sn):
+        if not self._track_stream_packet_once(
+            stream_data, ptype, sn, data_packet_types=(Packet_Type.STREAM_DATA,)
+        ):
             return
-        self._push_stream_queue_item(stream_data, queue_item)
+        self._push_queue_item(stream_data["tx_queue"], stream_data, queue_item)
 
     async def _handle_stream_syn(self, session_id, stream_id, syn_sn=0):
         session = self.sessions.get(session_id)

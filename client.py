@@ -1841,90 +1841,6 @@ class MasterDnsVPNClient(PacketQueueMixin):
             priority, stream_id, sn, int(packet_type), payload or b""
         )
 
-    def _effective_priority_for_packet(self, packet_type: int, priority: int) -> int:
-        ptype = int(packet_type)
-        eff = int(priority)
-        if ptype in (
-            Packet_Type.STREAM_DATA_ACK,
-            Packet_Type.STREAM_RST,
-            Packet_Type.STREAM_RST_ACK,
-            Packet_Type.STREAM_FIN_ACK,
-            Packet_Type.STREAM_SYN_ACK,
-            Packet_Type.SOCKS5_SYN_ACK,
-        ):
-            return 0
-        if ptype == Packet_Type.STREAM_FIN:
-            return 4
-        if ptype == Packet_Type.STREAM_RESEND:
-            return 1
-        return eff
-
-    def _track_main_packet_once(self, ptype: int, sn: int) -> bool:
-        if ptype == Packet_Type.STREAM_RESEND:
-            if sn in self.track_data or sn in self.track_resend:
-                return False
-            self.track_resend.add(sn)
-            return True
-        if ptype in (
-            Packet_Type.STREAM_FIN,
-            Packet_Type.STREAM_SYN,
-            Packet_Type.STREAM_SYN_ACK,
-            Packet_Type.SOCKS5_SYN_ACK,
-        ):
-            if ptype in self.track_types:
-                return False
-            self.track_types.add(ptype)
-            return True
-        if ptype == Packet_Type.STREAM_DATA_ACK:
-            if sn in self.track_ack:
-                return False
-            self.track_ack.add(sn)
-            return True
-        if ptype == Packet_Type.STREAM_DATA:
-            if sn in self.track_data:
-                return False
-            self.track_data.add(sn)
-            return True
-        return True
-
-    def _track_stream_packet_once(self, stream_data: dict, ptype: int, sn: int) -> bool:
-        if ptype == Packet_Type.STREAM_RESEND:
-            if sn in stream_data["track_data"] or sn in stream_data["track_resend"]:
-                return False
-            stream_data["track_resend"].add(sn)
-            return True
-        if ptype == Packet_Type.STREAM_FIN:
-            if ptype in stream_data["track_fin"]:
-                return False
-            stream_data["track_fin"].add(ptype)
-            return True
-        if ptype in (Packet_Type.STREAM_SYN_ACK, Packet_Type.SOCKS5_SYN_ACK):
-            if ptype in stream_data["track_syn_ack"]:
-                return False
-            stream_data["track_syn_ack"].add(ptype)
-            return True
-        if ptype == Packet_Type.STREAM_DATA_ACK:
-            if sn in stream_data["track_ack"]:
-                return False
-            stream_data["track_ack"].add(sn)
-            return True
-        if ptype in (Packet_Type.STREAM_DATA, Packet_Type.SOCKS5_SYN):
-            if sn in stream_data["track_data"]:
-                return False
-            stream_data["track_data"].add(sn)
-            return True
-        return True
-
-    def _push_main_queue_item(self, queue_item: tuple) -> None:
-        heapq.heappush(self.main_queue, queue_item)
-        self._inc_priority_counter(self.__dict__, queue_item[0])
-        self.tx_event.set()
-
-    def _push_stream_queue_item(self, stream_data: dict, queue_item: tuple) -> None:
-        heapq.heappush(stream_data["tx_queue"], queue_item)
-        self._inc_priority_counter(stream_data, queue_item[0])
-        self.tx_event.set()
-
     async def _enqueue_packet(self, priority, stream_id, sn, packet_type, data):
         ptype = int(packet_type)
         effective_priority = self._effective_priority_for_packet(ptype, priority)
@@ -1940,9 +1856,11 @@ class MasterDnsVPNClient(PacketQueueMixin):
         )
 
         if stream_id == 0:
-            if not self._track_main_packet_once(ptype, sn):
+            if not self._track_main_packet_once(self.__dict__, ptype, sn):
                 return
-            self._push_main_queue_item(queue_item)
+            self._push_queue_item(
+                self.main_queue, self.__dict__, queue_item, self.tx_event
+            )
             return
 
         stream_data = self.active_streams.get(stream_id)
@@ -1952,12 +1870,21 @@ class MasterDnsVPNClient(PacketQueueMixin):
                 Packet_Type.STREAM_RST_ACK,
                 Packet_Type.STREAM_FIN_ACK,
             ):
-                self._push_main_queue_item(queue_item)
+                self._push_queue_item(
+                    self.main_queue, self.__dict__, queue_item, self.tx_event
+                )
             return
 
-        if not self._track_stream_packet_once(stream_data, ptype, sn):
+        if not self._track_stream_packet_once(
+            stream_data,
+            ptype,
+            sn,
+            data_packet_types=(Packet_Type.STREAM_DATA, Packet_Type.SOCKS5_SYN),
+        ):
             return
-        self._push_stream_queue_item(stream_data, queue_item)
+        self._push_queue_item(
+            stream_data["tx_queue"], stream_data, queue_item, self.tx_event
+        )
 
     async def _tx_worker(self):
         while not self.should_stop.is_set() and not self.session_restart_event.is_set():
