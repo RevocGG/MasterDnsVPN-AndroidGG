@@ -19,7 +19,7 @@ import time
 from collections import deque
 from typing import Any, Optional
 
-from dns_utils import ARQ, DnsPacketParser
+from dns_utils.ARQ import ARQ
 from dns_utils.compression import (
     Compression_Type,
     compress_payload,
@@ -30,6 +30,7 @@ from dns_utils.compression import (
 )
 from dns_utils.config_loader import get_config_path, load_config
 from dns_utils.DNS_ENUMS import DNS_Record_Type, Packet_Type
+from dns_utils.DnsPacketParser import DnsPacketParser
 from dns_utils.PacketQueueMixin import PacketQueueMixin
 from dns_utils.utils import async_recvfrom, async_sendto, get_encrypt_key, getLogger
 
