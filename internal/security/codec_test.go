@@ -65,3 +65,24 @@ func TestCodecXORChangesData(t *testing.T) {
 		t.Fatal("XOR encryption should change non-empty data")
 	}
 }
+
+func TestCodecEncodeDecodeLowerBase36RoundTrip(t *testing.T) {
+	codec, err := NewCodec(2, "0123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatalf("NewCodec returned error: %v", err)
+	}
+
+	plaintext := []byte("header-and-payload")
+	encoded, err := codec.EncryptAndEncodeLowerBase36(plaintext)
+	if err != nil {
+		t.Fatalf("EncryptAndEncodeLowerBase36 returned error: %v", err)
+	}
+
+	decoded, err := codec.DecodeLowerBase36AndDecrypt([]byte(encoded))
+	if err != nil {
+		t.Fatalf("DecodeLowerBase36AndDecrypt returned error: %v", err)
+	}
+	if !bytes.Equal(decoded, plaintext) {
+		t.Fatal("encode/decode lower-base36 round-trip mismatch")
+	}
+}

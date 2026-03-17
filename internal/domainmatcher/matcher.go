@@ -73,7 +73,7 @@ func (m *Matcher) Match(parsed dnsparser.LitePacket) Decision {
 	}
 
 	q0 := parsed.Questions[0]
-	requestName := normalizeDomain(q0.Name)
+	requestName := normalizeParsedDomain(q0.Name)
 	if requestName == "" || requestName == "." {
 		return Decision{Action: ActionFormatError, Reason: "empty-qname"}
 	}
@@ -88,7 +88,6 @@ func (m *Matcher) Match(parsed dnsparser.LitePacket) Decision {
 			QuestionType: q0.Type,
 		}
 	}
-	labels = stripLabelDots(labels)
 
 	if q0.Type != enums.DNSRecordTypeTXT {
 		return Decision{
@@ -100,6 +99,7 @@ func (m *Matcher) Match(parsed dnsparser.LitePacket) Decision {
 			QuestionType: q0.Type,
 		}
 	}
+	labels = stripLabelDots(labels)
 
 	if labels == "" {
 		return Decision{
@@ -186,6 +186,10 @@ func newAllowedDomains(domains []string) []allowedDomain {
 
 func normalizeDomain(domain string) string {
 	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(domain)), ".")
+}
+
+func normalizeParsedDomain(domain string) string {
+	return strings.TrimSuffix(domain, ".")
 }
 
 func findAllowedDomain(requestName string, allowedDomains []allowedDomain) (baseDomain string, labels string, matched bool) {

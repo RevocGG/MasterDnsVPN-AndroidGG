@@ -9,8 +9,8 @@ package basecodec
 
 import "testing"
 
-func TestEncodeLowerBase32UsesOnlyLowerAlphaNumeric(t *testing.T) {
-	encoded := EncodeLowerBase32([]byte("MasterDnsVPN-123"))
+func TestEncodeLowerBase36UsesOnlyLowerAlphaNumeric(t *testing.T) {
+	encoded := EncodeLowerBase36([]byte("MasterDnsVPN-123"))
 	if encoded == "" {
 		t.Fatal("encoded string must not be empty")
 	}
@@ -20,20 +20,20 @@ func TestEncodeLowerBase32UsesOnlyLowerAlphaNumeric(t *testing.T) {
 		if ch >= 'a' && ch <= 'z' {
 			continue
 		}
-		if ch >= '2' && ch <= '7' {
+		if ch >= '0' && ch <= '9' {
 			continue
 		}
 		t.Fatalf("unexpected character at index %d: %q", i, ch)
 	}
 }
 
-func TestDecodeLowerBase32RoundTrip(t *testing.T) {
+func TestDecodeLowerBase36RoundTrip(t *testing.T) {
 	original := []byte{0x00, 0x01, 0x02, 0x10, 0x20, 0x30, 0x40, 0xFE, 0xFF}
-	encoded := EncodeLowerBase32(original)
+	encoded := EncodeLowerBase36(original)
 
-	decoded, err := DecodeLowerBase32([]byte(encoded))
+	decoded, err := DecodeLowerBase36([]byte(encoded))
 	if err != nil {
-		t.Fatalf("DecodeLowerBase32 returned error: %v", err)
+		t.Fatalf("DecodeLowerBase36 returned error: %v", err)
 	}
 	if len(decoded) != len(original) {
 		t.Fatalf("unexpected decoded length: got=%d want=%d", len(decoded), len(original))
@@ -45,17 +45,31 @@ func TestDecodeLowerBase32RoundTrip(t *testing.T) {
 	}
 }
 
-func TestDecodeLowerBase32RejectsInvalidCharacters(t *testing.T) {
+func TestDecodeLowerBase36RejectsInvalidCharacters(t *testing.T) {
 	invalidSamples := [][]byte{
 		[]byte("ABCDEF"),
-		[]byte("abc1"),
 		[]byte("abc-123"),
 		[]byte("abc="),
 	}
 
 	for _, sample := range invalidSamples {
-		if _, err := DecodeLowerBase32(sample); err == nil {
-			t.Fatalf("DecodeLowerBase32 should reject %q", sample)
+		if _, err := DecodeLowerBase36(sample); err == nil {
+			t.Fatalf("DecodeLowerBase36 should reject %q", sample)
 		}
+	}
+}
+
+func TestEncodeLowerBase36PreservesLeadingZeroBytes(t *testing.T) {
+	encoded := EncodeLowerBase36([]byte{0x00, 0x00, 0x01})
+	if encoded[:2] != "00" {
+		t.Fatalf("leading zero bytes should encode to leading zeros, got=%q", encoded)
+	}
+
+	decoded, err := DecodeLowerBase36([]byte(encoded))
+	if err != nil {
+		t.Fatalf("DecodeLowerBase36 returned error: %v", err)
+	}
+	if len(decoded) != 3 || decoded[0] != 0 || decoded[1] != 0 || decoded[2] != 1 {
+		t.Fatalf("unexpected decoded bytes: %#v", decoded)
 	}
 }

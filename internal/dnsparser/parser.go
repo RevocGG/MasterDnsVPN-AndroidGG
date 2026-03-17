@@ -169,7 +169,7 @@ func parseQuestions(data []byte, offset int, count int) ([]Question, int, error)
 		return nil, offset, nil
 	}
 
-	questions := make([]Question, 0, count)
+	questions := make([]Question, count)
 	for i := 0; i < count; i++ {
 		name, nextOffset, err := parseName(data, offset)
 		if err != nil {
@@ -181,11 +181,11 @@ func parseQuestions(data []byte, offset int, count int) ([]Question, int, error)
 			return nil, offset, ErrInvalidQuestion
 		}
 
-		questions = append(questions, Question{
+		questions[i] = Question{
 			Name:  name,
 			Type:  binary.BigEndian.Uint16(data[offset : offset+2]),
 			Class: binary.BigEndian.Uint16(data[offset+2 : offset+4]),
-		})
+		}
 		offset += 4
 	}
 
@@ -197,7 +197,7 @@ func parseResourceRecords(data []byte, offset int, count int) ([]ResourceRecord,
 		return nil, offset, nil
 	}
 
-	records := make([]ResourceRecord, 0, count)
+	records := make([]ResourceRecord, count)
 	for i := 0; i < count; i++ {
 		name, nextOffset, err := parseName(data, offset)
 		if err != nil {
@@ -220,14 +220,14 @@ func parseResourceRecords(data []byte, offset int, count int) ([]ResourceRecord,
 			return nil, offset, ErrInvalidAnswer
 		}
 
-		records = append(records, ResourceRecord{
+		records[i] = ResourceRecord{
 			Name:  name,
 			Type:  rType,
 			Class: rClass,
 			TTL:   ttl,
 			RDLen: rdLen,
 			RData: data[offset:end],
-		})
+		}
 		offset = end
 	}
 
@@ -290,7 +290,7 @@ func parseName(data []byte, offset int) (string, int, error) {
 		if hasLabels {
 			name.WriteByte('.')
 		}
-		name.Write(data[offset:end])
+		writeLowerASCIILabel(&name, data[offset:end])
 		hasLabels = true
 		offset = end
 		if !jumped {
@@ -302,4 +302,30 @@ func parseName(data []byte, offset int) (string, int, error) {
 		return ".", origNext, nil
 	}
 	return name.String(), origNext, nil
+}
+
+func writeLowerASCIILabel(dst *strings.Builder, label []byte) {
+	upperIndex := -1
+	for i := 0; i < len(label); i++ {
+		if label[i] >= 'A' && label[i] <= 'Z' {
+			upperIndex = i
+			break
+		}
+	}
+
+	if upperIndex == -1 {
+		dst.Write(label)
+		return
+	}
+
+	var lowerBuf [63]byte
+	copy(lowerBuf[:], label)
+	for i := upperIndex; i < len(label); i++ {
+		ch := lowerBuf[i]
+		if ch >= 'A' && ch <= 'Z' {
+			ch += 'a' - 'A'
+		}
+		lowerBuf[i] = ch
+	}
+	dst.Write(lowerBuf[:len(label)])
 }

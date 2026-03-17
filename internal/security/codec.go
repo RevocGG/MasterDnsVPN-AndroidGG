@@ -19,6 +19,7 @@ import (
 
 	"golang.org/x/crypto/chacha20"
 
+	"masterdnsvpn-go/internal/basecodec"
 	"masterdnsvpn-go/internal/config"
 )
 
@@ -97,6 +98,22 @@ func (c *Codec) Method() int {
 		return 0
 	}
 	return c.method
+}
+
+func (c *Codec) EncryptAndEncodeLowerBase36(data []byte) (string, error) {
+	encrypted, err := c.Encrypt(data)
+	if err != nil {
+		return "", err
+	}
+	return basecodec.EncodeLowerBase36(encrypted), nil
+}
+
+func (c *Codec) DecodeLowerBase36AndDecrypt(data []byte) ([]byte, error) {
+	decoded, err := basecodec.DecodeLowerBase36(data)
+	if err != nil {
+		return nil, err
+	}
+	return c.Decrypt(decoded)
 }
 
 func (c *Codec) noCrypto(data []byte) ([]byte, error) {
