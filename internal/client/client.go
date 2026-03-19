@@ -36,6 +36,9 @@ type Client struct {
 	connectionsByKey       map[string]int
 	localDNSCache          *dnsCache.Store
 	dnsResponses           *fragmentStore.Store[clientDNSFragmentKey]
+	localDNSCachePath      string
+	localDNSCachePersist   bool
+	localDNSCacheFlushTick time.Duration
 	localDNSFragTTL        time.Duration
 	localDNSCacheLoadOnce  sync.Once
 	localDNSCacheFlushOnce sync.Once
@@ -150,7 +153,12 @@ func New(cfg config.ClientConfig, log *logger.Logger, codec *security.Codec) *Cl
 			time.Duration(cfg.LocalDNSCacheTTLSeconds*float64(time.Second)),
 			time.Duration(cfg.LocalDNSPendingTimeoutSec*float64(time.Second)),
 		),
-		dnsResponses:       fragmentStore.New[clientDNSFragmentKey](32),
+		dnsResponses:         fragmentStore.New[clientDNSFragmentKey](32),
+		localDNSCachePath:    cfg.LocalDNSCachePath(),
+		localDNSCachePersist: cfg.LocalDNSCachePersist,
+		localDNSCacheFlushTick: time.Duration(
+			cfg.LocalDNSCacheFlushSec * float64(time.Second),
+		),
 		localDNSFragTTL:    time.Duration(cfg.LocalDNSFragmentTimeoutSec * float64(time.Second)),
 		streams:            make(map[uint16]*clientStream, 16),
 		streamTXWindow:     cfg.StreamTXWindow,
@@ -160,6 +168,9 @@ func New(cfg config.ClientConfig, log *logger.Logger, codec *security.Codec) *Cl
 		resolverHealth:     make(map[string]*resolverHealthState, len(cfg.Domains)*len(cfg.Resolvers)),
 		resolverRecheck:    make(map[string]resolverRecheckState, len(cfg.Domains)*len(cfg.Resolvers)),
 		runtimeDisabled:    make(map[string]resolverDisabledState, len(cfg.Domains)*len(cfg.Resolvers)),
+	}
+	if c.localDNSCacheFlushTick <= 0 {
+		c.localDNSCacheFlushTick = time.Minute
 	}
 	if c.localDNSFragTTL <= 0 {
 		c.localDNSFragTTL = 5 * time.Minute

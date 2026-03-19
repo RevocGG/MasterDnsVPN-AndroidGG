@@ -12,19 +12,26 @@ import (
 	"time"
 )
 
+func (c *Client) hasPersistableLocalDNSCache() bool {
+	return c != nil &&
+		c.localDNSCache != nil &&
+		c.localDNSCachePersist &&
+		c.localDNSCachePath != ""
+}
+
 func (c *Client) persistResolvedLocalDNSCacheEntry(cacheKey []byte, domain string, qType uint16, qClass uint16, rawResponse []byte, now time.Time) {
 	if c == nil || c.localDNSCache == nil {
 		return
 	}
 
 	c.localDNSCache.SetReady(cacheKey, domain, qType, qClass, rawResponse, now)
-	if c.cfg.LocalDNSCachePersist {
+	if c.hasPersistableLocalDNSCache() {
 		c.flushLocalDNSCache()
 	}
 }
 
 func (c *Client) ensureLocalDNSCacheLoaded() {
-	if c == nil {
+	if !c.hasPersistableLocalDNSCache() {
 		return
 	}
 	c.localDNSCacheLoadOnce.Do(func() {
@@ -33,7 +40,7 @@ func (c *Client) ensureLocalDNSCacheLoaded() {
 }
 
 func (c *Client) ensureLocalDNSCachePersistence(ctx context.Context) {
-	if c == nil {
+	if !c.hasPersistableLocalDNSCache() {
 		return
 	}
 	c.ensureLocalDNSCacheLoaded()
@@ -43,11 +50,11 @@ func (c *Client) ensureLocalDNSCachePersistence(ctx context.Context) {
 }
 
 func (c *Client) loadLocalDNSCache() {
-	if c == nil || !c.cfg.LocalDNSCachePersist || c.localDNSCache == nil {
+	if !c.hasPersistableLocalDNSCache() {
 		return
 	}
 
-	loaded, err := c.localDNSCache.LoadFromFile(c.cfg.LocalDNSCachePath(), c.now())
+	loaded, err := c.localDNSCache.LoadFromFile(c.localDNSCachePath, c.now())
 	if err != nil {
 		if c.log != nil {
 			c.log.Warnf("\U0001F4BE <cyan>Local DNS Cache</cyan> <magenta>|</magenta> <red>Load Failed</red> <magenta>|</magenta> <yellow>%v</yellow>", err)
@@ -60,11 +67,11 @@ func (c *Client) loadLocalDNSCache() {
 }
 
 func (c *Client) flushLocalDNSCache() {
-	if c == nil || !c.cfg.LocalDNSCachePersist || c.localDNSCache == nil {
+	if !c.hasPersistableLocalDNSCache() {
 		return
 	}
 
-	saved, err := c.localDNSCache.SaveToFile(c.cfg.LocalDNSCachePath(), c.now())
+	saved, err := c.localDNSCache.SaveToFile(c.localDNSCachePath, c.now())
 	if err != nil {
 		if c.log != nil {
 			c.log.Warnf("\U0001F4BE <cyan>Local DNS Cache</cyan> <magenta>|</magenta> <red>Flush Failed</red> <magenta>|</magenta> <yellow>%v</yellow>", err)
@@ -77,16 +84,11 @@ func (c *Client) flushLocalDNSCache() {
 }
 
 func (c *Client) runLocalDNSCacheFlushLoop(ctx context.Context) {
-	if c == nil || !c.cfg.LocalDNSCachePersist || c.localDNSCache == nil {
+	if !c.hasPersistableLocalDNSCache() {
 		return
 	}
 
-	interval := time.Duration(c.cfg.LocalDNSCacheFlushSec * float64(time.Second))
-	if interval <= 0 {
-		interval = time.Minute
-	}
-
-	ticker := time.NewTicker(interval)
+	ticker := time.NewTicker(c.localDNSCacheFlushTick)
 	defer ticker.Stop()
 	defer c.flushLocalDNSCache()
 
