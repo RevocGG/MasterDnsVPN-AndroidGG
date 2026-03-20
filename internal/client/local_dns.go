@@ -57,9 +57,11 @@ func (c *Client) RunLocalDNSListener(ctx context.Context) error {
 
 	var workerWG sync.WaitGroup
 	for range c.cfg.LocalDNSWorkers {
-		workerWG.Go(func() {
+		workerWG.Add(1)
+		go func() {
+			defer workerWG.Done()
 			c.localDNSWorker(ctx, conn, queue, &packetPool)
-		})
+		}()
 	}
 
 	go func() {
@@ -119,25 +121,27 @@ func (c *Client) localDNSWorker(ctx context.Context, conn *net.UDPConn, queue <-
 			if !ok {
 				return
 			}
-			func() {
-				defer func() {
-					if packetPool != nil && req.buffer != nil {
-						packetPool.Put(req.buffer)
-					}
-					if recovered := recover(); recovered != nil && c != nil && c.log != nil {
-						c.log.Errorf(
-							"💥 <red>Local DNS Handler Panic: <cyan>%v</cyan></red>",
-							recovered,
-						)
-					}
-				}()
-
-				now := c.now()
-				response := c.resolveDNSQueryPacket(req.buffer[:req.size], now)
-				if len(response) != 0 {
-					_, _ = conn.WriteToUDP(response, req.addr)
-				}
-			}()
+			c.processLocalDNSRequest(conn, req, packetPool)
 		}
+	}
+}
+
+func (c *Client) processLocalDNSRequest(conn *net.UDPConn, req localDNSRequest, packetPool *sync.Pool) {
+	defer func() {
+		if packetPool != nil && req.buffer != nil {
+			packetPool.Put(req.buffer)
+		}
+		if recovered := recover(); recovered != nil && c != nil && c.log != nil {
+			c.log.Errorf(
+				"💥 <red>Local DNS Handler Panic: <cyan>%v</cyan></red>",
+				recovered,
+			)
+		}
+	}()
+
+	now := c.now()
+	response := c.resolveDNSQueryPacket(req.buffer[:req.size], now)
+	if len(response) != 0 {
+		_, _ = conn.WriteToUDP(response, req.addr)
 	}
 }
