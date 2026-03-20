@@ -389,6 +389,7 @@ func (r *stream0Runtime) processDequeue(packet arq.QueuedPacket) {
 		}
 	case Enums.PACKET_STREAM_DATA_ACK, Enums.PACKET_STREAM_FIN_ACK, Enums.PACKET_STREAM_RST_ACK:
 		r.noteServerDataActivity()
+		r.client.noteStreamProgress(response.StreamID)
 		if stream, ok := r.client.getStream(response.StreamID); ok {
 			ackClientStreamTX(stream, response.SequenceNum, now)
 			notifyStreamWake(stream)

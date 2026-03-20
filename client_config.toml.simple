@@ -72,6 +72,11 @@ RECHECK_INACTIVE_INTERVAL_SECONDS = 1800.0
 RECHECK_SERVER_INTERVAL_SECONDS = 3.0
 RECHECK_BATCH_SIZE = 5
 
+PACKET_DUPLICATION_COUNT = 1
+SETUP_PACKET_DUPLICATION_COUNT = 2
+STREAM_RESOLVER_FAILOVER_RESEND_THRESHOLD = 2
+STREAM_RESOLVER_FAILOVER_COOLDOWN = 1.0
+
 # ------------------------------------------------------------------------------
 # 6) Stream & Control Queue Limits
 # ------------------------------------------------------------------------------

@@ -45,3 +45,41 @@ func tryConnections[T any](connections []Connection, fallbackErr error, fn func(
 	}
 	return zero, lastErr
 }
+
+func tryConnectionsParallel[T any](connections []Connection, fallbackErr error, fn func(Connection) (T, error)) (T, error) {
+	var zero T
+	switch len(connections) {
+	case 0:
+		return zero, fallbackErr
+	case 1:
+		value, err := fn(connections[0])
+		if err != nil {
+			return zero, err
+		}
+		return value, nil
+	}
+
+	type connectionResult struct {
+		value T
+		err   error
+	}
+
+	results := make(chan connectionResult, len(connections))
+	for _, connection := range connections {
+		connection := connection
+		go func() {
+			value, err := fn(connection)
+			results <- connectionResult{value: value, err: err}
+		}()
+	}
+
+	lastErr := fallbackErr
+	for range connections {
+		result := <-results
+		if result.err == nil {
+			return result.value, nil
+		}
+		lastErr = result.err
+	}
+	return zero, lastErr
+}

@@ -28,16 +28,21 @@ var ErrClientStreamClosed = errors.New("client stream closed")
 var ErrClientStreamBackpressure = errors.New("client stream send queue full")
 
 func (c *Client) createStream(streamID uint16, conn net.Conn) *clientStream {
+	now := time.Now()
 	stream := &clientStream{
 		ID:             streamID,
 		Conn:           conn,
 		NextSequence:   2,
-		LastActivityAt: time.Now(),
+		LastActivityAt: now,
 		TXQueue:        make([]clientStreamTXPacket, 0, 8),
 		TXInFlight:     make([]clientStreamTXPacket, 0, c.effectiveStreamTXWindow()),
 		TXWake:         make(chan struct{}, 1),
 		StopCh:         make(chan struct{}),
 		retryBase:      streamTXInitialRetryDelay,
+	}
+	if preferred, ok := c.GetBestConnection(); ok && preferred.Key != "" {
+		stream.PreferredServerKey = preferred.Key
+		stream.LastResolverFailover = now
 	}
 	c.storeStream(stream)
 	if c.stream0Runtime != nil {
@@ -205,6 +210,7 @@ func (c *Client) handleInboundStreamPacket(packet VpnProto.Packet, timeout time.
 
 	switch packet.PacketType {
 	case Enums.PACKET_STREAM_DATA:
+		c.noteStreamProgress(stream.ID)
 		stream.mu.Lock()
 		if stream.InboundDataSet && streamutil.SequenceSeenOrOlder(stream.InboundDataSeq, packet.SequenceNum) {
 			stream.mu.Unlock()
@@ -224,6 +230,7 @@ func (c *Client) handleInboundStreamPacket(packet VpnProto.Packet, timeout time.
 		}
 		return c.exchangeStreamControlPacket(Enums.PACKET_STREAM_DATA_ACK, stream.ID, packet.SequenceNum, nil, timeout)
 	case Enums.PACKET_STREAM_FIN:
+		c.noteStreamProgress(stream.ID)
 		stream.mu.Lock()
 		if stream.RemoteFinSet && stream.RemoteFinSeq == packet.SequenceNum {
 			stream.mu.Unlock()
@@ -239,6 +246,7 @@ func (c *Client) handleInboundStreamPacket(packet VpnProto.Packet, timeout time.
 		}
 		return c.exchangeStreamControlPacket(Enums.PACKET_STREAM_FIN_ACK, stream.ID, packet.SequenceNum, nil, timeout)
 	case Enums.PACKET_STREAM_RST:
+		c.noteStreamProgress(stream.ID)
 		stream.mu.Lock()
 		stream.Closed = true
 		stream.mu.Unlock()
@@ -346,7 +354,11 @@ func (c *Client) runClientStreamTXLoop(stream *clientStream, timeout time.Durati
 		}
 
 		if c.stream0Runtime == nil || !c.stream0Runtime.IsRunning() {
-			response, err := c.exchangeStreamControlPacket(packet.PacketType, stream.ID, packet.SequenceNum, packet.Payload, timeout)
+			packetType := packet.PacketType
+			if packetType == Enums.PACKET_STREAM_DATA && packet.RetryCount > 0 {
+				packetType = Enums.PACKET_STREAM_RESEND
+			}
+			response, err := c.exchangeStreamControlPacket(packetType, stream.ID, packet.SequenceNum, packet.Payload, timeout)
 			if err != nil {
 				rescheduleClientStreamTX(stream, packet.SequenceNum)
 				continue
@@ -370,7 +382,11 @@ func (c *Client) runClientStreamTXLoop(stream *clientStream, timeout time.Durati
 		if !markClientStreamTXScheduled(stream, packet.SequenceNum) {
 			continue
 		}
-		if !c.stream0Runtime.QueueStreamPacket(stream.ID, packet.PacketType, packet.SequenceNum, packet.Payload) {
+		packetType := packet.PacketType
+		if packetType == Enums.PACKET_STREAM_DATA && packet.RetryCount > 0 {
+			packetType = Enums.PACKET_STREAM_RESEND
+		}
+		if !c.stream0Runtime.QueueStreamPacket(stream.ID, packetType, packet.SequenceNum, packet.Payload) {
 			rescheduleClientStreamTX(stream, packet.SequenceNum)
 			time.Sleep(25 * time.Millisecond)
 			continue

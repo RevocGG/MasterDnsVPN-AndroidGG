@@ -222,6 +222,14 @@ func (b *Balancer) GetUniqueConnections(requiredCount int) []Connection {
 	}
 }
 
+func (b *Balancer) GetAllValidConnections() []Connection {
+	snap := b.snapshot.Load()
+	if snap == nil || len(snap.valid) == 0 {
+		return nil
+	}
+	return snapshotConnections(snap.connections, snap.valid)
+}
+
 func rebuildValidIndices(connections []*Connection) []int {
 	valid := make([]int, 0, len(connections))
 	for idx, conn := range connections {

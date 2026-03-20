@@ -1904,6 +1904,93 @@ func TestStream0RuntimeProcessDequeueHandlesServerDrop(t *testing.T) {
 	}
 }
 
+func TestSelectTargetConnectionsForPacketPrefersStickyStreamResolver(t *testing.T) {
+	c := New(config.ClientConfig{
+		PacketDuplicationCount: 2,
+	}, nil, nil)
+	c.connections = []Connection{
+		{Key: "a", Domain: "a.example.com", Resolver: "1.1.1.1", ResolverPort: 53, ResolverLabel: "1.1.1.1:53", IsValid: true},
+		{Key: "b", Domain: "b.example.com", Resolver: "2.2.2.2", ResolverPort: 53, ResolverLabel: "2.2.2.2:53", IsValid: true},
+		{Key: "c", Domain: "c.example.com", Resolver: "3.3.3.3", ResolverPort: 53, ResolverLabel: "3.3.3.3:53", IsValid: true},
+	}
+	c.connectionsByKey = map[string]int{"a": 0, "b": 1, "c": 2}
+	c.rebuildBalancer()
+
+	stream := c.createStream(11, nil)
+	defer c.deleteStream(stream.ID)
+
+	stream.mu.Lock()
+	stream.PreferredServerKey = "b"
+	stream.LastResolverFailover = time.Now()
+	stream.mu.Unlock()
+
+	selected, err := c.selectTargetConnectionsForPacket(Enums.PACKET_STREAM_DATA, stream.ID)
+	if err != nil {
+		t.Fatalf("selectTargetConnectionsForPacket returned error: %v", err)
+	}
+	if len(selected) != 2 {
+		t.Fatalf("unexpected selected count: got=%d want=2", len(selected))
+	}
+	if selected[0].Key != "b" {
+		t.Fatalf("expected preferred resolver first, got=%q", selected[0].Key)
+	}
+}
+
+func TestSelectTargetConnectionsForPacketFailsOverOnResendStreak(t *testing.T) {
+	c := New(config.ClientConfig{
+		PacketDuplicationCount:                1,
+		StreamResolverFailoverResendThreshold: 1,
+		StreamResolverFailoverCooldownSec:     0.1,
+	}, nil, nil)
+	c.connections = []Connection{
+		{Key: "a", Domain: "a.example.com", Resolver: "1.1.1.1", ResolverPort: 53, ResolverLabel: "1.1.1.1:53", IsValid: true},
+		{Key: "b", Domain: "b.example.com", Resolver: "2.2.2.2", ResolverPort: 53, ResolverLabel: "2.2.2.2:53", IsValid: true},
+	}
+	c.connectionsByKey = map[string]int{"a": 0, "b": 1}
+	c.rebuildBalancer()
+
+	stream := c.createStream(12, nil)
+	defer c.deleteStream(stream.ID)
+
+	stream.mu.Lock()
+	stream.PreferredServerKey = "a"
+	stream.LastResolverFailover = time.Now().Add(-2 * time.Second)
+	stream.mu.Unlock()
+
+	selected, err := c.selectTargetConnectionsForPacket(Enums.PACKET_STREAM_RESEND, stream.ID)
+	if err != nil {
+		t.Fatalf("selectTargetConnectionsForPacket returned error: %v", err)
+	}
+	if len(selected) != 1 {
+		t.Fatalf("unexpected selected count: got=%d want=1", len(selected))
+	}
+	if selected[0].Key != "b" {
+		t.Fatalf("expected resend failover to switch preferred resolver, got=%q", selected[0].Key)
+	}
+}
+
+func TestSelectTargetConnectionsForPacketUsesSetupDuplicationCount(t *testing.T) {
+	c := New(config.ClientConfig{
+		PacketDuplicationCount:      1,
+		SetupPacketDuplicationCount: 3,
+	}, nil, nil)
+	c.connections = []Connection{
+		{Key: "a", Domain: "a.example.com", Resolver: "1.1.1.1", ResolverPort: 53, ResolverLabel: "1.1.1.1:53", IsValid: true},
+		{Key: "b", Domain: "b.example.com", Resolver: "2.2.2.2", ResolverPort: 53, ResolverLabel: "2.2.2.2:53", IsValid: true},
+		{Key: "c", Domain: "c.example.com", Resolver: "3.3.3.3", ResolverPort: 53, ResolverLabel: "3.3.3.3:53", IsValid: true},
+	}
+	c.connectionsByKey = map[string]int{"a": 0, "b": 1, "c": 2}
+	c.rebuildBalancer()
+
+	selected, err := c.selectTargetConnectionsForPacket(Enums.PACKET_STREAM_SYN, 99)
+	if err != nil {
+		t.Fatalf("selectTargetConnectionsForPacket returned error: %v", err)
+	}
+	if len(selected) != 3 {
+		t.Fatalf("unexpected selected count: got=%d want=3", len(selected))
+	}
+}
+
 func extractTestTunnelLabels(qName string, baseDomain string) string {
 	suffix := "." + baseDomain
 	if len(qName) <= len(suffix) || qName[len(qName)-len(suffix):] != suffix {

@@ -97,11 +97,11 @@ func (c *Client) exchangeStreamControlPacket(packetType uint8, streamID uint16, 
 		return VpnProto.Packet{}, ErrStreamHandshakeFailed
 	}
 	timeout = normalizeTimeout(timeout, defaultRuntimeTimeout)
-	connections, err := c.runtimeConnections(nil)
+	connections, err := c.selectTargetConnectionsForPacket(packetType, streamID)
 	if err != nil {
 		return VpnProto.Packet{}, err
 	}
-	return tryConnections(connections, ErrStreamHandshakeFailed, func(connection Connection) (VpnProto.Packet, error) {
+	return tryConnectionsParallel(connections, ErrStreamHandshakeFailed, func(connection Connection) (VpnProto.Packet, error) {
 		return c.sendStreamControlPacketWithConnection(connection, packetType, streamID, sequenceNum, payload, timeout)
 	})
 }

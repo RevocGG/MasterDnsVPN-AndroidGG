@@ -70,24 +70,28 @@ type Client struct {
 	mtuAddedServerLogFormat   string
 	mtuOutputMu               sync.Mutex
 
-	exchangeQueryFn     func(Connection, []byte, time.Duration) ([]byte, error)
-	sendOneWayPacketFn  func(Connection, []byte, time.Time) error
-	fragmentLimits      sync.Map
-	stream0Runtime      *stream0Runtime
-	streamsMu           sync.RWMutex
-	streams             map[uint16]*clientStream
-	mtuTestRetries      int
-	mtuTestTimeout      time.Duration
-	streamTXWindow      int
-	streamTXQueueLimit  int
-	streamTXMaxRetries  int
-	streamTXTTL         time.Duration
-	resolverHealthMu    sync.Mutex
-	resolverHealth      map[string]*resolverHealthState
-	resolverRecheck     map[string]resolverRecheckState
-	runtimeDisabled     map[string]resolverDisabledState
-	healthRuntimeRun    bool
-	recheckConnectionFn func(*Connection) bool
+	exchangeQueryFn                       func(Connection, []byte, time.Duration) ([]byte, error)
+	sendOneWayPacketFn                    func(Connection, []byte, time.Time) error
+	fragmentLimits                        sync.Map
+	stream0Runtime                        *stream0Runtime
+	streamsMu                             sync.RWMutex
+	streams                               map[uint16]*clientStream
+	mtuTestRetries                        int
+	mtuTestTimeout                        time.Duration
+	packetDuplicationCount                int
+	setupPacketDuplicationCount           int
+	streamResolverFailoverResendThreshold int
+	streamResolverFailoverCooldown        time.Duration
+	streamTXWindow                        int
+	streamTXQueueLimit                    int
+	streamTXMaxRetries                    int
+	streamTXTTL                           time.Duration
+	resolverHealthMu                      sync.Mutex
+	resolverHealth                        map[string]*resolverHealthState
+	resolverRecheck                       map[string]resolverRecheckState
+	runtimeDisabled                       map[string]resolverDisabledState
+	healthRuntimeRun                      bool
+	recheckConnectionFn                   func(*Connection) bool
 
 	reconnectSignal     chan struct{}
 	reconnectPending    atomic.Bool
@@ -113,27 +117,30 @@ type Connection struct {
 }
 
 type clientStream struct {
-	mu             sync.Mutex
-	ID             uint16
-	Conn           net.Conn
-	NextSequence   uint16
-	LocalFinSent   bool
-	RemoteFinRecv  bool
-	ResetSent      bool
-	Closed         bool
-	LastActivityAt time.Time
-	InboundDataSeq uint16
-	InboundDataSet bool
-	RemoteFinSeq   uint16
-	RemoteFinSet   bool
-	TXQueue        []clientStreamTXPacket
-	TXInFlight     []clientStreamTXPacket
-	TXWake         chan struct{}
-	StopCh         chan struct{}
-	stopOnce       sync.Once
-	retryBase      time.Duration
-	srtt           time.Duration
-	rttVar         time.Duration
+	mu                   sync.Mutex
+	ID                   uint16
+	Conn                 net.Conn
+	NextSequence         uint16
+	LocalFinSent         bool
+	RemoteFinRecv        bool
+	ResetSent            bool
+	Closed               bool
+	LastActivityAt       time.Time
+	InboundDataSeq       uint16
+	InboundDataSet       bool
+	RemoteFinSeq         uint16
+	RemoteFinSet         bool
+	PreferredServerKey   string
+	ResolverResendStreak int
+	LastResolverFailover time.Time
+	TXQueue              []clientStreamTXPacket
+	TXInFlight           []clientStreamTXPacket
+	TXWake               chan struct{}
+	StopCh               chan struct{}
+	stopOnce             sync.Once
+	retryBase            time.Duration
+	srtt                 time.Duration
+	rttVar               time.Duration
 }
 
 type clientStreamTXPacket struct {
@@ -185,13 +192,17 @@ func New(cfg config.ClientConfig, log *logger.Logger, codec *security.Codec) *Cl
 		localDNSCacheFlushTick: time.Duration(
 			cfg.LocalDNSCacheFlushSec * float64(time.Second),
 		),
-		localDNSFragTTL:    time.Duration(cfg.LocalDNSFragmentTimeoutSec * float64(time.Second)),
-		streams:            make(map[uint16]*clientStream, 16),
-		mtuTestRetries:     cfg.MTUTestRetries,
-		mtuTestTimeout:     time.Duration(cfg.MTUTestTimeout * float64(time.Second)),
-		mtuCryptoOverhead:  mtuCryptoOverhead(cfg.DataEncryptionMethod),
-		mtuSaveToFile:      cfg.SaveMTUServersToFile,
-		mtuServersFileName: strings.TrimSpace(cfg.MTUServersFileName),
+		localDNSFragTTL:                       time.Duration(cfg.LocalDNSFragmentTimeoutSec * float64(time.Second)),
+		streams:                               make(map[uint16]*clientStream, 16),
+		mtuTestRetries:                        cfg.MTUTestRetries,
+		mtuTestTimeout:                        time.Duration(cfg.MTUTestTimeout * float64(time.Second)),
+		packetDuplicationCount:                cfg.PacketDuplicationCount,
+		setupPacketDuplicationCount:           cfg.SetupPacketDuplicationCount,
+		streamResolverFailoverResendThreshold: cfg.StreamResolverFailoverResendThreshold,
+		streamResolverFailoverCooldown:        time.Duration(cfg.StreamResolverFailoverCooldownSec * float64(time.Second)),
+		mtuCryptoOverhead:                     mtuCryptoOverhead(cfg.DataEncryptionMethod),
+		mtuSaveToFile:                         cfg.SaveMTUServersToFile,
+		mtuServersFileName:                    strings.TrimSpace(cfg.MTUServersFileName),
 		mtuServersFileFormat: strings.TrimSpace(
 			cfg.MTUServersFileFormat,
 		),
@@ -228,6 +239,18 @@ func New(cfg config.ClientConfig, log *logger.Logger, codec *security.Codec) *Cl
 
 	if c.mtuTestTimeout <= 0 {
 		c.mtuTestTimeout = time.Second
+	}
+	if c.packetDuplicationCount < 1 {
+		c.packetDuplicationCount = 1
+	}
+	if c.setupPacketDuplicationCount < c.packetDuplicationCount {
+		c.setupPacketDuplicationCount = c.packetDuplicationCount
+	}
+	if c.streamResolverFailoverResendThreshold < 1 {
+		c.streamResolverFailoverResendThreshold = 1
+	}
+	if c.streamResolverFailoverCooldown <= 0 {
+		c.streamResolverFailoverCooldown = time.Second
 	}
 
 	c.ResetRuntimeState(true)
