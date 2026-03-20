@@ -8,6 +8,7 @@
 package client
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -91,7 +92,7 @@ func TestResolverHealthRecheckReactivatesConnection(t *testing.T) {
 	}
 	c.resolverHealthMu.Unlock()
 
-	c.runResolverRecheckBatch(now)
+	c.runResolverRecheckBatch(context.Background(), now)
 
 	if !c.connections[0].IsValid {
 		t.Fatal("expected recheck to reactivate resolver")

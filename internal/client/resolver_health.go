@@ -88,7 +88,7 @@ func (c *Client) runResolverHealthLoop(ctx context.Context) {
 
 		now := c.now()
 		c.runResolverAutoDisable(now)
-		c.runResolverRecheckBatch(now)
+		c.runResolverRecheckBatch(ctx, now)
 
 		waitFor := c.nextResolverHealthWait(now)
 		timer := time.NewTimer(waitFor)
@@ -369,7 +369,7 @@ func deterministicResolverJitter(serverKey string, delay time.Duration) time.Dur
 	return time.Duration(hash % uint64(maxJitter))
 }
 
-func (c *Client) runResolverRecheckBatch(now time.Time) {
+func (c *Client) runResolverRecheckBatch(ctx context.Context, now time.Time) {
 	if c == nil || !c.cfg.RecheckInactiveEnabled || !c.successMTUChecks {
 		return
 	}
@@ -399,7 +399,7 @@ func (c *Client) runResolverRecheckBatch(now time.Time) {
 			)
 		}
 
-		if c.recheckResolverConnection(conn) {
+		if c.recheckResolverConnection(ctx, conn) {
 			c.reactivateResolverConnection(candidate.key)
 			continue
 		}
@@ -497,7 +497,7 @@ func (c *Client) collectDueResolverRechecks(now time.Time) []resolverRecheckCand
 	return candidates
 }
 
-func (c *Client) recheckResolverConnection(conn *Connection) bool {
+func (c *Client) recheckResolverConnection(ctx context.Context, conn *Connection) bool {
 	if c == nil || conn == nil || c.syncedUploadMTU <= 0 || c.syncedDownloadMTU <= 0 {
 		if conn != nil && c.resolverHealthDebugEnabled() {
 			c.log.Debugf(
@@ -517,11 +517,11 @@ func (c *Client) recheckResolverConnection(conn *Connection) bool {
 	}
 	defer transport.conn.Close()
 
-	upOK, err := c.sendUploadMTUProbe(conn, transport, c.syncedUploadMTU, mtuProbeOptions{Quiet: true})
+	upOK, err := c.sendUploadMTUProbe(ctx, conn, transport, c.syncedUploadMTU, mtuProbeOptions{Quiet: true})
 	if err != nil || !upOK {
 		return false
 	}
-	downOK, err := c.sendDownloadMTUProbe(conn, transport, c.syncedDownloadMTU, c.syncedUploadMTU, mtuProbeOptions{Quiet: true})
+	downOK, err := c.sendDownloadMTUProbe(ctx, conn, transport, c.syncedDownloadMTU, c.syncedUploadMTU, mtuProbeOptions{Quiet: true})
 	if err != nil || !downOK {
 		return false
 	}

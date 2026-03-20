@@ -8,6 +8,7 @@
 package client
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -24,7 +25,7 @@ func TestBinarySearchMTUSkipsDuplicateChecks(t *testing.T) {
 	}, nil, nil)
 
 	calls := make(map[int]int)
-	best := c.binarySearchMTU("test", 30, 100, func(value int, _ bool) (bool, error) {
+	best := c.binarySearchMTU(context.Background(), "test", 30, 100, func(value int, _ bool) (bool, error) {
 		calls[value]++
 		return value <= 73, nil
 	})

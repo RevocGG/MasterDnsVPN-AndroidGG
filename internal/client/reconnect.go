@@ -38,7 +38,7 @@ initLoop:
 
 		if !c.HasSuccessfulMTUChecks() || c.Balancer().ValidCount() == 0 {
 			c.resetSessionInitState()
-			if err := c.RunInitialMTUTests(); err != nil {
+			if err := c.RunInitialMTUTests(ctx); err != nil {
 				if c.log != nil {
 					c.log.Warnf("\u23F3 <yellow>No valid servers found, retrying MTU tests in <cyan>%d</cyan> seconds</yellow>", int(mtuRetryInterval/time.Second))
 				}
