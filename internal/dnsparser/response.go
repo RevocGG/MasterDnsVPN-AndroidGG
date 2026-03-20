@@ -134,10 +134,10 @@ func isLikelyDNSRequestHeader(header Header) bool {
 	if header.QR != 0 {
 		return false
 	}
-	if header.OpCode > 6 {
+	if header.QDCount == 0 || header.QDCount > maxLikelyQuestions {
 		return false
 	}
-	if header.QDCount > maxLikelyQuestions {
+	if header.OpCode > 6 {
 		return false
 	}
 	if header.ANCount > maxLikelyAnswers {
@@ -191,23 +191,25 @@ func extractOPTRecordsFromOffset(request []byte, header Header, questionEndOffse
 }
 
 func findOPTRecordRange(request []byte, header Header, questionEndOffset int) (int, int) {
-	if header.ARCount == 0 {
-		return 0, 0
-	}
-	if questionEndOffset < dnsHeaderSize || questionEndOffset > len(request) {
+	if header.ARCount == 0 || questionEndOffset < dnsHeaderSize || questionEndOffset > len(request) {
 		return 0, 0
 	}
 
 	offset := questionEndOffset
-	var err error
-	offset, err = skipResourceRecords(request, offset, int(header.ANCount))
-	if err != nil {
-		return 0, 0
+	if header.ANCount > 0 {
+		var err error
+		offset, err = skipResourceRecords(request, offset, int(header.ANCount))
+		if err != nil {
+			return 0, 0
+		}
 	}
 
-	offset, err = skipResourceRecords(request, offset, int(header.NSCount))
-	if err != nil {
-		return 0, 0
+	if header.NSCount > 0 {
+		var err error
+		offset, err = skipResourceRecords(request, offset, int(header.NSCount))
+		if err != nil {
+			return 0, 0
+		}
 	}
 
 	return findFirstOPTRecordInAdditional(request, offset, int(header.ARCount))
@@ -319,10 +321,6 @@ func extractRawOPTRecords(data []byte, offset int, count int) ([][]byte, int, in
 
 func skipName(data []byte, offset int) (int, error) {
 	dataLen := len(data)
-	if offset >= dataLen {
-		return offset, ErrInvalidName
-	}
-
 	for {
 		if offset >= dataLen {
 			return offset, ErrInvalidName
