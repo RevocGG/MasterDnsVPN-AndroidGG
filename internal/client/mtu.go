@@ -466,7 +466,7 @@ func (c *Client) sendUploadMTUProbe(ctx context.Context, conn *Connection, probe
 		return false, nil
 	}
 
-	response, err := exchangeUDPQuery(probeTransport, query, c.mtuTestTimeout)
+	response, err := c.exchangeUDPQuery(probeTransport, query, c.mtuTestTimeout)
 	if err != nil {
 		c.logMTUProbe(
 			options.IsRetry,
@@ -589,7 +589,7 @@ func (c *Client) sendDownloadMTUProbe(ctx context.Context, conn *Connection, pro
 		return false, nil
 	}
 
-	response, err := exchangeUDPQuery(probeTransport, query, c.mtuTestTimeout)
+	response, err := c.exchangeUDPQuery(probeTransport, query, c.mtuTestTimeout)
 	if err != nil {
 		c.logMTUProbe(
 			options.IsRetry,

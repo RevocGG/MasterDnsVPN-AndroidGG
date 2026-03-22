@@ -239,7 +239,7 @@ func New(cfg config.ClientConfig, log *logger.Logger, codec *security.Codec) *Cl
 		connectionsByKey:    make(map[string]int, len(cfg.Domains)*len(cfg.Resolvers)),
 		udpBufferPool: sync.Pool{
 			New: func() any {
-				return make([]byte, runtimeUDPReadBufferSize())
+				return make([]byte, RuntimeUDPReadBufferSize)
 			},
 		},
 		resolverConns:             make(map[string]chan *net.UDPConn),

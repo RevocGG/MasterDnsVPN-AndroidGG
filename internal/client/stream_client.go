@@ -166,6 +166,11 @@ func (s *Stream_client) PushTXPacket(priority int, packetType uint8, sequenceNum
 		priority = 3 // Default
 	}
 
+	// Skip Ping packets if the queue is already congested (prevent bloat)
+	if packetType == Enums.PACKET_PING && s.txQueue != nil && s.txQueue.Size() > 200 {
+		return false
+	}
+
 	// Get a packet from the pool
 	p := txPacketPool.Get().(*clientStreamTXPacket)
 	p.PacketType = packetType

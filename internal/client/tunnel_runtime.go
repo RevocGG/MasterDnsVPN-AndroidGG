@@ -21,6 +21,11 @@ import (
 	VpnProto "masterdnsvpn-go/internal/vpnproto"
 )
 
+const (
+	// RuntimeUDPReadBufferSize defines the maximum size of the UDP read buffer.
+	RuntimeUDPReadBufferSize = 65535
+)
+
 // exchangeUDPQueryWithConn sends a UDP packet through the provided connection
 // and waits for a response with a matching DNS transaction ID.
 // It includes a mechanism to drain stale packets before sending.
@@ -30,19 +35,9 @@ func (c *Client) exchangeUDPQueryWithConn(conn *net.UDPConn, packet []byte, time
 	}
 	expectedID := packet[:2]
 
-	// Drain any stale packets from the buffer (non-blocking)
-	drainBuffer := c.getRuntimeUDPBuffer()
-	for {
-		if err := conn.SetReadDeadline(time.Now()); err != nil {
-			break
-		}
-		if _, err := conn.Read(drainBuffer); err != nil {
-			break
-		}
-	}
-	c.putRuntimeUDPBuffer(drainBuffer)
+	// Drain any stale packets from the buffer efficiently
+	c.drainUDPConn(conn)
 
-	timeout = normalizeTimeout(timeout, time.Second)
 	deadline := time.Now().Add(timeout)
 	if err := conn.SetDeadline(deadline); err != nil {
 		return nil, err
@@ -53,11 +48,6 @@ func (c *Client) exchangeUDPQueryWithConn(conn *net.UDPConn, packet []byte, time
 	}
 
 	for {
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			return nil, os.ErrDeadlineExceeded
-		}
-
 		buffer := c.getRuntimeUDPBuffer()
 		n, err := conn.Read(buffer)
 		if err != nil {
@@ -70,6 +60,29 @@ func (c *Client) exchangeUDPQueryWithConn(conn *net.UDPConn, packet []byte, time
 		}
 		// Stale packet or from another request, continue reading until timeout
 		c.putRuntimeUDPBuffer(buffer)
+
+		// Check deadline after reading (faster than time.Until every time)
+		if time.Now().After(deadline) {
+			return nil, os.ErrDeadlineExceeded
+		}
+	}
+}
+
+// drainUDPConn clears any pending packets from a UDP connection's kernel buffer.
+// It uses minimal syscalls by setting the deadline once.
+func (c *Client) drainUDPConn(conn *net.UDPConn) {
+	if conn == nil {
+		return
+	}
+	_ = conn.SetReadDeadline(time.Now()) // Minimal possible delay for non-blocking read
+	buf := c.getRuntimeUDPBuffer()
+	defer c.putRuntimeUDPBuffer(buf)
+
+	// Drain up to 100 stale packets at once to avoid infinite loops
+	for i := 0; i < 100; i++ {
+		if _, err := conn.Read(buf); err != nil {
+			break
+		}
 	}
 }
 
@@ -118,13 +131,13 @@ func (c *Client) putUDPConn(resolverLabel string, conn *net.UDPConn) {
 // This is used to reduce allocations during high-frequency network operations.
 func (c *Client) getRuntimeUDPBuffer() []byte {
 	if c == nil {
-		return make([]byte, runtimeUDPReadBufferSize())
+		return make([]byte, RuntimeUDPReadBufferSize)
 	}
 	buf, _ := c.udpBufferPool.Get().([]byte)
-	if cap(buf) < runtimeUDPReadBufferSize() {
-		return make([]byte, runtimeUDPReadBufferSize())
+	if cap(buf) < RuntimeUDPReadBufferSize {
+		return make([]byte, RuntimeUDPReadBufferSize)
 	}
-	return buf[:runtimeUDPReadBufferSize()]
+	return buf[:RuntimeUDPReadBufferSize]
 }
 
 // putRuntimeUDPBuffer returns a byte slice to the internal buffer pool.
@@ -132,10 +145,10 @@ func (c *Client) putRuntimeUDPBuffer(buf []byte) {
 	if c == nil || buf == nil {
 		return
 	}
-	if cap(buf) < runtimeUDPReadBufferSize() {
+	if cap(buf) < RuntimeUDPReadBufferSize {
 		return
 	}
-	c.udpBufferPool.Put(buf[:runtimeUDPReadBufferSize()])
+	c.udpBufferPool.Put(buf[:RuntimeUDPReadBufferSize])
 }
 
 // dialUDPResolver resolves the resolver address and establishes a new UDP connection.
@@ -155,11 +168,6 @@ func normalizeTimeout(timeout time.Duration, fallback time.Duration) time.Durati
 	return timeout
 }
 
-// runtimeUDPReadBufferSize defines the maximum size of the UDP read buffer.
-func runtimeUDPReadBufferSize() int {
-	return 65535
-}
-
 // udpQueryTransport wraps a UDP connection and a reusable buffer for queries.
 type udpQueryTransport struct {
 	conn   *net.UDPConn
@@ -174,57 +182,18 @@ func newUDPQueryTransport(resolverLabel string) (*udpQueryTransport, error) {
 	}
 	return &udpQueryTransport{
 		conn:   conn,
-		buffer: make([]byte, runtimeUDPReadBufferSize()),
+		buffer: make([]byte, RuntimeUDPReadBufferSize),
 	}, nil
 }
 
 // exchangeUDPQuery performs a synchronous UDP request-response cycle using the provided transport.
-func exchangeUDPQuery(transport *udpQueryTransport, packet []byte, timeout time.Duration) ([]byte, error) {
+func (c *Client) exchangeUDPQuery(transport *udpQueryTransport, packet []byte, timeout time.Duration) ([]byte, error) {
 	if transport == nil || transport.conn == nil {
 		return nil, net.ErrClosed
 	}
-	if len(packet) < 2 {
-		return nil, errors.New("malformed dns query")
-	}
-	expectedID := packet[:2]
 
-	// Drain any stale packets from the buffer (non-blocking) before sending
-	drainBuffer := make([]byte, 2048)
-	for {
-		if err := transport.conn.SetReadDeadline(time.Now()); err != nil {
-			break
-		}
-		if _, err := transport.conn.Read(drainBuffer); err != nil {
-			break
-		}
-	}
-
-	timeout = normalizeTimeout(timeout, time.Second)
-	deadline := time.Now().Add(timeout)
-	if err := transport.conn.SetDeadline(deadline); err != nil {
-		return nil, err
-	}
-
-	if _, err := transport.conn.Write(packet); err != nil {
-		return nil, err
-	}
-
-	for {
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			return nil, os.ErrDeadlineExceeded
-		}
-
-		n, err := transport.conn.Read(transport.buffer)
-		if err != nil {
-			return nil, err
-		}
-
-		if n >= 2 && transport.buffer[0] == expectedID[0] && transport.buffer[1] == expectedID[1] {
-			return append([]byte(nil), transport.buffer[:n]...), nil
-		}
-		// Stale packet or from another request, continue reading until timeout
-	}
+	// Use our unified optimized pool-aware exchange logic
+	return c.exchangeUDPQueryWithConn(transport.conn, packet, timeout)
 }
 
 // exchangeDNSOverConnection sends a DNS query and returns the extracted VPN packet.
