@@ -292,6 +292,11 @@ func (s *Server) mapSOCKSConnectError(err error) uint8 {
 		return Enums.PACKET_SOCKS5_CONNECT_FAIL
 	}
 
+	var blockedErr *blockedSOCKSTargetError
+	if errors.As(err, &blockedErr) {
+		return Enums.PACKET_SOCKS5_RULESET_DENIED
+	}
+
 	var upstreamErr *upstreamSOCKS5Error
 	if errors.As(err, &upstreamErr) {
 		return upstreamErr.packetType

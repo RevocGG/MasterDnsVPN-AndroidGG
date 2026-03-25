@@ -137,7 +137,7 @@ DNS_UPSTREAM_TIMEOUT = 4.0
 # Wait timeout for followers sharing an inflight DNS resolution.
 # This is used when multiple identical queries arrive while one upstream lookup
 # is already in progress.
-DNS_INFLIGHT_WAIT_TIMEOUT_SECONDS = 8.0
+DNS_INFLIGHT_WAIT_TIMEOUT_SECONDS = 60.0
 
 # Fragment assembly timeout for inbound DNS query fragments.
 DNS_FRAGMENT_ASSEMBLY_TIMEOUT = 300.0
@@ -156,7 +156,7 @@ DNS_CACHE_TTL_SECONDS = 300.0
 # ------------------------------------------------------------------------------
 
 # Timeout for outbound connect attempts made by the server.
-SOCKS_CONNECT_TIMEOUT = 8.0
+SOCKS_CONNECT_TIMEOUT = 120.0
 
 # If true, the server chains outbound connections through FORWARD_IP:FORWARD_PORT.
 # If false, the server dials targets directly.
@@ -216,10 +216,10 @@ STREAM_FAILURE_PACKET_TTL_SECONDS = 120.0
 # ARQ timing / retry profile.
 ARQ_WINDOW_SIZE = 600
 ARQ_INITIAL_RTO_SECONDS = 0.5
-ARQ_MAX_RTO_SECONDS = 6.0
-ARQ_CONTROL_INITIAL_RTO_SECONDS = 0.5
-ARQ_CONTROL_MAX_RTO_SECONDS = 6.0
-ARQ_MAX_CONTROL_RETRIES = 120
+ARQ_MAX_RTO_SECONDS = 3.0
+ARQ_CONTROL_INITIAL_RTO_SECONDS = 0.4
+ARQ_CONTROL_MAX_RTO_SECONDS = 2.0
+ARQ_MAX_CONTROL_RETRIES = 300
 ARQ_INACTIVITY_TIMEOUT_SECONDS = 1800.0
 ARQ_DATA_PACKET_TTL_SECONDS = 2400.0
 ARQ_CONTROL_PACKET_TTL_SECONDS = 1200.0

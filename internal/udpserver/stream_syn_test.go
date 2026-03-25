@@ -149,6 +149,63 @@ func TestHandlePostSessionPacketRejectsMismatchedSynProtocol(t *testing.T) {
 	}
 }
 
+func TestValidateSOCKSTargetHostRejectsLocalAndPrivateTargets(t *testing.T) {
+	cases := []string{
+		"127.0.0.1",
+		"localhost",
+		"api.localhost",
+		"10.0.0.5",
+		"172.16.1.9",
+		"192.168.1.10",
+		"169.254.1.1",
+		"100.64.0.1",
+		"198.18.0.1",
+		"::1",
+		"fe80::1",
+		"fc00::1",
+	}
+
+	for _, host := range cases {
+		if err := validateSOCKSTargetHost(host); err == nil {
+			t.Fatalf("expected host %q to be rejected", host)
+		}
+	}
+}
+
+func TestValidateSOCKSTargetHostAllowsPublicTargets(t *testing.T) {
+	cases := []string{
+		"149.154.167.255",
+		"8.8.8.8",
+		"example.com",
+	}
+
+	for _, host := range cases {
+		if err := validateSOCKSTargetHost(host); err != nil {
+			t.Fatalf("expected host %q to be allowed, got %v", host, err)
+		}
+	}
+}
+
+func TestDialSOCKSStreamTargetRejectsBlockedTargetBeforeDial(t *testing.T) {
+	s := newTestServerForStreamSyn("SOCKS5")
+	s.useExternalSOCKS5 = true
+	s.dialStreamUpstreamFn = func(network string, address string, timeout time.Duration) (net.Conn, error) {
+		t.Fatalf("unexpected dial attempt to %s", address)
+		return nil, nil
+	}
+
+	if _, err := s.dialSOCKSStreamTarget("127.0.0.1", 80, []byte{0x01, 0x7f, 0x00, 0x00, 0x01, 0x00, 0x50}); err == nil {
+		t.Fatal("expected blocked target error")
+	}
+}
+
+func TestMapSOCKSConnectErrorMapsBlockedTargetToRulesetDenied(t *testing.T) {
+	s := newTestServerForStreamSyn("SOCKS5")
+	if got := s.mapSOCKSConnectError(&blockedSOCKSTargetError{host: "127.0.0.1"}); got != Enums.PACKET_SOCKS5_RULESET_DENIED {
+		t.Fatalf("unexpected packet type: got=%d want=%d", got, Enums.PACKET_SOCKS5_RULESET_DENIED)
+	}
+}
+
 func packetWithSession(packetType uint8, sessionID uint8, cookie uint8, streamID uint16) VpnProto.Packet {
 	return VpnProto.Packet{
 		SessionID:      sessionID,

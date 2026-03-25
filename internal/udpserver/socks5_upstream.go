@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 
 	Enums "masterdnsvpn-go/internal/enums"
@@ -21,6 +22,10 @@ import (
 type upstreamSOCKS5Error struct {
 	packetType uint8
 	err        error
+}
+
+type blockedSOCKSTargetError struct {
+	host string
 }
 
 var (
@@ -48,6 +53,13 @@ func (e *upstreamSOCKS5Error) Unwrap() error {
 	return e.err
 }
 
+func (e *blockedSOCKSTargetError) Error() string {
+	if e == nil || e.host == "" {
+		return "blocked socks target"
+	}
+	return fmt.Sprintf("blocked socks target: %s", e.host)
+}
+
 func (s *Server) dialSOCKSStreamTarget(host string, port uint16, targetPayload []byte) (net.Conn, error) {
 	if s == nil {
 		return nil, &upstreamSOCKS5Error{
@@ -56,10 +68,52 @@ func (s *Server) dialSOCKSStreamTarget(host string, port uint16, targetPayload [
 		}
 	}
 
+	if err := validateSOCKSTargetHost(host); err != nil {
+		return nil, err
+	}
+
 	if !s.useExternalSOCKS5 || len(targetPayload) == 0 {
 		return s.dialTCPTarget(net.JoinHostPort(host, strconv.Itoa(int(port))))
 	}
 	return s.dialExternalSOCKS5Target(targetPayload)
+}
+
+func validateSOCKSTargetHost(host string) error {
+	trimmed := strings.TrimSpace(host)
+	if trimmed == "" {
+		return &blockedSOCKSTargetError{host: host}
+	}
+
+	lower := strings.ToLower(trimmed)
+	if lower == "localhost" || strings.HasSuffix(lower, ".localhost") {
+		return &blockedSOCKSTargetError{host: host}
+	}
+
+	ip := net.ParseIP(trimmed)
+	if ip == nil {
+		return nil
+	}
+
+	if !ip.IsGlobalUnicast() ||
+		ip.IsLoopback() ||
+		ip.IsPrivate() ||
+		ip.IsMulticast() ||
+		ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() ||
+		ip.IsUnspecified() {
+		return &blockedSOCKSTargetError{host: host}
+	}
+
+	if v4 := ip.To4(); v4 != nil {
+		if v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127 {
+			return &blockedSOCKSTargetError{host: host}
+		}
+		if v4[0] == 198 && (v4[1] == 18 || v4[1] == 19) {
+			return &blockedSOCKSTargetError{host: host}
+		}
+	}
+
+	return nil
 }
 
 func (s *Server) dialTCPTarget(address string) (net.Conn, error) {
