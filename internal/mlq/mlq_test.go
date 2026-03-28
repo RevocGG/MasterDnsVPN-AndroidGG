@@ -136,6 +136,27 @@ func TestMLQClearInvokesCallbackAndResetsState(t *testing.T) {
 	}
 }
 
+func TestMLQPeekReturnsHeadWithoutRemoving(t *testing.T) {
+	q := New[*testItem](4)
+
+	q.Push(2, 1, &testItem{key: 1, value: "later"})
+	q.Push(1, 2, &testItem{key: 2, value: "first"})
+
+	item, prio, ok := q.Peek()
+	if !ok || prio != 1 || item.value != "first" {
+		t.Fatalf("unexpected Peek result: ok=%v prio=%d value=%v", ok, prio, item)
+	}
+
+	if q.Size() != 2 {
+		t.Fatalf("peek should not remove item, size=%d", q.Size())
+	}
+
+	item, prio, ok = q.Pop(testKey)
+	if !ok || prio != 1 || item.value != "first" {
+		t.Fatalf("unexpected pop after peek: ok=%v prio=%d value=%v", ok, prio, item)
+	}
+}
+
 func TestMLQRemoveByKeyRemovesQueuedItem(t *testing.T) {
 	q := New[*testItem](8)
 

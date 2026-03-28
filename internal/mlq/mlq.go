@@ -73,6 +73,29 @@ func (m *MultiLevelQueue[T]) Pop(keyExtractor func(T) uint64) (T, int, bool) {
 	return m.popLocked(keyExtractor)
 }
 
+// Peek returns the highest-priority queued item without removing it.
+func (m *MultiLevelQueue[T]) Peek() (T, int, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var zero T
+	if m.bitmask == 0 {
+		return zero, 0, false
+	}
+
+	tempMask := m.bitmask
+	for tempMask != 0 {
+		priority := bits.TrailingZeros16(tempMask)
+		q := &m.queues[priority]
+		if len(q.Items) > 0 {
+			return q.Items[0], priority, true
+		}
+		tempMask &= ^(1 << uint(priority))
+	}
+
+	return zero, 0, false
+}
+
 func (m *MultiLevelQueue[T]) popLocked(keyExtractor func(T) uint64) (T, int, bool) {
 	var zero T
 	for m.bitmask != 0 {

@@ -9,6 +9,7 @@ package client
 
 import (
 	"context"
+	"net"
 	"testing"
 	"time"
 
@@ -73,6 +74,32 @@ func TestClearTxSignal(t *testing.T) {
 	case <-c.txSignal:
 		t.Fatal("txSignal should be empty")
 	default:
+	}
+}
+
+func TestClearTxSpaceSignal(t *testing.T) {
+	c := createTestClient(t)
+	c.txSpaceSignal = make(chan struct{}, 5)
+	c.txSpaceSignal <- struct{}{}
+	c.txSpaceSignal <- struct{}{}
+
+	c.clearTxSpaceSignal()
+
+	select {
+	case <-c.txSpaceSignal:
+		t.Fatal("txSpaceSignal should be empty")
+	default:
+	}
+}
+
+func TestOnRXDropIncrementsCounter(t *testing.T) {
+	c := createTestClient(t)
+	addr := &net.UDPAddr{IP: net.IPv4(8, 8, 8, 8), Port: 53}
+
+	c.onRXDrop(addr)
+
+	if got := c.rxDroppedPackets.Load(); got != 1 {
+		t.Fatalf("expected rxDroppedPackets=1, got %d", got)
 	}
 }
 

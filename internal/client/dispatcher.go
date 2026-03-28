@@ -28,13 +28,31 @@ func (c *Client) selectTargetConnections(packetType uint8, streamID uint16) []Co
 // asyncStreamDispatcher cycles through all active streams using a fair Round-Robin algorithm
 // and transmits the highest priority packets to the TX workers, packing control blocks when possible.
 func (c *Client) asyncStreamDispatcher(ctx context.Context) {
-	c.log.Debugf("🚀 <cyan>Stream Dispatcher started</cyan>")
+	c.log.Debugf("Stream Dispatcher started")
 	defer c.asyncWG.Done()
 
 	var rrCursor int32 = -1
 	idlePoll := c.cfg.DispatcherIdlePollInterval()
 	idleTimer := time.NewTimer(idlePoll)
 	defer idleTimer.Stop()
+
+	waitForWork := func() bool {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-c.txSignal:
+		case <-c.txSpaceSignal:
+		case <-idleTimer.C:
+		}
+		if !idleTimer.Stop() {
+			select {
+			case <-idleTimer.C:
+			default:
+			}
+		}
+		idleTimer.Reset(idlePoll)
+		return true
+	}
 
 dispatchLoop:
 	for {
@@ -53,34 +71,21 @@ dispatchLoop:
 		}
 
 		if len(ids) == 0 {
-			// Wait for signal or timeout
-			select {
-			case <-ctx.Done():
+			if !waitForWork() {
 				return
-			case <-c.txSignal:
-			case <-idleTimer.C:
 			}
-			if !idleTimer.Stop() {
-				select {
-				case <-idleTimer.C:
-				default:
-				}
-			}
-			idleTimer.Reset(idlePoll)
 			continue
 		}
 
 		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 
-		// Find the next stream to serve using fair Round-Robin across all active streams.
 		var selected *Stream_client
-		var item *clientStreamTXPacket
-		var ok bool
+		var peekedItem *clientStreamTXPacket
+		var peekedOK bool
 		var selectedStreamID uint16
-		var selectedID int32 = -2 // -2 means nothing selected
+		var selectedID int32 = -2
 		rrApplied := false
 
-		// Start search from rrCursor
 		startIndex := -1
 		for i, id := range ids {
 			if id >= rrCursor {
@@ -100,13 +105,12 @@ dispatchLoop:
 				if c.orphanQueue == nil || c.orphanQueue.Size() == 0 {
 					continue
 				}
-				p, _, popOk := c.orphanQueue.Pop(func(p VpnProto.Packet) uint64 {
-					return Enums.PacketTypeStreamKey(p.StreamID, p.PacketType)
-				})
-				if !popOk {
+				p, _, ok := c.orphanQueue.Peek()
+				if !ok {
 					continue
 				}
-				item = &clientStreamTXPacket{
+
+				peekedItem = &clientStreamTXPacket{
 					PacketType:     p.PacketType,
 					SequenceNum:    p.SequenceNum,
 					FragmentID:     p.FragmentID,
@@ -116,28 +120,27 @@ dispatchLoop:
 
 				selectedStreamID = p.StreamID
 				selectedID = -1
-				ok = true
+				peekedOK = true
 			} else {
 				s := streams[uint16(id)]
 				if s == nil || s.txQueue == nil {
 					continue
 				}
-				item, _, ok = s.PopNextTXPacket()
-				if ok {
+				peekedItem, _, peekedOK = s.txQueue.Peek()
+				if peekedOK {
 					selectedStreamID = uint16(id)
 					selectedID = int32(id)
 					selected = s
 				}
 			}
 
-			if ok && item != nil {
+			if peekedOK && peekedItem != nil {
 				if !rrApplied {
 					rrCursor = id + 1
 					rrApplied = true
 				}
 
-				// If it's a PING from Stream 0, try to find useful data from other streams to send instead.
-				if id == 0 && item.PacketType == Enums.PACKET_PING {
+				if id == 0 && peekedItem.PacketType == Enums.PACKET_PING {
 					hasOtherWork := false
 					for _, otherID := range ids {
 						if otherID == 0 {
@@ -157,12 +160,9 @@ dispatchLoop:
 						}
 					}
 					if hasOtherWork {
-						if selected != nil {
-							selected.ReleaseTXPacket(item)
-						}
-						item = nil
-						ok = false
-						continue // Find the next stream with real data in this round
+						peekedItem = nil
+						peekedOK = false
+						continue
 					}
 				}
 
@@ -170,22 +170,49 @@ dispatchLoop:
 			}
 		}
 
-		if selectedID == -2 || item == nil {
-			// Wait for signal or timeout
-			select {
-			case <-ctx.Done():
+		if selectedID == -2 || peekedItem == nil {
+			if !waitForWork() {
 				return
-			case <-c.txSignal:
-			case <-idleTimer.C:
 			}
-			if !idleTimer.Stop() {
-				select {
-				case <-idleTimer.C:
-				default:
-				}
-			}
-			idleTimer.Reset(idlePoll)
 			continue
+		}
+
+		conns := c.selectTargetConnections(peekedItem.PacketType, selectedStreamID)
+		if len(conns) == 0 {
+			if !waitForWork() {
+				return
+			}
+			continue dispatchLoop
+		}
+
+		if !c.txChannelHasCapacity(len(conns)) {
+			if !waitForWork() {
+				return
+			}
+			continue dispatchLoop
+		}
+
+		var item *clientStreamTXPacket
+		var ok bool
+		if selected != nil {
+			item, _, ok = selected.PopNextTXPacket()
+			if !ok || item == nil {
+				continue dispatchLoop
+			}
+		} else {
+			p, _, ok := c.orphanQueue.Pop(func(p VpnProto.Packet) uint64 {
+				return Enums.PacketTypeStreamKey(p.StreamID, p.PacketType)
+			})
+			if !ok {
+				continue dispatchLoop
+			}
+			item = &clientStreamTXPacket{
+				PacketType:     p.PacketType,
+				SequenceNum:    p.SequenceNum,
+				FragmentID:     p.FragmentID,
+				TotalFragments: p.TotalFragments,
+				Payload:        nil,
+			}
 		}
 
 		if selected != nil &&
@@ -211,15 +238,14 @@ dispatchLoop:
 			payload = VpnProto.AppendPackedControlBlock(payload, item.PacketType, selectedStreamID, item.SequenceNum, item.FragmentID, item.TotalFragments)
 			blocks := 1
 
-			// Pop more from current stream if possible
 			if selected != nil {
 				for blocks < maxBlocks {
-					popped, poppedOk := selected.txQueue.PopAnyIf(func(p *clientStreamTXPacket) bool {
+					popped, poppedOK := selected.txQueue.PopAnyIf(func(p *clientStreamTXPacket) bool {
 						return VpnProto.IsPackableControlPacket(p.PacketType, len(p.Payload))
 					}, func(p *clientStreamTXPacket) uint64 {
 						return Enums.PacketIdentityKey(selected.StreamID, p.PacketType, p.SequenceNum, p.FragmentID)
 					})
-					if !poppedOk {
+					if !poppedOK {
 						break
 					}
 					payload = VpnProto.AppendPackedControlBlock(payload, popped.PacketType, selected.StreamID, popped.SequenceNum, popped.FragmentID, popped.TotalFragments)
@@ -227,14 +253,13 @@ dispatchLoop:
 					selected.ReleaseTXPacket(popped)
 				}
 			} else if selectedID == -1 {
-				// Packing from orphanQueue
 				for blocks < maxBlocks {
-					popped, poppedOk := c.orphanQueue.PopAnyIf(func(p VpnProto.Packet) bool {
+					popped, poppedOK := c.orphanQueue.PopAnyIf(func(p VpnProto.Packet) bool {
 						return VpnProto.IsPackableControlPacket(p.PacketType, 0)
 					}, func(p VpnProto.Packet) uint64 {
 						return Enums.PacketTypeStreamKey(p.StreamID, p.PacketType)
 					})
-					if !poppedOk {
+					if !poppedOK {
 						break
 					}
 					payload = VpnProto.AppendPackedControlBlock(payload, popped.PacketType, popped.StreamID, popped.SequenceNum, popped.FragmentID, popped.TotalFragments)
@@ -242,7 +267,6 @@ dispatchLoop:
 				}
 			}
 
-			// Pop from other streams to fill block if space remains
 			if blocks < maxBlocks {
 				for _, otherID := range ids {
 					if blocks >= maxBlocks {
@@ -254,12 +278,12 @@ dispatchLoop:
 
 					if otherID == -1 {
 						for blocks < maxBlocks {
-							popped, poppedOk := c.orphanQueue.PopAnyIf(func(p VpnProto.Packet) bool {
+							popped, poppedOK := c.orphanQueue.PopAnyIf(func(p VpnProto.Packet) bool {
 								return VpnProto.IsPackableControlPacket(p.PacketType, 0)
 							}, func(p VpnProto.Packet) uint64 {
 								return Enums.PacketTypeStreamKey(p.StreamID, p.PacketType)
 							})
-							if !poppedOk {
+							if !poppedOK {
 								break
 							}
 							payload = VpnProto.AppendPackedControlBlock(payload, popped.PacketType, popped.StreamID, popped.SequenceNum, popped.FragmentID, popped.TotalFragments)
@@ -273,12 +297,12 @@ dispatchLoop:
 						continue
 					}
 					for blocks < maxBlocks {
-						popped, poppedOk := otherStream.txQueue.PopAnyIf(func(p *clientStreamTXPacket) bool {
+						popped, poppedOK := otherStream.txQueue.PopAnyIf(func(p *clientStreamTXPacket) bool {
 							return VpnProto.IsPackableControlPacket(p.PacketType, len(p.Payload))
 						}, func(p *clientStreamTXPacket) uint64 {
 							return Enums.PacketIdentityKey(uint16(otherID), p.PacketType, p.SequenceNum, p.FragmentID)
 						})
-						if !poppedOk {
+						if !poppedOK {
 							break
 						}
 						payload = VpnProto.AppendPackedControlBlock(payload, popped.PacketType, uint16(otherID), popped.SequenceNum, popped.FragmentID, popped.TotalFragments)
@@ -306,19 +330,6 @@ dispatchLoop:
 
 		c.pingManager.NotifyPacket(finalPacket.packetType, false)
 		finalPacket.streamID = selectedStreamID
-
-		conns := c.selectTargetConnections(finalPacket.packetType, selectedStreamID)
-		if len(conns) == 0 {
-			if !wasPacked {
-				if selected != nil {
-					key := Enums.PacketIdentityKey(selected.StreamID, item.PacketType, item.SequenceNum, item.FragmentID)
-					selected.txQueue.Push(0, key, item)
-				} else if selectedID == -1 {
-					c.enqueueOrphanReset(item.PacketType, selectedStreamID, item.SequenceNum)
-				}
-			}
-			continue
-		}
 
 		for _, conn := range conns {
 			domain := conn.Domain
@@ -365,6 +376,7 @@ dispatchLoop:
 			select {
 			case c.txChannel <- pkt:
 			default:
+				c.log.Warnf("TX channel filled before enqueue completed | Packet: %s | Stream: %d", Enums.PacketTypeName(finalPacket.packetType), selectedStreamID)
 			}
 		}
 

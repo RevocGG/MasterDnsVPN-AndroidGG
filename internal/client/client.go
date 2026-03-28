@@ -92,6 +92,8 @@ type Client struct {
 	sessionResetPending atomic.Bool
 	runtimeResetPending atomic.Bool
 	sessionResetSignal  chan struct{}
+	rxDroppedPackets    atomic.Uint64
+	lastRXDropLogUnix   atomic.Int64
 
 	// Async Runtime Workers & Channels
 	asyncWG              sync.WaitGroup
@@ -116,8 +118,9 @@ type Client struct {
 	recentlyClosedMu      sync.Mutex
 	recentlyClosedStreams map[uint16]time.Time
 
-	// Signal to wake up dispatcher
-	txSignal chan struct{}
+	// Signals to wake up dispatcher.
+	txSignal      chan struct{}
+	txSpaceSignal chan struct{}
 
 	// Autonomous Ping Manager
 	pingManager *PingManager
@@ -240,6 +243,7 @@ func New(cfg config.ClientConfig, log *logger.Logger, codec *security.Codec) *Cl
 		active_streams:        make(map[uint16]*Stream_client),
 		recentlyClosedStreams: make(map[uint16]time.Time),
 		txSignal:              make(chan struct{}, 1),
+		txSpaceSignal:         make(chan struct{}, 1),
 
 		// DNS Management
 		localDNSCache: dnsCache.New(
