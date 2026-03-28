@@ -71,6 +71,7 @@ type arqDataItem struct {
 	LastSentAt      time.Time
 	Retries         int
 	CurrentRTO      time.Duration
+	SampleEligible  bool
 	CompressionType uint8
 	TTL             time.Duration
 }
@@ -87,7 +88,15 @@ type arqControlItem struct {
 	LastSentAt     time.Time
 	Retries        int
 	CurrentRTO     time.Duration
+	SampleEligible bool
 	TTL            time.Duration
+}
+
+type adaptiveRTOState struct {
+	srtt        time.Duration
+	rttvar      time.Duration
+	currentBase time.Duration
+	initialized bool
 }
 
 type rtxJob struct {
@@ -170,6 +179,8 @@ type ARQ struct {
 	controlMaxRto            time.Duration
 	controlMaxRetries        int
 	controlPacketTTL         time.Duration
+	dataAdaptiveRTO          adaptiveRTOState
+	controlAdaptiveRTO       adaptiveRTOState
 	dataNackMaxGap           int
 	dataNackRepeatInterval   time.Duration
 
@@ -348,6 +359,8 @@ func NewARQ(streamID uint16, sessionID uint8, enqueuer PacketEnqueuer, localConn
 	userControlMaxRto := maxF(0.05, cfg.ControlMaxRTO)
 	a.controlMaxRto = time.Duration(userControlMaxRto * float64(time.Second))
 	a.controlRto = time.Duration(minF(maxF(0.05, cfg.ControlRTO), userControlMaxRto) * float64(time.Second))
+	a.dataAdaptiveRTO = adaptiveRTOState{currentBase: a.rto}
+	a.controlAdaptiveRTO = adaptiveRTOState{currentBase: a.controlRto}
 
 	a.ctx, a.cancel = context.WithCancel(context.Background())
 	return a
@@ -448,6 +461,40 @@ func maxI(x, y int) int {
 	return y
 }
 
+func absDuration(d time.Duration) time.Duration {
+	if d < 0 {
+		return -d
+	}
+	return d
+}
+
+func clampDuration(v, minV, maxV time.Duration) time.Duration {
+	if v < minV {
+		return minV
+	}
+	if v > maxV {
+		return maxV
+	}
+	return v
+}
+
+func updateAdaptiveRTO(state adaptiveRTOState, sample, minRTO, maxRTO time.Duration) adaptiveRTOState {
+	sample = clampDuration(sample, minRTO, maxRTO)
+
+	if !state.initialized {
+		state.srtt = sample
+		state.rttvar = sample / 2
+		state.initialized = true
+	} else {
+		delta := absDuration(state.srtt - sample)
+		state.rttvar = time.Duration((3*state.rttvar + delta) / 4)
+		state.srtt = time.Duration((7*state.srtt + sample) / 8)
+	}
+
+	state.currentBase = clampDuration(state.srtt+4*state.rttvar, minRTO, maxRTO)
+	return state
+}
+
 // ---------------------------------------------------------------------
 // Flow Control & Shared State Helpers
 // ---------------------------------------------------------------------
@@ -515,6 +562,34 @@ func (a *ARQ) clearAllQueues(clearControl bool) {
 	clear(a.lastDataNackSent)
 
 	a.signalWindowNotFull()
+}
+
+func (a *ARQ) currentDataBaseRTO() time.Duration {
+	base := a.dataAdaptiveRTO.currentBase
+	if base <= 0 {
+		return a.rto
+	}
+	return clampDuration(base, a.rto, a.maxRTO)
+}
+
+func (a *ARQ) currentControlBaseRTO() time.Duration {
+	base := a.controlAdaptiveRTO.currentBase
+	if base <= 0 {
+		return a.controlRto
+	}
+	return clampDuration(base, a.controlRto, a.controlMaxRto)
+}
+
+func (a *ARQ) noteSuccessfulDataSample(sample time.Duration) {
+	a.mu.Lock()
+	a.dataAdaptiveRTO = updateAdaptiveRTO(a.dataAdaptiveRTO, sample, a.rto, a.maxRTO)
+	a.mu.Unlock()
+}
+
+func (a *ARQ) noteSuccessfulControlSample(sample time.Duration) {
+	a.mu.Lock()
+	a.controlAdaptiveRTO = updateAdaptiveRTO(a.controlAdaptiveRTO, sample, a.controlRto, a.controlMaxRto)
+	a.mu.Unlock()
 }
 
 // ---------------------------------------------------------------------
@@ -706,13 +781,15 @@ func (a *ARQ) ioLoop() {
 			a.lastActivity = time.Now()
 			sn := a.sndNxt
 			a.sndNxt++
+			currentRTO := a.currentDataBaseRTO()
 
 			a.sndBuf[sn] = &arqDataItem{
 				Data:            raw,
 				CreatedAt:       time.Now(),
 				LastSentAt:      time.Now(),
 				Retries:         0,
-				CurrentRTO:      a.rto,
+				CurrentRTO:      currentRTO,
+				SampleEligible:  true,
 				CompressionType: a.compressionType,
 				TTL:             0,
 			}
@@ -1176,10 +1253,17 @@ func (a *ARQ) isGracefulCloseInProgress() bool {
 // It returns true only when this ARQ instance was actually tracking the data packet.
 func (a *ARQ) ReceiveAck(packetType uint8, sn uint16) bool {
 	a.mu.Lock()
-	a.lastActivity = time.Now()
+	now := time.Now()
+	a.lastActivity = now
 	handled := false
+	var sample time.Duration
+	sampleEligible := false
 
-	if _, exists := a.sndBuf[sn]; exists {
+	if info, exists := a.sndBuf[sn]; exists {
+		if info.SampleEligible && !info.LastSentAt.IsZero() {
+			sample = now.Sub(info.LastSentAt)
+			sampleEligible = true
+		}
 		delete(a.sndBuf, sn)
 		if len(a.sndBuf) < a.limit {
 			a.signalWindowNotFull()
@@ -1189,6 +1273,9 @@ func (a *ARQ) ReceiveAck(packetType uint8, sn uint16) bool {
 	a.mu.Unlock()
 
 	if handled {
+		if sampleEligible {
+			a.noteSuccessfulDataSample(sample)
+		}
 		if remover, ok := a.enqueuer.(queuedDataRemover); ok {
 			remover.RemoveQueuedData(sn)
 		}
@@ -1228,6 +1315,11 @@ func (a *ARQ) HandleDataNack(sn uint16) bool {
 	if !ok {
 		return false
 	}
+	a.mu.Lock()
+	if info, exists := a.sndBuf[sn]; exists {
+		info.SampleEligible = false
+	}
+	a.mu.Unlock()
 	return true
 }
 
@@ -1330,7 +1422,7 @@ func (a *ARQ) SendControlPacketWithTTL(packetType uint8, sequenceNum uint16, fra
 		return true
 	}
 
-	initialRTO := a.controlRto
+	initialRTO := a.currentControlBaseRTO()
 	if setupControlPacketTypes[packetType] {
 		altRto := 350 * time.Millisecond
 		if altRto < initialRTO {
@@ -1350,6 +1442,7 @@ func (a *ARQ) SendControlPacketWithTTL(packetType uint8, sequenceNum uint16, fra
 		LastSentAt:     now,
 		Retries:        0,
 		CurrentRTO:     initialRTO,
+		SampleEligible: true,
 		TTL:            ttl,
 	}
 
@@ -1395,7 +1488,8 @@ func (a *ARQ) handleWaitingTerminalAck(ackPacketType uint8, isWaitingFin bool, i
 
 func (a *ARQ) ReceiveControlAck(ackPacketType uint8, sequenceNum uint16, fragmentID uint8) bool {
 	a.mu.Lock()
-	a.lastActivity = time.Now()
+	now := time.Now()
+	a.lastActivity = now
 	originPtype, ok := Enums.ReverseControlAckFor(ackPacketType)
 	if !ok {
 		a.mu.Unlock()
@@ -1403,8 +1497,10 @@ func (a *ARQ) ReceiveControlAck(ackPacketType uint8, sequenceNum uint16, fragmen
 	}
 
 	key := uint32(originPtype)<<24 | uint32(sequenceNum)<<8 | uint32(fragmentID)
-	_, tracked := a.controlSndBuf[key]
+	info, tracked := a.controlSndBuf[key]
 	_, isCloseStreamPacket := Enums.GetPacketCloseStream(originPtype)
+	var sample time.Duration
+	sampleEligible := false
 
 	if !tracked && isCloseStreamPacket {
 		for _, info := range a.controlSndBuf {
@@ -1425,6 +1521,10 @@ func (a *ARQ) ReceiveControlAck(ackPacketType uint8, sequenceNum uint16, fragmen
 	}
 
 	if tracked {
+		if info != nil && info.SampleEligible && !info.LastSentAt.IsZero() {
+			sample = now.Sub(info.LastSentAt)
+			sampleEligible = true
+		}
 		if isCloseStreamPacket {
 			for trackedKey, info := range a.controlSndBuf {
 				if info.PacketType == originPtype {
@@ -1436,6 +1536,10 @@ func (a *ARQ) ReceiveControlAck(ackPacketType uint8, sequenceNum uint16, fragmen
 		}
 	}
 	a.mu.Unlock()
+
+	if tracked && sampleEligible {
+		a.noteSuccessfulControlSample(sample)
+	}
 
 	if tracked && a.handleTrackedTerminalAck(originPtype) {
 		return true
@@ -1539,10 +1643,12 @@ func (a *ARQ) checkRetransmits() {
 		a.mu.Lock()
 		info, exists := a.sndBuf[j.sn]
 		if exists {
+			dataFloor := a.currentDataBaseRTO()
 			info.LastSentAt = now
 			info.Retries++
+			info.SampleEligible = false
 			grownRTO := time.Duration(float64(info.CurrentRTO) * 1.2)
-			info.CurrentRTO = time.Duration(minF(float64(a.maxRTO), maxF(float64(a.rto), float64(grownRTO))))
+			info.CurrentRTO = clampDuration(grownRTO, dataFloor, a.maxRTO)
 		}
 		a.mu.Unlock()
 	}
@@ -1736,8 +1842,9 @@ func (a *ARQ) checkControlRetransmits(now time.Time) {
 
 		info.LastSentAt = now
 		info.Retries++
+		info.SampleEligible = false
 		growth := 1.2
-		floorRto := a.controlRto
+		floorRto := a.currentControlBaseRTO()
 
 		if setupControlPacketTypes[info.PacketType] {
 			growth = 1.1
@@ -1748,7 +1855,7 @@ func (a *ARQ) checkControlRetransmits(now time.Time) {
 		}
 
 		grownRTO := time.Duration(float64(info.CurrentRTO) * growth)
-		info.CurrentRTO = time.Duration(minF(float64(a.controlMaxRto), maxF(float64(floorRto), float64(grownRTO))))
+		info.CurrentRTO = clampDuration(grownRTO, floorRto, a.controlMaxRto)
 	}
 }
 

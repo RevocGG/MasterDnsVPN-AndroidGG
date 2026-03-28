@@ -644,6 +644,117 @@ func TestARQ_ClearAllQueuesDropsRememberedDataNacks(t *testing.T) {
 	}
 }
 
+func TestARQ_DataAckUpdatesAdaptiveBaseRTO(t *testing.T) {
+	enq := NewMockPacketEnqueuer()
+	a := NewARQ(1, 1, enq, nil, 1200, &testLogger{t}, Config{
+		WindowSize: 32,
+		RTO:        0.1,
+		MaxRTO:     0.5,
+	})
+
+	sentAt := time.Now().Add(-220 * time.Millisecond)
+	a.sndBuf[7] = &arqDataItem{
+		Data:           []byte("hello"),
+		CreatedAt:      sentAt,
+		LastSentAt:     sentAt,
+		CurrentRTO:     a.rto,
+		SampleEligible: true,
+	}
+
+	if !a.ReceiveAck(Enums.PACKET_STREAM_DATA_ACK, 7) {
+		t.Fatal("expected tracked data ack")
+	}
+
+	a.mu.RLock()
+	base := a.dataAdaptiveRTO.currentBase
+	initialized := a.dataAdaptiveRTO.initialized
+	a.mu.RUnlock()
+
+	if !initialized {
+		t.Fatal("expected adaptive data RTO estimator to initialize")
+	}
+	if base <= a.rto {
+		t.Fatalf("expected adaptive data base RTO to rise above initial %s, got %s", a.rto, base)
+	}
+	if base > a.maxRTO {
+		t.Fatalf("expected adaptive data base RTO <= max %s, got %s", a.maxRTO, base)
+	}
+}
+
+func TestARQ_DataAckSkipsAdaptiveSampleAfterRetransmit(t *testing.T) {
+	enq := NewMockPacketEnqueuer()
+	a := NewARQ(1, 1, enq, nil, 1200, &testLogger{t}, Config{
+		WindowSize: 32,
+		RTO:        0.1,
+		MaxRTO:     0.5,
+	})
+
+	before := a.dataAdaptiveRTO
+	sentAt := time.Now().Add(-220 * time.Millisecond)
+	a.sndBuf[8] = &arqDataItem{
+		Data:           []byte("hello"),
+		CreatedAt:      sentAt,
+		LastSentAt:     sentAt,
+		CurrentRTO:     200 * time.Millisecond,
+		SampleEligible: false,
+	}
+
+	if !a.ReceiveAck(Enums.PACKET_STREAM_DATA_ACK, 8) {
+		t.Fatal("expected tracked data ack")
+	}
+
+	a.mu.RLock()
+	after := a.dataAdaptiveRTO
+	a.mu.RUnlock()
+
+	if after != before {
+		t.Fatalf("expected retransmitted packet ack to skip adaptive update: before=%+v after=%+v", before, after)
+	}
+}
+
+func TestARQ_ControlAckUpdatesAdaptiveBaseRTO(t *testing.T) {
+	enq := NewMockPacketEnqueuer()
+	a := NewARQ(1, 1, enq, nil, 1200, &testLogger{t}, Config{
+		WindowSize:               32,
+		RTO:                      0.1,
+		MaxRTO:                   0.5,
+		EnableControlReliability: true,
+		ControlRTO:               0.08,
+		ControlMaxRTO:            0.4,
+	})
+
+	key := uint32(Enums.PACKET_STREAM_SYN)<<24 | uint32(3)<<8
+	sentAt := time.Now().Add(-180 * time.Millisecond)
+	a.controlSndBuf[key] = &arqControlItem{
+		PacketType:     Enums.PACKET_STREAM_SYN,
+		SequenceNum:    3,
+		AckType:        Enums.PACKET_STREAM_SYN_ACK,
+		CreatedAt:      sentAt,
+		LastSentAt:     sentAt,
+		CurrentRTO:     a.controlRto,
+		SampleEligible: true,
+	}
+
+	if !a.ReceiveControlAck(Enums.PACKET_STREAM_SYN_ACK, 3, 0) {
+		t.Fatal("expected tracked control ack")
+	}
+
+	a.mu.RLock()
+	base := a.controlAdaptiveRTO.currentBase
+	initialized := a.controlAdaptiveRTO.initialized
+	a.mu.RUnlock()
+
+	if !initialized {
+		t.Fatal("expected adaptive control RTO estimator to initialize")
+	}
+	if base <= a.controlRto {
+		t.Fatalf("expected adaptive control base RTO to rise above initial %s, got %s", a.controlRto, base)
+	}
+	if base > a.controlMaxRto {
+		t.Fatalf("expected adaptive control base RTO <= max %s, got %s", a.controlMaxRto, base)
+	}
+}
+
 func TestARQ_OutOfOrderReceive(t *testing.T) {
 	enqueuer := NewMockPacketEnqueuer()
 	cfg := Config{
