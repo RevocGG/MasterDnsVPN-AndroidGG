@@ -79,7 +79,7 @@ dispatchLoop:
 		ids := cachedIDs
 		streams := cachedStreams
 
-		if c.orphanQueue != nil && c.orphanQueue.Size() > 0 {
+		if c.orphanQueue != nil && c.orphanQueue.FastSize() > 0 {
 			ids = append(ids[:len(ids):len(ids)], -1)
 		}
 
@@ -113,7 +113,7 @@ dispatchLoop:
 			id := ids[idx]
 
 			if id == -1 {
-				if c.orphanQueue == nil || c.orphanQueue.Size() == 0 {
+				if c.orphanQueue == nil || c.orphanQueue.FastSize() == 0 {
 					continue
 				}
 				p, _, ok := c.orphanQueue.Peek()
@@ -158,14 +158,14 @@ dispatchLoop:
 							continue
 						}
 						if otherID == -1 {
-							if c.orphanQueue != nil && c.orphanQueue.Size() > 0 {
+							if c.orphanQueue != nil && c.orphanQueue.FastSize() > 0 {
 								hasOtherWork = true
 								break
 							}
 							continue
 						}
 						os := streams[uint16(otherID)]
-						if os != nil && os.txQueue != nil && os.txQueue.Size() > 0 {
+						if os != nil && os.txQueue != nil && os.txQueue.FastSize() > 0 {
 							hasOtherWork = true
 							break
 						}
@@ -375,7 +375,7 @@ dispatchLoop:
 		}
 
 		packetByDomain := make(map[string][]byte, len(conns))
-		var isLogged bool = false
+		// var isLogged bool = false
 		for _, conn := range conns {
 			domain := conn.Domain
 			if domain == "" {
@@ -397,13 +397,13 @@ dispatchLoop:
 
 			select {
 			case c.txChannel <- pkt:
-				if !isLogged && pkt.packetType != Enums.PACKET_PING {
-					packedSummary := ""
-					if opts.PacketType == Enums.PACKET_PACKED_CONTROL_BLOCKS {
-						packedSummary = " | " + VpnProto.DescribePackedControlBlocks(opts.Payload, 4)
-					}
-					c.logOutboundPacket(opts.PacketType, opts.SessionID, len(opts.Payload), opts.StreamID, opts.SequenceNum, opts.FragmentID, opts.TotalFragments, packedSummary)
-				}
+				// if !isLogged && pkt.packetType != Enums.PACKET_PING {
+				// 	packedSummary := ""
+				// 	if opts.PacketType == Enums.PACKET_PACKED_CONTROL_BLOCKS {
+				// 		packedSummary = " | " + VpnProto.DescribePackedControlBlocks(opts.Payload, 4)
+				// 	}
+				// 	c.logOutboundPacket(opts.PacketType, opts.SessionID, len(opts.Payload), opts.StreamID, opts.SequenceNum, opts.FragmentID, opts.TotalFragments, packedSummary)
+				// }
 				// isLogged = true
 			default:
 				c.log.Warnf("TX channel filled before enqueue completed | Packet: %s | Stream: %d", Enums.PacketTypeName(finalPacket.packetType), selectedStreamID)

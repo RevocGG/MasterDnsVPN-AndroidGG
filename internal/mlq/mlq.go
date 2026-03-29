@@ -10,6 +10,7 @@ package mlq
 import (
 	"math/bits"
 	"sync"
+	"sync/atomic"
 )
 
 // PriorityQueue represents a single level of priority in the MLQ.
@@ -24,6 +25,7 @@ type MultiLevelQueue[T any] struct {
 
 	queues  [6]PriorityQueue[T]
 	bitmask uint16 // Bit i is 1 if queues[i] is not empty
+	fastSize atomic.Int32
 
 	// Global census for O(1) existence and duplicate prevention across all levels
 	census map[uint64]T
@@ -63,6 +65,7 @@ func (m *MultiLevelQueue[T]) Push(priority int, key uint64, item T) bool {
 	// 3. Update census and bitmask
 	m.census[key] = item
 	m.bitmask |= (1 << uint(priority))
+	m.fastSize.Add(1)
 
 	return true
 }
@@ -121,6 +124,7 @@ func (m *MultiLevelQueue[T]) popLocked(keyExtractor func(T) uint64) (T, int, boo
 		if keyExtractor != nil {
 			delete(m.census, keyExtractor(item))
 		}
+		m.fastSize.Add(-1)
 
 		if len(q.Items) == 0 {
 			m.bitmask &= ^(1 << uint(priority))
@@ -186,6 +190,7 @@ func (m *MultiLevelQueue[T]) RemoveByKey(key uint64, keyExtractor func(T) uint64
 			maybeCompactQueue(q)
 
 			delete(m.census, key)
+			m.fastSize.Add(-1)
 			if len(q.Items) == 0 {
 				m.bitmask &= ^(1 << uint(priority))
 			}
@@ -217,6 +222,14 @@ func (m *MultiLevelQueue[T]) Size() int {
 	return len(m.census)
 }
 
+// FastSize returns the exact queued item count using an atomic fast-path.
+func (m *MultiLevelQueue[T]) FastSize() int {
+	if m == nil {
+		return 0
+	}
+	return int(m.fastSize.Load())
+}
+
 // Clear empties all queues and reset the bitmask.
 // If a callback is provided, it is invoked for each item before clearing.
 func (m *MultiLevelQueue[T]) Clear(callback func(T)) {
@@ -234,6 +247,7 @@ func (m *MultiLevelQueue[T]) Clear(callback func(T)) {
 	}
 	clear(m.census)
 	m.bitmask = 0
+	m.fastSize.Store(0)
 }
 
 // HighestPriority returns the highest priority level currently containing items, or -1 if empty.
@@ -279,6 +293,7 @@ func (m *MultiLevelQueue[T]) PopIf(priority int, predicate func(T) bool, keyExtr
 	if keyExtractor != nil {
 		delete(m.census, keyExtractor(item))
 	}
+	m.fastSize.Add(-1)
 	if len(q.Items) == 0 {
 		m.bitmask &= ^(1 << uint(priority))
 	}
@@ -322,6 +337,7 @@ func (m *MultiLevelQueue[T]) PopAnyIf(maxPriority int, predicate func(T) bool, k
 					if keyExtractor != nil {
 						delete(m.census, keyExtractor(item))
 					}
+					m.fastSize.Add(-1)
 					if len(q.Items) == 0 {
 						m.bitmask &= ^(1 << uint(priority))
 					}

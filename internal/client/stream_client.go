@@ -196,7 +196,7 @@ func (s *Stream_client) PushTXPacket(priority int, packetType uint8, sequenceNum
 	priority = Enums.NormalizePacketPriority(packetType, priority)
 
 	// Skip Ping packets if the queue is already congested (prevent bloat)
-	if packetType == Enums.PACKET_PING && s.txQueue != nil && s.txQueue.Size() > 200 {
+	if packetType == Enums.PACKET_PING && s.txQueue != nil && s.txQueue.FastSize() > 200 {
 		return false
 	}
 

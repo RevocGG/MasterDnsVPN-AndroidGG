@@ -305,9 +305,9 @@ func (s *Server) dequeueSessionResponse(sessionID uint8, now time.Time) (*VpnPro
 	rrStreamID := record.RRStreamID
 	record.mu.Unlock()
 
-	activeIDs, activeStreams := record.activeStreamSnapshot()
-	hasOrphan := record.OrphanQueue != nil && record.OrphanQueue.Size() > 0
-	totalCandidates := len(activeIDs)
+	readyIDs, readyStreams := record.readyStreamSnapshot()
+	hasOrphan := record.OrphanQueue != nil && record.OrphanQueue.FastSize() > 0
+	totalCandidates := len(readyIDs)
 	if hasOrphan {
 		totalCandidates++
 	}
@@ -323,10 +323,10 @@ func (s *Server) dequeueSessionResponse(sessionID uint8, now time.Time) (*VpnPro
 			}
 			idx--
 		}
-		if idx < 0 || idx >= len(activeIDs) {
+		if idx < 0 || idx >= len(readyIDs) {
 			return 0, nil
 		}
-		return activeIDs[idx], activeStreams[idx]
+		return readyIDs[idx], readyStreams[idx]
 	}
 
 	for i := 0; i < totalCandidates; i++ {
@@ -370,9 +370,7 @@ func (s *Server) dequeueSessionResponse(sessionID uint8, now time.Time) (*VpnPro
 				continue
 			}
 			var popped *serverStreamTXPacket
-			popped, _, ok = stream.TXQueue.Pop(func(p *serverStreamTXPacket) uint64 {
-				return Enums.PacketIdentityKey(uint16(id), p.PacketType, p.SequenceNum, p.FragmentID)
-			})
+			popped, _, ok = stream.PopNextTXPacket()
 			if ok {
 				stream.NoteTXPacketDequeued(popped)
 				if (popped.PacketType == Enums.PACKET_STREAM_DATA || popped.PacketType == Enums.PACKET_STREAM_RESEND) &&
@@ -455,8 +453,8 @@ func (s *Server) packControlBlocks(record *sessionRecord, first *serverStreamTXP
 	payload = VpnProto.AppendPackedControlBlock(payload, first.PacketType, initialStreamID, first.SequenceNum, first.FragmentID, first.TotalFragments)
 	blocks := 1
 
-	activeIDs, activeStreams := record.activeStreamSnapshot()
-	hasOrphan := record.OrphanQueue != nil && record.OrphanQueue.Size() > 0
+	readyIDs, readyStreams := record.readyStreamSnapshot()
+	hasOrphan := record.OrphanQueue != nil && record.OrphanQueue.FastSize() > 0
 
 	processID := func(id int32, stream *Stream_server) bool {
 		if blocks >= limit {
@@ -465,6 +463,9 @@ func (s *Server) packControlBlocks(record *sessionRecord, first *serverStreamTXP
 
 		if id == -1 {
 			for blocks < limit {
+				if record.OrphanQueue == nil || record.OrphanQueue.FastSize() == 0 {
+					return false
+				}
 				popped, ok := record.OrphanQueue.PopAnyIf(2, func(p VpnProto.Packet) bool {
 					return VpnProto.IsPackableControlPacket(p.PacketType, 0)
 				}, func(p VpnProto.Packet) uint64 {
@@ -484,10 +485,11 @@ func (s *Server) packControlBlocks(record *sessionRecord, first *serverStreamTXP
 		}
 
 		for blocks < limit {
-			popped, ok := stream.TXQueue.PopAnyIf(2, func(p *serverStreamTXPacket) bool {
+			if stream.FastTXQueueSize() == 0 {
+				return false
+			}
+			popped, ok := stream.PopAnyTXPacket(2, func(p *serverStreamTXPacket) bool {
 				return VpnProto.IsPackableControlPacket(p.PacketType, len(p.Payload))
-			}, func(p *serverStreamTXPacket) uint64 {
-				return Enums.PacketIdentityKey(uint16(id), p.PacketType, p.SequenceNum, p.FragmentID)
 			})
 			if !ok {
 				return false
@@ -503,10 +505,10 @@ func (s *Server) packControlBlocks(record *sessionRecord, first *serverStreamTXP
 	var initialStream *Stream_server
 	var initialIndex int = -1
 	if initialID != -1 {
-		for i, id := range activeIDs {
+		for i, id := range readyIDs {
 			if id == initialID {
 				initialIndex = i
-				initialStream = activeStreams[i]
+				initialStream = readyStreams[i]
 				break
 			}
 		}
@@ -522,27 +524,27 @@ func (s *Server) packControlBlocks(record *sessionRecord, first *serverStreamTXP
 	}
 
 	if initialIndex >= 0 {
-		for i := initialIndex + 1; i < len(activeIDs); i++ {
-			if processID(activeIDs[i], activeStreams[i]) {
+		for i := initialIndex + 1; i < len(readyIDs); i++ {
+			if processID(readyIDs[i], readyStreams[i]) {
 				goto buildResult
 			}
 		}
 		for i := 0; i < initialIndex; i++ {
-			if processID(activeIDs[i], activeStreams[i]) {
+			if processID(readyIDs[i], readyStreams[i]) {
 				goto buildResult
 			}
 		}
 	} else {
-		for i, id := range activeIDs {
-			if processID(id, activeStreams[i]) {
+		for i, id := range readyIDs {
+			if processID(id, readyStreams[i]) {
 				goto buildResult
 			}
 		}
 	}
 
 	if initialID == -1 && hasOrphan {
-		for i, id := range activeIDs {
-			if processID(id, activeStreams[i]) {
+		for i, id := range readyIDs {
+			if processID(id, readyStreams[i]) {
 				goto buildResult
 			}
 		}

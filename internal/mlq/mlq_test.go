@@ -206,3 +206,60 @@ func TestMLQCompactsAfterHeavyPopShrink(t *testing.T) {
 		t.Fatalf("expected 248 items to remain, got %d", q.Size())
 	}
 }
+
+func TestMLQFastSizeTracksAllMutations(t *testing.T) {
+	q := New[*testItem](8)
+	if got := q.FastSize(); got != 0 {
+		t.Fatalf("expected initial FastSize=0, got %d", got)
+	}
+
+	if !q.Push(1, 1, &testItem{key: 1, value: "a"}) {
+		t.Fatal("push a failed")
+	}
+	if !q.Push(2, 2, &testItem{key: 2, value: "b"}) {
+		t.Fatal("push b failed")
+	}
+	if got := q.FastSize(); got != 2 {
+		t.Fatalf("expected FastSize=2 after pushes, got %d", got)
+	}
+
+	if _, ok := q.RemoveByKey(2, testKey); !ok {
+		t.Fatal("expected RemoveByKey to succeed")
+	}
+	if got := q.FastSize(); got != 1 {
+		t.Fatalf("expected FastSize=1 after RemoveByKey, got %d", got)
+	}
+
+	if _, ok := q.PopIf(1, func(item *testItem) bool {
+		return item != nil && item.key == 1
+	}, testKey); !ok {
+		t.Fatal("expected PopIf to succeed")
+	}
+	if got := q.FastSize(); got != 0 {
+		t.Fatalf("expected FastSize=0 after PopIf, got %d", got)
+	}
+
+	if !q.Push(0, 3, &testItem{key: 3, value: "c"}) {
+		t.Fatal("push c failed")
+	}
+	if !q.Push(1, 4, &testItem{key: 4, value: "d"}) {
+		t.Fatal("push d failed")
+	}
+	if got := q.FastSize(); got != 2 {
+		t.Fatalf("expected FastSize=2 before PopAnyIf, got %d", got)
+	}
+
+	if _, ok := q.PopAnyIf(5, func(item *testItem) bool {
+		return item != nil && item.key == 4
+	}, testKey); !ok {
+		t.Fatal("expected PopAnyIf to succeed")
+	}
+	if got := q.FastSize(); got != 1 {
+		t.Fatalf("expected FastSize=1 after PopAnyIf, got %d", got)
+	}
+
+	q.Clear(nil)
+	if got := q.FastSize(); got != 0 {
+		t.Fatalf("expected FastSize=0 after Clear, got %d", got)
+	}
+}

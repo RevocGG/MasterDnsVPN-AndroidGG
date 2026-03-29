@@ -269,6 +269,53 @@ func TestCollectIdleDeferredSessionsMarksIdleActiveSessionOncePerActivityWindow(
 	}
 }
 
+func TestSessionReadyStreamSnapshotTracksQueueTransitions(t *testing.T) {
+	record := newTestSessionRecord(41)
+	record.DownloadCompression = 0
+
+	stream1 := record.getOrCreateStream(1, arq.Config{}, nil, nil)
+	stream2 := record.getOrCreateStream(2, arq.Config{}, nil, nil)
+	if stream1 == nil || stream2 == nil {
+		t.Fatal("expected streams to be created")
+	}
+
+	if ids, _ := record.readyStreamSnapshot(); len(ids) != 0 {
+		t.Fatalf("expected no ready streams initially, got %v", ids)
+	}
+
+	if !stream1.PushTXPacket(Enums.DefaultPacketPriority(Enums.PACKET_STREAM_SYN_ACK), Enums.PACKET_STREAM_SYN_ACK, 10, 0, 0, 0, 0, nil) {
+		t.Fatal("expected stream1 packet to queue")
+	}
+	if !stream2.PushTXPacket(Enums.DefaultPacketPriority(Enums.PACKET_STREAM_CLOSE_READ_ACK), Enums.PACKET_STREAM_CLOSE_READ_ACK, 11, 0, 0, 0, 0, nil) {
+		t.Fatal("expected stream2 packet to queue")
+	}
+
+	ids, _ := record.readyStreamSnapshot()
+	if len(ids) != 2 || ids[0] != 1 || ids[1] != 2 {
+		t.Fatalf("expected ready stream snapshot [1 2], got %v", ids)
+	}
+
+	popped, _, ok := stream1.PopNextTXPacket()
+	if !ok || popped == nil {
+		t.Fatal("expected stream1 packet to pop")
+	}
+	putTXPacketToPool(popped)
+
+	ids, _ = record.readyStreamSnapshot()
+	if len(ids) != 1 || ids[0] != 2 {
+		t.Fatalf("expected only stream2 to remain ready, got %v", ids)
+	}
+
+	if !stream1.PushTXPacket(Enums.DefaultPacketPriority(Enums.PACKET_STREAM_CONNECTED), Enums.PACKET_STREAM_CONNECTED, 12, 0, 0, 0, 0, nil) {
+		t.Fatal("expected stream1 packet to requeue")
+	}
+
+	ids, _ = record.readyStreamSnapshot()
+	if len(ids) != 2 || ids[0] != 1 || ids[1] != 2 {
+		t.Fatalf("expected ready stream snapshot to recover to [1 2], got %v", ids)
+	}
+}
+
 func TestCleanupIdleDeferredSessionClearsDeferredStateWithoutClosingSession(t *testing.T) {
 	s := newTestServerForDeferredCleanup()
 	record := newTestSessionRecord(32)
