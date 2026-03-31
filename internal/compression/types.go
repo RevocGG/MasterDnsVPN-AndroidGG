@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/flate"
 	"encoding/binary"
+	"errors"
 	"io"
 	"sync"
 
@@ -18,7 +19,12 @@ const (
 	TypeZLIB = 3
 
 	DefaultMinSize = 100
+
+	// maxDecompressedSize caps decompressed output to prevent decompression bombs.
+	maxDecompressedSize = 10 * 1024 * 1024 // 10 MB
 )
+
+var ErrDecompressedTooLarge = errors.New("decompressed payload exceeds safety limit")
 
 const availableTypeMask uint8 = (1 << TypeOff) | (1 << TypeZSTD) | (1 << TypeLZ4) | (1 << TypeZLIB)
 
@@ -217,11 +223,15 @@ func decompressZLIB(data []byte) ([]byte, error) {
 	buffer.Reset()
 	defer deflateBufferPool.Put(buffer)
 
-	_, err := buffer.ReadFrom(stream)
+	_, err := io.Copy(buffer, io.LimitReader(stream, maxDecompressedSize+1))
 	_ = stream.Close()
 
 	if err != nil || reader.Len() != 0 {
 		return nil, io.ErrUnexpectedEOF
+	}
+
+	if buffer.Len() > maxDecompressedSize {
+		return nil, ErrDecompressedTooLarge
 	}
 
 	out := make([]byte, buffer.Len())
@@ -243,7 +253,13 @@ func decompressZSTD(data []byte) ([]byte, error) {
 	defer zstdDecoderPool.Put(decoder)
 
 	out, err := decoder.DecodeAll(data, nil)
-	return out, err
+	if err != nil {
+		return nil, err
+	}
+	if len(out) > maxDecompressedSize {
+		return nil, ErrDecompressedTooLarge
+	}
+	return out, nil
 }
 
 func compressLZ4(data []byte) ([]byte, error) {
