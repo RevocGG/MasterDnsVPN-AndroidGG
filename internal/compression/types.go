@@ -252,13 +252,25 @@ func decompressZSTD(data []byte) ([]byte, error) {
 	decoder := zstdDecoderPool.Get().(*zstd.Decoder)
 	defer zstdDecoderPool.Put(decoder)
 
-	out, err := decoder.DecodeAll(data, nil)
-	if err != nil {
+	if err := decoder.Reset(bytes.NewReader(data)); err != nil {
 		return nil, err
 	}
-	if len(out) > maxDecompressedSize {
+	defer decoder.Close()
+
+	buffer := deflateBufferPool.Get().(*bytes.Buffer)
+	buffer.Reset()
+	defer deflateBufferPool.Put(buffer)
+
+	if _, err := io.Copy(buffer, io.LimitReader(decoder, maxDecompressedSize+1)); err != nil {
+		return nil, err
+	}
+
+	if buffer.Len() > maxDecompressedSize {
 		return nil, ErrDecompressedTooLarge
 	}
+
+	out := make([]byte, buffer.Len())
+	copy(out, buffer.Bytes())
 	return out, nil
 }
 
@@ -289,8 +301,8 @@ func decompressLZ4(data []byte) ([]byte, error) {
 
 	// Read 4-byte original size (matches Python lz4.block behavior)
 	origSize := binary.LittleEndian.Uint32(data[0:4])
-	if origSize > 10*1024*1024 { // 10MB safety cap
-		return nil, io.ErrShortBuffer
+	if origSize > maxDecompressedSize {
+		return nil, ErrDecompressedTooLarge
 	}
 
 	out := make([]byte, origSize)
