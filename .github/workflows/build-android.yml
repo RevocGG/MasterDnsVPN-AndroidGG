@@ -38,7 +38,7 @@ on:
     - cron: "0 */6 * * *"          # every 6 h — checks upstream for updates
 
   push:
-    branches: [android-app]        # your working branch
+    branches: [main]               # your working branch
     paths:
       - "**.go"
       - "go.mod"
@@ -70,7 +70,7 @@ env:
   ANDROID_API: "26"
   UPSTREAM_REPO: "https://github.com/masterking32/MasterDnsVPN.git"
   UPSTREAM_BRANCH: "main"
-  OUR_BRANCH: "android-app"
+  OUR_BRANCH: "main"
 
 # ════════════════════════════════════════════════════════════════════════════
 # JOB 1 — Sync from upstream  (runs on schedule only)
@@ -144,10 +144,10 @@ jobs:
 
     steps:
       # ── Checkout ─────────────────────────────────────────────────────────
-      - name: Checkout ${{ env.OUR_BRANCH }}
+      - name: Checkout main
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.OUR_BRANCH }}
+          ref: main
           fetch-depth: 0
 
       # ── Go ────────────────────────────────────────────────────────────────
