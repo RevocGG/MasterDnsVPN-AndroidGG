@@ -1,0 +1,324 @@
+# ==============================================================================
+# MasterDnsVPN — Automated Android Build & Release
+#
+# HOW IT WORKS
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. Every 6 hours (schedule):
+#      • Fetches upstream https://github.com/masterking32/MasterDnsVPN
+#      • If upstream has new commits → merges them into `android-app` branch
+#        and pushes → then builds & publishes a pre-release
+#      • If nothing new → stops without building (saves CI minutes)
+#
+# 2. Push to android-app branch (your own changes):
+#      → builds & publishes a pre-release automatically
+#
+# 3. Push a tag  v1.2.3:
+#      → builds & publishes a full named release
+#
+# 4. Actions → Run workflow (manual):
+#      → builds & publishes, optionally with a custom version name
+#
+# REQUIRED SECRETS  (Settings → Secrets and variables → Actions)
+# ─────────────────────────────────────────────────────────────────────────────
+#   KEYSTORE_BASE64    base64 of your .jks file
+#                      PowerShell: [Convert]::ToBase64String(
+#                        [IO.File]::ReadAllBytes("android\masterdnsvpn-release.jks")
+#                      ) | Set-Clipboard
+#   KEYSTORE_PASSWORD  keystore password
+#   KEY_ALIAS          key alias inside the jks
+#   KEY_PASSWORD       key password
+#
+# If the secrets are not set the bundled keystore is used (test builds only).
+# ==============================================================================
+
+name: Build & Release Android
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"          # every 6 h — checks upstream for updates
+
+  push:
+    branches: [android-app]        # your working branch
+    paths:
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - "vendor/**"
+      - "android/**"
+      - ".github/workflows/build-android.yml"
+    tags:
+      - "v*"                       # release tag e.g. v1.2.3
+
+  workflow_dispatch:
+    inputs:
+      version_name:
+        description: "Version name (e.g. 1.3.0) — empty = auto date-based"
+        required: false
+        default: ""
+      prerelease:
+        description: "Mark as pre-release?"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  JAVA_VERSION: "17"
+  NDK_VERSION: "27.3.13750724"
+  ANDROID_API: "26"
+  UPSTREAM_REPO: "https://github.com/masterking32/MasterDnsVPN.git"
+  UPSTREAM_BRANCH: "main"
+  OUR_BRANCH: "android-app"
+
+# ════════════════════════════════════════════════════════════════════════════
+# JOB 1 — Sync from upstream  (runs on schedule only)
+# ════════════════════════════════════════════════════════════════════════════
+jobs:
+  sync_upstream:
+    name: "Sync <- upstream"
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    outputs:
+      updated: ${{ steps.check.outputs.updated }}
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.OUR_BRANCH }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git identity
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream "${{ env.UPSTREAM_REPO }}" 2>/dev/null || true
+          git fetch upstream "${{ env.UPSTREAM_BRANCH }}"
+
+      - name: Check for new upstream commits
+        id: check
+        run: |
+          NEW=$(git rev-list HEAD..upstream/${{ env.UPSTREAM_BRANCH }} --count)
+          echo "New upstream commits: $NEW"
+          if [ "$NEW" -gt "0" ]; then
+            echo "updated=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "No upstream changes - skipping build."
+            echo "updated=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Merge upstream into ${{ env.OUR_BRANCH }}
+        if: steps.check.outputs.updated == 'true'
+        run: |
+          # --strategy-option=ours keeps OUR version of any conflicting files
+          git merge "upstream/${{ env.UPSTREAM_BRANCH }}" \
+            --no-edit \
+            --strategy-option=ours \
+            -m "chore: sync upstream $(date -u +%Y-%m-%d)"
+          git show --stat HEAD
+
+      - name: Push merge commit
+        if: steps.check.outputs.updated == 'true'
+        run: git push origin "${{ env.OUR_BRANCH }}"
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # JOB 2 — Build .aar + APKs -> GitHub Release
+  # ════════════════════════════════════════════════════════════════════════════
+  build:
+    name: "Build & Release"
+    runs-on: ubuntu-latest
+
+    # On schedule: wait for sync_upstream and only run if it found new commits.
+    # On push / tag / dispatch: sync_upstream is skipped so always() lets us run.
+    needs: [sync_upstream]
+    if: |
+      always() && (
+        github.event_name != 'schedule' ||
+        needs.sync_upstream.outputs.updated == 'true'
+      )
+
+    steps:
+      # ── Checkout ─────────────────────────────────────────────────────────
+      - name: Checkout ${{ env.OUR_BRANCH }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.OUR_BRANCH }}
+          fetch-depth: 0
+
+      # ── Go ────────────────────────────────────────────────────────────────
+      - name: Set up Go (version from go.mod)
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      # ── Java ─────────────────────────────────────────────────────────────
+      - name: Set up Java ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+          cache: gradle
+
+      # ── Android NDK ──────────────────────────────────────────────────────
+      - name: Install Android NDK ${{ env.NDK_VERSION }}
+        run: |
+          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
+              --licenses > /dev/null 2>&1 || true
+
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
+              "ndk;${{ env.NDK_VERSION }}" \
+              "build-tools;35.0.0" \
+              "platforms;android-35"
+
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/${{ env.NDK_VERSION }}" >> "$GITHUB_ENV"
+
+      # ── Override local.properties (CI uses Linux paths) ──────────────────
+      - name: Write android/local.properties for CI
+        run: |
+          printf 'sdk.dir=%s\nndk.dir=%s/ndk/%s\n' \
+            "$ANDROID_SDK_ROOT" \
+            "$ANDROID_SDK_ROOT" \
+            "${{ env.NDK_VERSION }}" \
+            > android/local.properties
+          echo "local.properties:"
+          cat android/local.properties
+
+      # ── Version ──────────────────────────────────────────────────────────
+      - name: Determine version
+        id: version
+        run: |
+          REF="${GITHUB_REF}"
+
+          if [[ "$REF" == refs/tags/v* ]]; then
+            VER="${GITHUB_REF_NAME#v}"
+            PRERELEASE=false
+          elif [[ -n "${{ inputs.version_name }}" ]]; then
+            VER="${{ inputs.version_name }}"
+            PRERELEASE="${{ inputs.prerelease || 'false' }}"
+          else
+            VER="$(date -u +%Y.%m.%d)-${{ github.run_number }}"
+            PRERELEASE=true
+          fi
+
+          echo "version_name=$VER"                     >> "$GITHUB_OUTPUT"
+          echo "version_code=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          echo "is_prerelease=$PRERELEASE"             >> "$GITHUB_OUTPUT"
+          echo "release_tag=v${VER}"                   >> "$GITHUB_OUTPUT"
+
+          echo "Version: $VER  code: ${{ github.run_number }}  pre: $PRERELEASE"
+
+      # ── gomobile ─────────────────────────────────────────────────────────
+      - name: Install gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gobind@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: gomobile init
+        run: GOFLAGS="-mod=mod" gomobile init
+
+      - name: Build gomobile .aar
+        run: |
+          mkdir -p android/app/libs
+          GOFLAGS="-mod=mod" gomobile bind \
+            -v \
+            -target android \
+            -androidapi "${{ env.ANDROID_API }}" \
+            -javapkg com.masterdnsvpn.gomobile \
+            -o android/app/libs/masterdnsvpn.aar \
+            masterdnsvpn-go/cmd/android
+
+          echo "--- .aar output ---"
+          ls -lh android/app/libs/
+
+      # ── Signing keystore ──────────────────────────────────────────────────
+      - name: Restore signing keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 --decode > /tmp/masterdnsvpn-release.jks
+            echo "KEYSTORE_PATH=/tmp/masterdnsvpn-release.jks"        >> "$GITHUB_ENV"
+            echo "KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}" >> "$GITHUB_ENV"
+            echo "KEY_ALIAS=${{ secrets.KEY_ALIAS }}"                 >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}"           >> "$GITHUB_ENV"
+            echo "Keystore: from secret KEYSTORE_BASE64"
+          else
+            echo "KEYSTORE_PATH=$GITHUB_WORKSPACE/android/masterdnsvpn-release.jks" >> "$GITHUB_ENV"
+            echo "KEYSTORE_PASSWORD=MasterDnsVPN2024!"                              >> "$GITHUB_ENV"
+            echo "KEY_ALIAS=masterdnsvpn"                                           >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=MasterDnsVPN2024!"                                   >> "$GITHUB_ENV"
+            echo "WARNING: KEYSTORE_BASE64 not set - using bundled keystore."
+          fi
+
+      # ── Gradle APKs ──────────────────────────────────────────────────────
+      - name: Make gradlew executable
+        run: |
+          # Download official Gradle wrapper script from Gradle GitHub
+          GRADLE_VER=$(grep distributionUrl android/gradle/wrapper/gradle-wrapper.properties \
+            | grep -oP 'gradle-\K[0-9.]+(?=-)')
+          echo "Gradle version from wrapper: $GRADLE_VER"
+          curl -fsSL \
+            "https://raw.githubusercontent.com/gradle/gradle/v${GRADLE_VER}.0/gradlew" \
+            -o android/gradlew 2>/dev/null \
+            || curl -fsSL \
+            "https://raw.githubusercontent.com/gradle/gradle/master/gradlew" \
+            -o android/gradlew
+          chmod +x android/gradlew
+          ls -la android/gradlew
+
+      - name: Build release APKs
+        working-directory: android
+        run: |
+          ./gradlew assembleRelease \
+            -PversionCode=${{ steps.version.outputs.version_code }} \
+            -PversionName=${{ steps.version.outputs.version_name }} \
+            --no-daemon \
+            --stacktrace
+
+          echo "--- Output APKs ---"
+          ls -lh app/build/outputs/apk/release/
+
+      # ── Upload artifact ───────────────────────────────────────────────────
+      - name: Upload APKs as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: apks-${{ steps.version.outputs.version_name }}
+          path: android/app/build/outputs/apk/release/*.apk
+          retention-days: 30
+
+      # ── GitHub Release ────────────────────────────────────────────────────
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name:   ${{ steps.version.outputs.release_tag }}
+          name:       "MasterDnsVPN ${{ steps.version.outputs.version_name }}"
+          prerelease: ${{ steps.version.outputs.is_prerelease }}
+          generate_release_notes: true
+          fail_on_unmatched_files: false
+          files: android/app/build/outputs/apk/release/*.apk
+          body: |
+            ## MasterDnsVPN ${{ steps.version.outputs.version_name }}
+
+            | | |
+            |---|---|
+            | **Version Code** | `${{ steps.version.outputs.version_code }}` |
+            | **Commit** | [`${{ github.sha }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}) |
+            | **Build** | #${{ github.run_number }} |
+            | **Triggered by** | `${{ github.event_name }}` |
+
+            ## APK Downloads
+
+            | File | Architecture | Use |
+            |------|-------------|-----|
+            | `...-arm64-v8a.apk`   | ARM 64-bit | Most modern phones |
+            | `...-armeabi-v7a.apk` | ARM 32-bit | Older phones |
+            | `...-x86_64.apk`      | x86 64-bit | Chromebook / emulator |
+            | `...-universal.apk`   | Universal  | When not sure |

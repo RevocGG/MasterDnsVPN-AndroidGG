@@ -1,0 +1,9 @@
+# go.sum: use union merge so both sides' checksums are kept automatically
+# This prevents conflicts when upstream adds new dependencies
+go.sum merge=union
+
+# vendor/modules.txt: union merge to keep all module entries
+vendor/modules.txt merge=union
+
+# Android patch: keep our version on conflict
+android/go.mod.android.patch merge=ours

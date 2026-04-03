@@ -1,0 +1,88 @@
+<resources>
+    <string name="app_name">MasterDnsVPN</string>
+
+    <!-- Tunnel states -->
+    <string name="state_connected">Connected</string>
+    <string name="state_connecting">Connecting…</string>
+    <string name="state_disconnected">Disconnected</string>
+    <string name="state_error">Error</string>
+
+    <!-- Tunnel modes -->
+    <string name="mode_socks5_proxy">SOCKS5 Proxy</string>
+    <string name="mode_tun_vpn">TUN / VPN</string>
+
+    <!-- Navigation labels -->
+    <string name="nav_home">Profiles</string>
+    <string name="nav_log">Log</string>
+    <string name="nav_dashboard">Dashboard</string>
+
+    <!-- Profile screens -->
+    <string name="profile_new">New Profile</string>
+    <string name="profile_edit">Edit Profile</string>
+    <string name="profile_name">Profile Name</string>
+    <string name="profile_delete_confirm">Delete this profile?</string>
+    <string name="profile_export">Export Profile</string>
+    <string name="profile_import">Import Profile</string>
+    <string name="profile_export_warning">This file contains your encryption key. Keep it safe.</string>
+
+    <!-- Config sections -->
+    <string name="section_identity">Tunnel Identity</string>
+    <string name="section_proxy">Proxy / Listener</string>
+    <string name="section_dns">Local DNS</string>
+    <string name="section_balancing">Balancing &amp; Duplication</string>
+    <string name="section_health">Resolver Health</string>
+    <string name="section_encoding">Encoding &amp; Compression</string>
+    <string name="section_mtu">MTU</string>
+    <string name="section_workers">Workers &amp; Timeouts</string>
+    <string name="section_arq">ARQ</string>
+    <string name="section_advanced">Advanced</string>
+
+    <!-- Resolver editor -->
+    <string name="resolver_editor_title">Resolver List</string>
+    <string name="resolver_editor_hint">One resolver per line.\nFormats: IP, IP:port, CIDR, CIDR:port, [IPv6], [IPv6]:port</string>
+
+    <!-- Log viewer -->
+    <string name="log_viewer_title">Log</string>
+    <string name="log_filter_all">ALL</string>
+    <string name="log_filter_debug">DEBUG</string>
+    <string name="log_filter_info">INFO</string>
+    <string name="log_filter_warn">WARN</string>
+    <string name="log_filter_error">ERROR</string>
+    <string name="log_export">Export Log</string>
+    <string name="log_clear">Clear</string>
+
+    <!-- Dashboard -->
+    <string name="dashboard_title">Dashboard</string>
+    <string name="dashboard_streams">Active Streams</string>
+    <string name="dashboard_resolvers">Resolvers</string>
+    <string name="dashboard_session_id">Session ID</string>
+    <string name="dashboard_listen_addr">Listen Address</string>
+
+    <!-- Meta-profile -->
+    <string name="meta_profile_title">Meta Profile</string>
+    <string name="meta_profile_new">New Meta Profile</string>
+    <string name="meta_strategy_rr_default">Round-Robin (Default)</string>
+    <string name="meta_strategy_random">Random</string>
+    <string name="meta_strategy_rr">Round-Robin</string>
+    <string name="meta_strategy_least_loss">Least Loss</string>
+    <string name="meta_strategy_lowest_latency">Lowest Latency</string>
+
+    <!-- Notification -->
+    <string name="notif_channel_tunnel">VPN Tunnel</string>
+    <string name="notif_connected">MasterDnsVPN is active</string>
+    <string name="notif_connecting">Connecting…</string>
+    <string name="notif_action_disconnect">Disconnect</string>
+
+    <!-- Buttons -->
+    <string name="btn_connect">Connect</string>
+    <string name="btn_disconnect">Disconnect</string>
+    <string name="btn_save">Save</string>
+    <string name="btn_cancel">Cancel</string>
+    <string name="btn_delete">Delete</string>
+    <string name="btn_ok">OK</string>
+
+    <!-- Errors -->
+    <string name="err_vpn_permission">VPN permission is required to use TUN mode.</string>
+    <string name="err_already_running">Another tunnel is already running.</string>
+    <string name="err_start_failed">Failed to start tunnel.</string>
+</resources>
