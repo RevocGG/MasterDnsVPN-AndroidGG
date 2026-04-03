@@ -51,8 +51,12 @@ on:
 
   workflow_dispatch:
     inputs:
+      upstream_version:
+        description: "Upstream version tag (e.g. 2026.04.01.080348-951927f) — from masterking32/MasterDnsVPN"
+        required: false
+        default: ""
       version_name:
-        description: "Version name (e.g. 1.3.0) — empty = auto date-based"
+        description: "Override version name — leave empty to use upstream_version or auto date"
         required: false
         default: ""
       prerelease:
@@ -82,11 +86,12 @@ jobs:
     if: github.event_name == 'schedule'
     outputs:
       updated: ${{ steps.check.outputs.updated }}
+      upstream_version: ${{ steps.check.outputs.upstream_version }}
     steps:
       - name: Checkout (full history)
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.OUR_BRANCH }}
+          ref: main
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -95,36 +100,63 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Fetch upstream
+      - name: Fetch upstream (with tags)
         run: |
           git remote add upstream "${{ env.UPSTREAM_REPO }}" 2>/dev/null || true
-          git fetch upstream "${{ env.UPSTREAM_BRANCH }}"
+          git fetch upstream "${{ env.UPSTREAM_BRANCH }}" --tags
 
-      - name: Check for new upstream commits
+      - name: Check for new upstream release
         id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          NEW=$(git rev-list HEAD..upstream/${{ env.UPSTREAM_BRANCH }} --count)
-          echo "New upstream commits: $NEW"
-          if [ "$NEW" -gt "0" ]; then
-            echo "updated=true"  >> "$GITHUB_OUTPUT"
+          # Get the latest tag from upstream
+          UPSTREAM_TAG=$(git ls-remote --tags upstream \
+            | grep -v '\^{}' \
+            | awk '{print $2}' \
+            | sed 's|refs/tags/||' \
+            | sort -rV | head -1)
+
+          if [ -z "$UPSTREAM_TAG" ]; then
+            # Fallback: no tags found, check commits
+            NEW=$(git rev-list HEAD..upstream/${{ env.UPSTREAM_BRANCH }} --count)
+            if [ "$NEW" -gt "0" ]; then
+              SHORT=$(git rev-parse --short upstream/${{ env.UPSTREAM_BRANCH }})
+              VER="$(date -u +%Y.%m.%d)-${SHORT}"
+              echo "updated=true"           >> "$GITHUB_OUTPUT"
+              echo "upstream_version=${VER}" >> "$GITHUB_OUTPUT"
+              echo "No upstream tags; using commit-based version: $VER"
+            else
+              echo "No upstream changes - skipping build."
+              echo "updated=false" >> "$GITHUB_OUTPUT"
+            fi
           else
-            echo "No upstream changes - skipping build."
-            echo "updated=false" >> "$GITHUB_OUTPUT"
+            # Check if we already have a release for this upstream tag
+            VER="${UPSTREAM_TAG#v}"
+            if gh release view "android-${UPSTREAM_TAG}" \
+                 --repo "${{ github.repository }}" > /dev/null 2>&1; then
+              echo "Already built upstream $UPSTREAM_TAG - skipping."
+              echo "updated=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "New upstream release: $UPSTREAM_TAG"
+              echo "updated=true"           >> "$GITHUB_OUTPUT"
+              echo "upstream_version=${VER}" >> "$GITHUB_OUTPUT"
+            fi
           fi
 
-      - name: Merge upstream into ${{ env.OUR_BRANCH }}
+      - name: Merge upstream into main
         if: steps.check.outputs.updated == 'true'
         run: |
-          # --strategy-option=ours keeps OUR version of any conflicting files
+          # --strategy-option=ours keeps OUR Android code, takes upstream Go changes
           git merge "upstream/${{ env.UPSTREAM_BRANCH }}" \
             --no-edit \
             --strategy-option=ours \
-            -m "chore: sync upstream $(date -u +%Y-%m-%d)"
+            -m "chore: sync upstream v${{ steps.check.outputs.upstream_version }}"
           git show --stat HEAD
 
       - name: Push merge commit
         if: steps.check.outputs.updated == 'true'
-        run: git push origin "${{ env.OUR_BRANCH }}"
+        run: git push origin main
 
   # ════════════════════════════════════════════════════════════════════════════
   # JOB 2 — Build .aar + APKs -> GitHub Release
@@ -195,14 +227,28 @@ jobs:
         id: version
         run: |
           REF="${GITHUB_REF}"
+          SYNC_VER="${{ needs.sync_upstream.outputs.upstream_version }}"
+          DISPATCH_UPSTREAM="${{ inputs.upstream_version }}"
+          DISPATCH_VER="${{ inputs.version_name }}"
 
           if [[ "$REF" == refs/tags/v* ]]; then
+            # Triggered by a git tag push: v1.2.3 -> version 1.2.3
             VER="${GITHUB_REF_NAME#v}"
             PRERELEASE=false
-          elif [[ -n "${{ inputs.version_name }}" ]]; then
-            VER="${{ inputs.version_name }}"
+          elif [[ -n "$DISPATCH_UPSTREAM" ]]; then
+            # Manual dispatch with explicit upstream version
+            VER="$DISPATCH_UPSTREAM"
             PRERELEASE="${{ inputs.prerelease || 'false' }}"
+          elif [[ -n "$DISPATCH_VER" ]]; then
+            # Manual dispatch with override version name
+            VER="$DISPATCH_VER"
+            PRERELEASE="${{ inputs.prerelease || 'false' }}"
+          elif [[ -n "$SYNC_VER" ]]; then
+            # Auto-sync found a new upstream release
+            VER="$SYNC_VER"
+            PRERELEASE=true
           else
+            # Fallback: date-based version
             VER="$(date -u +%Y.%m.%d)-${{ github.run_number }}"
             PRERELEASE=true
           fi
@@ -210,7 +256,7 @@ jobs:
           echo "version_name=$VER"                     >> "$GITHUB_OUTPUT"
           echo "version_code=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
           echo "is_prerelease=$PRERELEASE"             >> "$GITHUB_OUTPUT"
-          echo "release_tag=v${VER}"                   >> "$GITHUB_OUTPUT"
+          echo "release_tag=android-v${VER}"           >> "$GITHUB_OUTPUT"
 
           echo "Version: $VER  code: ${{ github.run_number }}  pre: $PRERELEASE"
 
@@ -299,19 +345,23 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name:   ${{ steps.version.outputs.release_tag }}
-          name:       "MasterDnsVPN ${{ steps.version.outputs.version_name }}"
+          name:       "MasterDnsVPN Android — upstream v${{ steps.version.outputs.version_name }}"
           prerelease: ${{ steps.version.outputs.is_prerelease }}
-          generate_release_notes: true
+          generate_release_notes: false
           fail_on_unmatched_files: false
           files: android/app/build/outputs/apk/release/*.apk
           body: |
-            ## MasterDnsVPN ${{ steps.version.outputs.version_name }}
+            ## MasterDnsVPN Android Client
+
+            این بیلد بر اساس نسخه **[v${{ steps.version.outputs.version_name }}](https://github.com/masterking32/MasterDnsVPN/releases/tag/v${{ steps.version.outputs.version_name }})** از ریپوی اصلی MasterDnsVPN ساخته شده است.
+
+            > Built from upstream [masterking32/MasterDnsVPN](https://github.com/masterking32/MasterDnsVPN) — release **[v${{ steps.version.outputs.version_name }}](https://github.com/masterking32/MasterDnsVPN/releases/tag/v${{ steps.version.outputs.version_name }})**
 
             | | |
             |---|---|
-            | **Version Code** | `${{ steps.version.outputs.version_code }}` |
+            | **Upstream Version** | [`v${{ steps.version.outputs.version_name }}`](https://github.com/masterking32/MasterDnsVPN/releases/tag/v${{ steps.version.outputs.version_name }}) |
+            | **Android Build** | #${{ github.run_number }} |
             | **Commit** | [`${{ github.sha }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}) |
-            | **Build** | #${{ github.run_number }} |
             | **Triggered by** | `${{ github.event_name }}` |
 
             ## APK Downloads
