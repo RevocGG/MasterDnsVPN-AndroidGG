@@ -265,6 +265,24 @@ func (b *Balancer) ResetServerStats(serverKey string) {
 	stats.mu.Unlock()
 }
 
+// SeedConservativeStats initialises a re-activated resolver with a moderate
+// loss score so the balancer does not flood it before it has proven reliability.
+// Score = (10-8)*1000/10 = 200, below neutral (500) but not as good as healthy
+// peers — traffic is directed at it gradually as its real delivery rate improves.
+func (b *Balancer) SeedConservativeStats(serverKey string) {
+	stats := b.statsForKey(serverKey)
+	if stats == nil {
+		return
+	}
+
+	stats.mu.Lock()
+	stats.sent = 10
+	stats.acked = 8
+	stats.rttMicrosSum = 0
+	stats.rttCount = 0
+	stats.mu.Unlock()
+}
+
 func (b *Balancer) GetBestConnection() (Connection, bool) {
 	snap := b.snapshot.Load()
 	if snap == nil || len(snap.valid) == 0 {

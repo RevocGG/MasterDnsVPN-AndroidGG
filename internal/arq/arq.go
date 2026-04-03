@@ -214,6 +214,7 @@ type ARQ struct {
 	cancel         context.CancelFunc
 	wg             sync.WaitGroup
 	flushSignal    chan struct{}
+	retransmitWake chan struct{}
 	rxChan         chan rxPayload
 	pendingInbound int
 }
@@ -329,9 +330,9 @@ func NewARQ(streamID uint16, sessionID uint8, enqueuer PacketEnqueuer, localConn
 		logger = &DummyLogger{}
 	}
 
-	windowSize := max(cfg.WindowSize, 300)
+	windowSize := max(cfg.WindowSize, 16)
 
-	limit := max(int(float64(windowSize)*0.8), 50)
+	limit := max(int(float64(windowSize)*0.8), 8)
 
 	a := &ARQ{
 		streamID:  streamID,
@@ -351,9 +352,10 @@ func NewARQ(streamID uint16, sessionID uint8, enqueuer PacketEnqueuer, localConn
 
 		windowSize:    windowSize,
 		limit:         limit,
-		windowNotFull: make(chan struct{}, 1),
-		writeLock:     sync.Mutex{},
-		flushSignal:   make(chan struct{}, 1),
+		windowNotFull:  make(chan struct{}, 1),
+		writeLock:      sync.Mutex{},
+		flushSignal:    make(chan struct{}, 1),
+		retransmitWake: make(chan struct{}, 1),
 
 		inactivityTimeout:    time.Duration(maxF(120.0, cfg.InactivityTimeout) * float64(time.Second)),
 		dataPacketTTL:        time.Duration(maxF(120.0, cfg.DataPacketTTL) * float64(time.Second)),
@@ -551,8 +553,16 @@ func (a *ARQ) signalWindowNotFull() {
 }
 
 func (a *ARQ) waitWindowNotFull() {
+	// Fast path: no allocation needed when window has room (the common case).
+	a.mu.RLock()
+	needWait := len(a.sndBuf) >= a.limit && !a.closed
+	a.mu.RUnlock()
+	if !needWait {
+		return
+	}
+
+	// Slow path: window is full — only now allocate a timer.
 	timer := time.NewTimer(50 * time.Millisecond)
-	waitStarted := time.Time{}
 	defer func() {
 		if !timer.Stop() {
 			select {
@@ -563,19 +573,18 @@ func (a *ARQ) waitWindowNotFull() {
 	}()
 
 	for {
-		a.mu.RLock()
-		sndBufLen := len(a.sndBuf)
-		if sndBufLen < a.limit || a.closed {
-			a.mu.RUnlock()
+		select {
+		case <-a.windowNotFull:
+		case <-timer.C:
+		case <-a.ctx.Done():
 			return
 		}
+		a.mu.RLock()
+		sndBufLen := len(a.sndBuf)
 		a.mu.RUnlock()
-
-		now := time.Now()
-		if waitStarted.IsZero() {
-			waitStarted = now
+		if sndBufLen < a.limit || a.closed {
+			return
 		}
-
 		if !timer.Stop() {
 			select {
 			case <-timer.C:
@@ -583,19 +592,19 @@ func (a *ARQ) waitWindowNotFull() {
 			}
 		}
 		timer.Reset(50 * time.Millisecond)
-
-		select {
-		case <-a.windowNotFull:
-		case <-timer.C:
-		case <-a.ctx.Done():
-			return
-		}
 	}
 }
 
 func (a *ARQ) signalFlushReady() {
 	select {
 	case a.flushSignal <- struct{}{}:
+	default:
+	}
+}
+
+func (a *ARQ) signalRetransmitWake() {
+	select {
+	case a.retransmitWake <- struct{}{}:
 	default:
 	}
 }
@@ -944,7 +953,7 @@ func (a *ARQ) ioLoop() {
 
 	buf := make([]byte, max(a.mtu, 1))
 
-	for !a.isClosed() {
+	for a.ctx.Err() == nil {
 		a.waitWindowNotFull()
 
 		a.mu.Lock()
@@ -987,6 +996,7 @@ func (a *ARQ) ioLoop() {
 			sn := a.sndNxt
 			a.sndNxt++
 			currentRTO := a.currentDataBaseRTO()
+			wasEmpty := len(a.sndBuf) == 0
 			a.sndBuf[sn] = &arqDataItem{
 				Data:            raw,
 				CreatedAt:       now,
@@ -999,6 +1009,9 @@ func (a *ARQ) ioLoop() {
 				TTL:             0,
 			}
 			a.mu.Unlock()
+			if wasEmpty {
+				a.signalRetransmitWake()
+			}
 
 			ok := a.enqueuer.PushTXPacket(
 				Enums.DefaultPacketPriority(Enums.PACKET_STREAM_DATA),
@@ -1257,14 +1270,22 @@ func (a *ARQ) retransmitLoop() {
 			rtoFactor = a.controlRto
 		}
 
-		baseInterval := max(rtoFactor/3, 50*time.Millisecond)
+		// Poll at rto/4 so retransmits fire within ~25% of their deadline;
+		// floor at 25ms to stay responsive for sub-100ms RTT configs.
+		baseInterval := max(rtoFactor/4, 25*time.Millisecond)
 
-		hasPending := len(a.sndBuf) > 0 || (a.enableControlReliability && len(a.controlSndBuf) > 0)
+		hasPending := len(a.sndBuf) > 0 ||
+			(a.enableControlReliability && len(a.controlSndBuf) > 0) ||
+			a.waitingAck || a.deferredClose
 		a.mu.Unlock()
 
-		interval := baseInterval
+		var interval time.Duration
 		if !hasPending {
-			interval = max(baseInterval*4, 100*time.Millisecond)
+			// Nothing to retransmit: sleep longer and rely on retransmitWake
+			// to fire the moment new data enters an empty sndBuf.
+			interval = max(baseInterval*8, 200*time.Millisecond)
+		} else {
+			interval = baseInterval
 		}
 
 		if !timer.Stop() {
@@ -1278,6 +1299,7 @@ func (a *ARQ) retransmitLoop() {
 		case <-a.ctx.Done():
 			return
 		case <-timer.C:
+		case <-a.retransmitWake:
 		}
 
 		func() {

@@ -466,7 +466,11 @@ func (c *Client) reactivateResolverConnection(serverKey string) bool {
 	}
 	c.resolverHealthMu.Unlock()
 
-	c.balancer.ResetServerStats(serverKey)
+	// Seed with a moderate initial score so the balancer doesn't flood the
+	// just-reactivated resolver before it has proven itself. Stats were zeroed
+	// when the resolver was disabled; seeding conservatively (80% delivery)
+	// lets it participate immediately but at lower priority than healthy peers.
+	c.balancer.SeedConservativeStats(serverKey)
 	if c.log != nil {
 		c.log.Infof(
 			"\U0001F504 <green>DNS server <cyan>%s</cyan> re-activated after successful recheck.</green>",
