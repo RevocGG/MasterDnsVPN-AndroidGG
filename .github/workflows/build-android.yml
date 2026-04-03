@@ -297,11 +297,22 @@ jobs:
             echo "KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}"           >> "$GITHUB_ENV"
             echo "Keystore: from secret KEYSTORE_BASE64"
           else
-            echo "KEYSTORE_PATH=$GITHUB_WORKSPACE/android/masterdnsvpn-release.jks" >> "$GITHUB_ENV"
-            echo "KEYSTORE_PASSWORD=MasterDnsVPN2024!"                              >> "$GITHUB_ENV"
-            echo "KEY_ALIAS=masterdnsvpn"                                           >> "$GITHUB_ENV"
-            echo "KEY_PASSWORD=MasterDnsVPN2024!"                                   >> "$GITHUB_ENV"
-            echo "WARNING: KEYSTORE_BASE64 not set - using bundled keystore."
+            # No keystore secret — generate a temporary self-signed keystore for CI builds
+            echo "KEYSTORE_BASE64 not set — generating temporary CI keystore."
+            keytool -genkeypair \
+              -keystore /tmp/masterdnsvpn-release.jks \
+              -storepass "MasterDnsVPN2024!" \
+              -keypass  "MasterDnsVPN2024!" \
+              -alias    "masterdnsvpn" \
+              -keyalg   RSA \
+              -keysize  2048 \
+              -validity 3650 \
+              -dname    "CN=MasterDnsVPN CI, O=RevocGG, C=US" \
+              -noprompt
+            echo "KEYSTORE_PATH=/tmp/masterdnsvpn-release.jks" >> "$GITHUB_ENV"
+            echo "KEYSTORE_PASSWORD=MasterDnsVPN2024!"         >> "$GITHUB_ENV"
+            echo "KEY_ALIAS=masterdnsvpn"                      >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=MasterDnsVPN2024!"              >> "$GITHUB_ENV"
           fi
 
       # ── Gradle APKs ──────────────────────────────────────────────────────
