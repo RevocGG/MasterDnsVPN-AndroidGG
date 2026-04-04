@@ -10,6 +10,18 @@
 
 ---
 
+## Download
+
+> **Don't want to build from source?** Download the latest pre-built APK directly from the [**Releases page**](https://github.com/RevocGG/MasterDnsVPN-AndroidGG/releases/latest).
+
+| APK | Architecture | Use case |
+|-----|-------------|----------|
+| `...-arm64-v8a.apk` | ARM 64-bit | Most modern Android phones |
+| `...-armeabi-v7a.apk` | ARM 32-bit | Older Android phones |
+| `...-universal.apk` | Universal | When unsure |
+
+---
+
 ## What is MasterDnsVPN?
 
 [MasterDnsVPN](https://github.com/masterking32/MasterDnsVPN) is a high-performance DNS-over-UDP tunnel that encrypts and routes your traffic through a remote server, bypassing censorship and surveillance. This repository contains the **Android client app** built on top of the same Go engine.
