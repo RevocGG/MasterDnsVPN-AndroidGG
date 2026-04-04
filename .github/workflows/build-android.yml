@@ -12,6 +12,10 @@ on:
         description: "Version name (e.g. 1.3.0) — empty = auto date-based"
         required: false
         default: ""
+      upstream_version:
+        description: "Upstream MasterDnsVPN version built into this release (e.g. v2026.04.01.080348-951927f)"
+        required: false
+        default: ""
       prerelease:
         description: "Mark as pre-release?"
         type: boolean
@@ -193,6 +197,7 @@ jobs:
             | | |
             |---|---|
             | **Version Code** | `${{ steps.version.outputs.version_code }}` |
+            | **Upstream Engine** | `${{ inputs.upstream_version || 'N/A' }}` |
             | **Commit** | [`${{ github.sha }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}) |
             | **Build** | #${{ github.run_number }} |
             | **Triggered by** | `${{ github.event_name }}` |
