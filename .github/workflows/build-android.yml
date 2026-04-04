@@ -186,7 +186,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name:   ${{ steps.version.outputs.release_tag }}
-          name:       "MasterDnsVPN ${{ steps.version.outputs.version_name }}"
+          name:       "MasterDnsVPN ${{ steps.version.outputs.version_name }} — upstream ${{ inputs.upstream_version || 'unknown' }}"
           prerelease: ${{ steps.version.outputs.is_prerelease }}
           generate_release_notes: true
           fail_on_unmatched_files: false
