@@ -20,8 +20,16 @@ class ResolverEditorViewModel @Inject constructor(
 
     private val profileId: String = savedStateHandle["profileId"] ?: ""
 
-    private val _resolversText = MutableStateFlow("")
-    val resolversText: StateFlow<String> = _resolversText.asStateFlow()
+    // Text bound to the manual paste/edit box — never set from file imports
+    private val _manualText = MutableStateFlow("")
+    val manualText: StateFlow<String> = _manualText.asStateFlow()
+
+    // Count of resolvers loaded from file (or restored from existing profile save)
+    private val _fileResolverCount = MutableStateFlow(0)
+    val fileResolverCount: StateFlow<Int> = _fileResolverCount.asStateFlow()
+
+    // Backing store for file/restored resolvers — NOT exposed to the UI text box
+    private var fileText = ""
 
     private val _saved = MutableStateFlow(false)
     val saved: StateFlow<Boolean> = _saved.asStateFlow()
@@ -29,19 +37,51 @@ class ResolverEditorViewModel @Inject constructor(
     init {
         if (profileId.isNotBlank() && profileId != Screen.ProfileEdit.NEW) {
             viewModelScope.launch {
-                repo.getProfile(profileId)?.let { _resolversText.value = it.resolversText }
+                repo.getProfile(profileId)?.let { profile ->
+                    val text = profile.resolversText
+                    if (text.isNotBlank()) {
+                        fileText = text
+                        _fileResolverCount.value = text.lines().count { it.isNotBlank() }
+                    }
+                }
             }
         }
     }
 
-    fun updateText(text: String) {
-        _resolversText.value = text
+    /** Called when user types / pastes in the manual box. */
+    fun updateManual(text: String) {
+        _manualText.value = text
+    }
+
+    /** Called when user picks a file — stores backing text and shows only the count. */
+    fun loadFromFile(text: String) {
+        fileText = text
+        _fileResolverCount.value = text.lines().count { it.isNotBlank() }
+        _manualText.value = ""   // clear paste box so file content never appears there
+    }
+
+    /** Discards the file-imported resolvers. */
+    fun clearFile() {
+        fileText = ""
+        _fileResolverCount.value = 0
+    }
+
+    /**
+     * Moves file content into the manual edit box so the user can edit it directly.
+     * Intentionally explicit — large lists may cause the UI to be slow.
+     */
+    fun loadFileIntoManual() {
+        _manualText.value = fileText
+        fileText = ""
+        _fileResolverCount.value = 0
     }
 
     fun save() {
         viewModelScope.launch {
             val profile = repo.getProfileForTunnel(profileId) ?: return@launch
-            repo.saveProfile(profile.copy(resolversText = _resolversText.value, updatedAt = System.currentTimeMillis()))
+            // Manual text takes priority; fall back to file-imported text
+            val textToSave = _manualText.value.ifBlank { fileText }
+            repo.saveProfile(profile.copy(resolversText = textToSave, updatedAt = System.currentTimeMillis()))
             _saved.value = true
         }
     }

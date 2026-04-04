@@ -32,20 +32,35 @@ object TomlConfigMapper {
         fun bool(key: String) = kv[key]?.trim()?.lowercase()?.toBooleanStrictOrNull()
 
         // DOMAINS array: ["a.com", "b.com"]  → "a.com,b.com"
+        // Also handles encrypted domains from locked profiles: ENC:...
         val domainsRaw = kv["DOMAINS"]
         val domains = if (domainsRaw != null) {
-            domainsRaw
-                .trim('[', ']')
-                .split(",")
-                .joinToString(",") { it.trim().trim('"') }
+            val trimmed = domainsRaw.trim().trim('"')
+            if (IdentityCipher.isEncrypted(trimmed)) {
+                // Locked profile — decrypt the domains string
+                IdentityCipher.decrypt(trimmed) ?: ""
+            } else {
+                domainsRaw
+                    .trim('[', ']')
+                    .split(",")
+                    .joinToString(",") { it.trim().trim('"') }
+            }
         } else ""
+
+        // Handle encrypted ENCRYPTION_KEY from locked profiles
+        val rawKey = str("ENCRYPTION_KEY") ?: ""
+        val encryptionKey = if (IdentityCipher.isEncrypted(rawKey)) {
+            IdentityCipher.decrypt(rawKey) ?: ""
+        } else {
+            rawKey
+        }
 
         val base = ProfileEntity(name = profileName)
         return base.copy(
             // Section 1
             domains = domains,
             dataEncryptionMethod = int("DATA_ENCRYPTION_METHOD") ?: base.dataEncryptionMethod,
-            encryptionKey = str("ENCRYPTION_KEY") ?: base.encryptionKey,
+            encryptionKey = encryptionKey,
             // Section 2
             protocolType = str("PROTOCOL_TYPE") ?: base.protocolType,
             listenIP = str("LISTEN_IP") ?: base.listenIP,
@@ -143,6 +158,8 @@ object TomlConfigMapper {
             arqTerminalAckWaitTimeoutSec = dbl("ARQ_TERMINAL_ACK_WAIT_TIMEOUT_SECONDS") ?: base.arqTerminalAckWaitTimeoutSec,
             // Section 10 Logging
             logLevel = str("LOG_LEVEL") ?: base.logLevel,
+            // Identity lock flag (app-specific, not a Go config key)
+            identityLocked = bool("IDENTITY_LOCKED") ?: base.identityLocked,
         )
     }
 
@@ -150,16 +167,29 @@ object TomlConfigMapper {
     // EXPORT
     // ─────────────────────────────────────────────────────────────────────────
 
-    /** Render [p] to a .toml string identical in layout to client_config.toml.simple. */
-    fun toToml(p: ProfileEntity): String {
-        // Build DOMAINS array: "a.com,b.com" → ["a.com", "b.com"]
-        val domainsArray = if (p.domains.isBlank()) {
+    /** Render [p] to a .toml string identical in layout to client_config.toml.simple.
+     *  When [hideIdentity] is true, domains and encryption key are kept in the
+     *  output (so the config is functional) but the IDENTITY_LOCKED flag is set,
+     *  which tells the importing app to hide those fields in the UI. */
+    fun toToml(p: ProfileEntity, hideIdentity: Boolean = false): String {
+        // Build DOMAINS value — encrypted when locked
+        val domainsArray = if (hideIdentity && p.domains.isNotBlank()) {
+            // Encrypt the comma-separated domains string
+            "\"${IdentityCipher.encrypt(p.domains)}\""
+        } else if (p.domains.isBlank()) {
             "[]"
         } else {
             p.domains.split(",")
                 .map { it.trim() }
                 .filter { it.isNotBlank() }
                 .joinToString(prefix = "[", postfix = "]") { "\"$it\"" }
+        }
+
+        // Encryption key value — encrypted when locked
+        val encKeyValue = if (hideIdentity && p.encryptionKey.isNotBlank()) {
+            IdentityCipher.encrypt(p.encryptionKey)
+        } else {
+            p.encryptionKey
         }
 
         fun d(v: Double) = if (v == v.toLong().toDouble()) "${v.toLong()}.0" else v.toString()
@@ -182,7 +212,7 @@ object TomlConfigMapper {
             appendLine("# 0=None 1=XOR 2=ChaCha20 3=AES-128-GCM 4=AES-192-GCM 5=AES-256-GCM")
             appendLine("DATA_ENCRYPTION_METHOD = ${p.dataEncryptionMethod}")
             appendLine()
-            appendLine("ENCRYPTION_KEY = ${q(p.encryptionKey)}")
+            appendLine("ENCRYPTION_KEY = ${q(encKeyValue)}")
             appendLine()
             appendLine("# ------------------------------------------------------------------------------")
             appendLine("# 2) Local Proxy Listener")
@@ -355,7 +385,12 @@ object TomlConfigMapper {
             appendLine("# ------------------------------------------------------------------------------")
             appendLine()
             appendLine("# DEBUG, INFO, WARN, ERROR")
-            append("LOG_LEVEL = ${q(p.logLevel)}")
+            appendLine("LOG_LEVEL = ${q(p.logLevel)}")
+            appendLine()
+            if (hideIdentity) {
+                appendLine("# App-specific: domains & key are hidden in importing app UI")
+                append("IDENTITY_LOCKED = true")
+            }
         }
     }
 

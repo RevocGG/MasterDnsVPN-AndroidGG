@@ -38,6 +38,31 @@ class ProfileEditViewModel @Inject constructor(
     // Prevents concurrent/duplicate saves
     private val saveMutex = Mutex()
 
+    /** Validation error to display in UI */
+    private val _validationError = MutableStateFlow<String?>(null)
+    val validationError: StateFlow<String?> = _validationError.asStateFlow()
+
+    fun clearValidationError() { _validationError.value = null }
+
+    /**
+     * Returns a validation error message if the profile is missing required fields,
+     * or null if valid.
+     */
+    private suspend fun validateProfile(): String? {
+        val p = _profile.value
+        val resolvers = repo.getProfile(p.id)?.resolversText ?: p.resolversText
+        if (resolvers.isBlank() || resolvers.lines().none { it.isNotBlank() }) {
+            return "Resolver list is empty. Add at least one resolver before saving."
+        }
+        if (p.domains.isBlank()) {
+            return "DOMAINS is required. Enter at least one domain."
+        }
+        if (p.dataEncryptionMethod != 0 && p.encryptionKey.isBlank()) {
+            return "ENCRYPTION_KEY is required when encryption is enabled."
+        }
+        return null
+    }
+
     init {
         if (profileId != Screen.ProfileEdit.NEW) {
             viewModelScope.launch {
@@ -54,6 +79,11 @@ class ProfileEditViewModel @Inject constructor(
         if (saveMutex.isLocked) return  // Ignore duplicate taps
         viewModelScope.launch {
             saveMutex.withLock {
+                val error = validateProfile()
+                if (error != null) {
+                    _validationError.value = error
+                    return@withLock
+                }
                 val current = repo.getProfile(_profile.value.id)
                 val merged = if (current != null) {
                     _profile.value.copy(resolversText = current.resolversText)
@@ -119,6 +149,9 @@ class ProfileEditViewModel @Inject constructor(
         }
     }
 
-    /** Render the current profile as a .toml config string (ready to save/share). */
-    fun exportToToml(): String = TomlConfigMapper.toToml(_profile.value)
+    /** Render the current profile as a .toml config string (ready to save/share).
+     *  When [hideIdentity] is true, the exported config will mark domains &
+     *  encryption key as locked — hidden in the importing app's UI. */
+    fun exportToToml(hideIdentity: Boolean = false): String =
+        TomlConfigMapper.toToml(_profile.value, hideIdentity)
 }

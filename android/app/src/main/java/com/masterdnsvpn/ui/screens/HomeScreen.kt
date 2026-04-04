@@ -18,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -38,6 +39,7 @@ import com.masterdnsvpn.ui.viewmodel.HotspotViewModel
 import com.masterdnsvpn.ui.viewmodel.MonitorViewModel
 import com.masterdnsvpn.gomobile.mobile.Stats
 
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
@@ -57,6 +59,10 @@ fun HomeScreen(
 
     var showHotspotDialog by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val coroutineScope = rememberCoroutineScope()
+
+
 
     // Show welcome dialog on first launch
     val prefs = ctx.getSharedPreferences("masterdnsvpn_prefs", android.content.Context.MODE_PRIVATE)
@@ -260,6 +266,7 @@ fun HomeScreen(
         }
         Scaffold(
             containerColor = androidx.compose.ui.graphics.Color.Transparent,
+            snackbarHost = { SnackbarHost(snackbarHostState) },
             topBar = {
                 TopAppBar(
                     title = {
@@ -577,6 +584,7 @@ private fun ProfileCard(
                             append(profile.tunnelMode)
                             if (isBusy) append(" - Processing...")
                             else if (isRunning) append(" - Connected")
+                            else if (profile.identityLocked) append(" - \uD83D\uDD12 Locked")
                             else append(" - ${profile.domains.take(40).ifEmpty { "no domains" }}")
                         },
                         style = MaterialTheme.typography.bodySmall,
@@ -649,9 +657,13 @@ private fun ProfileCard(
                         }
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text("Resolvers", color = TextSecondary, fontSize = 9.sp)
+                            val valid = stats?.validResolverCount ?: 0
+                            val total = remember(profile.resolversText) {
+                                profile.resolversText.lines().count { it.isNotBlank() }
+                            }
                             Text(
-                                "${stats?.validResolverCount ?: 0}/${stats?.resolverCount ?: 0}",
-                                color = TextPrimary,
+                                "$valid/$total",
+                                color = if (valid > 0) GreenOnline else Color(0xFFFFAB40),
                                 fontWeight = FontWeight.Medium,
                                 fontSize = 12.sp,
                             )

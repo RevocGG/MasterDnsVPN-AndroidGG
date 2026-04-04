@@ -39,3 +39,4 @@ go.work
 go.work.sum
 android/signing.properties
 .bench/
+.github/copilot-instructions.md

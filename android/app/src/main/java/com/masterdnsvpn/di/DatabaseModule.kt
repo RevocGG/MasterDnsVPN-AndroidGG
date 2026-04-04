@@ -6,6 +6,7 @@ import com.masterdnsvpn.profile.AppDatabase
 import com.masterdnsvpn.profile.MIGRATION_1_2
 import com.masterdnsvpn.profile.MIGRATION_2_3
 import com.masterdnsvpn.profile.MIGRATION_3_4
+import com.masterdnsvpn.profile.MIGRATION_4_5
 import com.masterdnsvpn.profile.MetaProfileDao
 import com.masterdnsvpn.profile.ProfileDao
 import com.google.gson.Gson
@@ -27,7 +28,7 @@ object DatabaseModule {
             ctx,
             AppDatabase::class.java,
             "masterdnsvpn.db",
-        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).fallbackToDestructiveMigration().build()
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5).fallbackToDestructiveMigration().build()
     }
 
     @Provides

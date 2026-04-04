@@ -52,7 +52,7 @@ fun DashboardScreen(
                     val s = stats!!  // capture delegated property into local val for smart cast
                     StatGlassCard("Status", if (s.isRunning) "Running" else "Stopped", s.isRunning)
                     StatGlassCard("Session Ready", if (s.sessionReady) "Yes" else "No", s.sessionReady)
-                    StatGlassCard("Resolvers", "${s.validResolverCount} / ${s.resolverCount} active", s.validResolverCount > 0)
+                    StatGlassCard("Resolvers", "${s.validResolverCount} valid / ${s.resolverCount} total", s.validResolverCount > 0)
                     StatGlassCard("Listen Address", s.listenAddr.takeIf { it.isNotEmpty() } ?: "-", true)
                 }
             }

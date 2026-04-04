@@ -12,6 +12,7 @@
 package client
 
 import (
+	"encoding/binary"
 	"errors"
 	"net"
 	"time"
@@ -24,6 +25,7 @@ const (
 	// RuntimeUDPReadBufferSize defines the maximum size of the UDP read buffer.
 	RuntimeUDPReadBufferSize         = 65535
 	runtimeUDPMaxMismatchedResponses = 64
+	runtimeUDPDrainGrace             = time.Millisecond
 
 	// pooledConnMaxAge is the maximum time a UDP connection can remain idle in
 	// the resolver pool before it is discarded and re-dialed. Stale connections can have their
@@ -37,17 +39,47 @@ type pooledUDPConn struct {
 	pooledAt time.Time
 }
 
+func (c *Client) drainStaleUDPResponses(conn *net.UDPConn, buffer []byte) error {
+	if conn == nil || len(buffer) == 0 {
+		return nil
+	}
+
+	for drained := 0; drained < runtimeUDPMaxMismatchedResponses*2; drained++ {
+		if err := conn.SetReadDeadline(time.Now().Add(runtimeUDPDrainGrace)); err != nil {
+			return err
+		}
+		_, err := conn.Read(buffer)
+		if err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				return nil
+			}
+			return err
+		}
+	}
+
+	return nil
+}
+
 // exchangeUDPQueryWithConn sends one UDP packet through the provided connection
 // and waits for a response with a matching DNS transaction ID.
 func (c *Client) exchangeUDPQueryWithConn(conn *net.UDPConn, packet []byte, timeout time.Duration) ([]byte, error) {
 	if len(packet) < 2 {
 		return nil, errors.New("malformed dns query")
 	}
-	expectedID0 := packet[0]
-	expectedID1 := packet[1]
+	expectedID := binary.BigEndian.Uint16(packet[:2])
 
-	deadline := time.Now().Add(timeout)
-	if err := conn.SetDeadline(deadline); err != nil {
+	buffer := c.getRuntimeUDPBuffer()
+	defer c.putRuntimeUDPBuffer(buffer)
+	defer func() {
+		_ = conn.SetDeadline(time.Time{})
+	}()
+
+	if err := c.drainStaleUDPResponses(conn, buffer); err != nil {
+		return nil, err
+	}
+
+	writeDeadline := time.Now().Add(timeout)
+	if err := conn.SetWriteDeadline(writeDeadline); err != nil {
 		return nil, err
 	}
 
@@ -55,27 +87,27 @@ func (c *Client) exchangeUDPQueryWithConn(conn *net.UDPConn, packet []byte, time
 		return nil, err
 	}
 
-	buffer := c.getRuntimeUDPBuffer()
+	if err := conn.SetReadDeadline(writeDeadline); err != nil {
+		return nil, err
+	}
+
 	mismatchedResponses := 0
 
 	for {
 		n, err := conn.Read(buffer)
 		if err != nil {
-			c.putRuntimeUDPBuffer(buffer)
 			return nil, err
 		}
 
-		if n >= 2 && buffer[0] == expectedID0 && buffer[1] == expectedID1 {
+		if n >= 2 && binary.BigEndian.Uint16(buffer[:2]) == expectedID {
 			// Copy matched response out so the pooled buffer can be recycled.
 			result := make([]byte, n)
 			copy(result, buffer[:n])
-			c.putRuntimeUDPBuffer(buffer)
 			return result, nil
 		}
 
 		mismatchedResponses++
 		if mismatchedResponses >= runtimeUDPMaxMismatchedResponses {
-			c.putRuntimeUDPBuffer(buffer)
 			return nil, errors.New("too many mismatched dns responses on shared udp socket")
 		}
 	}

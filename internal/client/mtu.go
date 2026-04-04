@@ -140,7 +140,7 @@ func (c *Client) prepareConnectionMTUScanState(conn *Connection) {
 	if conn == nil {
 		return
 	}
-	conn.IsValid = true
+	conn.IsValid = false
 	conn.UploadMTUBytes = 0
 	conn.UploadMTUChars = 0
 	conn.DownloadMTUBytes = 0

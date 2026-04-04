@@ -111,6 +111,11 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch { repo.deleteProfile(profileId) }
     }
 
+    /** Import a fully-built ProfileEntity (e.g. from QR code scan). */
+    fun importProfileFromEntity(profile: ProfileEntity) {
+        viewModelScope.launch { repo.saveProfile(profile) }
+    }
+
     fun deleteMetaProfile(metaId: String) {
         viewModelScope.launch { repo.deleteMetaProfile(metaId) }
     }

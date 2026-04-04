@@ -148,4 +148,8 @@ data class ProfileEntity(
 
     // Resolver list (stored inline for simplicity; moved to separate table for large lists)
     val resolversText: String = "",
+
+    // When true, domains and encryptionKey are hidden in the UI ("Locked")
+    // Set during import when the exporter chose to hide identity fields.
+    val identityLocked: Boolean = false,
 )

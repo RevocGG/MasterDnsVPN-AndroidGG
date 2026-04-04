@@ -5,6 +5,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.material.icons.Icons
@@ -15,10 +16,12 @@ import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -45,10 +48,16 @@ fun ProfileEditScreen(
     val saved by vm.saved.collectAsState()
     val resolverNavId by vm.resolverNavId.collectAsState()
     val importError by vm.importError.collectAsState()
+    val validationError by vm.validationError.collectAsState()
     var saveBusy by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
+    val coroutineScope = rememberCoroutineScope()
+
+    // Export options dialog state
+    var showExportDialog by remember { mutableStateOf(false) }
+    var exportHideIdentity by remember { mutableStateOf(false) }
 
     // Import: pick a text file → read contents → hand to VM
     val importLauncher = rememberLauncherForActivityResult(
@@ -70,7 +79,7 @@ fun ProfileEditScreen(
     ) { uri ->
         uri ?: return@rememberLauncherForActivityResult
         try {
-            val toml = vm.exportToToml()
+            val toml = vm.exportToToml(exportHideIdentity)
             context.contentResolver.openOutputStream(uri)
                 ?.bufferedWriter()?.use { it.write(toml) }
         } catch (_: Exception) { }
@@ -81,6 +90,15 @@ fun ProfileEditScreen(
         importError?.let {
             snackbarHostState.showSnackbar(it)
             vm.clearImportError()
+        }
+    }
+
+    // Show validation error as snackbar
+    LaunchedEffect(validationError) {
+        validationError?.let {
+            saveBusy = false
+            snackbarHostState.showSnackbar(it)
+            vm.clearValidationError()
         }
     }
 
@@ -98,6 +116,44 @@ fun ProfileEditScreen(
         }
     }
 
+    // ── Export options dialog ───────────────────────────────────────────────
+    if (showExportDialog) {
+        AlertDialog(
+            onDismissRequest = { showExportDialog = false },
+            title = { Text("Export Profile") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Choose export options:")
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = exportHideIdentity,
+                            onCheckedChange = { exportHideIdentity = it },
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text("Hide domains & encryption key (Locked)")
+                    }
+                    Text(
+                        "When enabled, anyone who imports this config won't be able to see domain names or the encryption key in the app.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showExportDialog = false
+                    val safeName = profile.name
+                        .replace(Regex("[^a-zA-Z0-9_-]"), "_")
+                        .ifBlank { "profile" }
+                    exportLauncher.launch("$safeName.toml")
+                }) { Text("Export") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showExportDialog = false }) { Text("Cancel") }
+            },
+        )
+    }
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
@@ -113,13 +169,18 @@ fun ProfileEditScreen(
                     IconButton(onClick = { importLauncher.launch("*/*") }) {
                         Icon(Icons.Default.FileOpen, contentDescription = "Import .toml")
                     }
-                    // Export .toml
-                    IconButton(onClick = {
-                        val safeName = profile.name
-                            .replace(Regex("[^a-zA-Z0-9_-]"), "_")
-                            .ifBlank { "profile" }
-                        exportLauncher.launch("$safeName.toml")
-                    }) {
+                    // Export .toml (opens options dialog) — blocked for locked profiles
+                    IconButton(
+                        onClick = {
+                            if (profile.identityLocked) {
+                                coroutineScope.launch {
+                                    snackbarHostState.showSnackbar("Cannot export a locked profile — identity fields are protected.")
+                                }
+                            } else {
+                                showExportDialog = true
+                            }
+                        },
+                    ) {
                         Icon(Icons.Default.IosShare, contentDescription = "Export .toml")
                     }
                     // Save
@@ -159,18 +220,50 @@ fun ProfileEditScreen(
             // Tunnel mode selector
             TunnelModeSelector(profile.tunnelMode) { vm.update { copy(tunnelMode = it) } }
 
+            // Resolver list — at the top for quick access
+            Divider()
+            OutlinedButton(
+                onClick = {
+                    if (profileId == Screen.ProfileEdit.NEW) {
+                        vm.saveForResolver()
+                    } else {
+                        onEditResolvers(profile.id)
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Default.Edit, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Edit Resolver List")
+            }
+
             Divider()
 
             // Section 1: Identity
             ExpandableSection("Tunnel Identity", expanded = true) {
-                ProfileTextField("DOMAINS (comma-separated)", profile.domains, hint = "DOMAINS") {
-                    vm.update { copy(domains = it) }
+                if (profile.identityLocked) {
+                    LockedField("DOMAINS")
+                } else {
+                    ProfileTextField("DOMAINS (comma-separated)", profile.domains, hint = "DOMAINS") {
+                        vm.update { copy(domains = it) }
+                    }
                 }
-                EncryptionMethodSelector(profile.dataEncryptionMethod) {
-                    vm.update { copy(dataEncryptionMethod = it) }
-                }
-                PasswordField("ENCRYPTION_KEY", profile.encryptionKey) {
-                    vm.update { copy(encryptionKey = it) }
+            }
+
+            // Section: Data Encryption
+            ExpandableSection("Data Encryption", expanded = true) {
+                if (profile.identityLocked) {
+                    EncryptionMethodSelector(profile.dataEncryptionMethod) {
+                        vm.update { copy(dataEncryptionMethod = it) }
+                    }
+                    LockedField("ENCRYPTION_KEY")
+                } else {
+                    EncryptionMethodSelector(profile.dataEncryptionMethod) {
+                        vm.update { copy(dataEncryptionMethod = it) }
+                    }
+                    PasswordField("ENCRYPTION_KEY", profile.encryptionKey) {
+                        vm.update { copy(encryptionKey = it) }
+                    }
                 }
             }
 
@@ -406,23 +499,7 @@ fun ProfileEditScreen(
                 }
             }
 
-            // Resolver list
-            Divider()
-            OutlinedButton(
-                onClick = {
-                    if (profileId == Screen.ProfileEdit.NEW) {
-                        // Profile not yet in DB — save it first, then navigate
-                        vm.saveForResolver()
-                    } else {
-                        onEditResolvers(profile.id)
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Icon(Icons.Default.Edit, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Edit Resolver List")
-            }
+
         }
     }
 }
@@ -698,3 +775,19 @@ fun ExpandableSection(
         }
     }
 }
+
+/** Read-only field that shows "🔒 Locked" for hidden identity fields. */
+@Composable
+fun LockedField(label: String) {
+    OutlinedTextField(
+        value = "🔒 Locked",
+        onValueChange = {},
+        label = { Text(label) },
+        enabled = false,
+        readOnly = true,
+        leadingIcon = { Icon(Icons.Default.Lock, contentDescription = "Locked") },
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+    )
+}
+
