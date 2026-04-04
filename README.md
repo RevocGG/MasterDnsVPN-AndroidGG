@@ -1,6 +1,6 @@
 # MasterDnsVPN Android Client
 
-## | [🇮🇷 نسخه فارسی](README_FA.md) |
+## | [ نسخه فارسی](README_FA.md) |
 
 > **This is the Android client for [MasterDnsVPN](https://github.com/masterking32/MasterDnsVPN).**
 > Before using this app, you must install and configure the **server side** from the main project first.
