@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">MasterDnsVPNGG</string>
+    <string name="app_name">MasterDnsVPN-GG</string>
 
     <!-- Tunnel states -->
     <string name="state_connected">Connected</string>
@@ -69,7 +69,7 @@
 
     <!-- Notification -->
     <string name="notif_channel_tunnel">VPN Tunnel</string>
-    <string name="notif_connected">MasterDnsVPNGG is active</string>
+    <string name="notif_connected">MasterDnsVPN-GG is active</string>
     <string name="notif_connecting">Connecting…</string>
     <string name="notif_action_disconnect">Disconnect</string>
 

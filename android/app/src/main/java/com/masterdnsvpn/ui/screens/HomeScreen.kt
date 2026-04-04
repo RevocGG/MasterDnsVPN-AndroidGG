@@ -1,11 +1,14 @@
 package com.masterdnsvpn.ui.screens
 
 import android.app.Activity
+import android.content.Intent
 import android.graphics.BitmapFactory
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -22,9 +25,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.masterdnsvpn.BuildConfig
 import com.masterdnsvpn.profile.MetaProfileEntity
 import com.masterdnsvpn.profile.ProfileEntity
 import com.masterdnsvpn.ui.theme.*
@@ -51,6 +56,17 @@ fun HomeScreen(
     val hotspotState by hotspotVm.state.collectAsState()
 
     var showHotspotDialog by remember { mutableStateOf(false) }
+    var showAboutDialog by remember { mutableStateOf(false) }
+
+    // Show welcome dialog on first launch
+    val prefs = ctx.getSharedPreferences("masterdnsvpn_prefs", android.content.Context.MODE_PRIVATE)
+    var showWelcome by remember { mutableStateOf(!prefs.getBoolean("welcome_shown", false)) }
+    if (showWelcome) {
+        showAboutDialog = true
+        prefs.edit().putBoolean("welcome_shown", true).apply()
+        showWelcome = false
+    }
+
     var pendingVpnProfileId by remember { mutableStateOf<String?>(null) }
     val vpnPermLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -76,6 +92,73 @@ fun HomeScreen(
     }
 
     GlassBackground {
+        // ── About / Welcome dialog ─────────────────────────────────────
+        if (showAboutDialog) {
+            AlertDialog(
+                onDismissRequest = { showAboutDialog = false },
+                containerColor = DarkSurface,
+                icon = {
+                    logoBitmap?.let {
+                        Image(
+                            bitmap = it,
+                            contentDescription = "Logo",
+                            modifier = Modifier.size(72.dp).clip(CircleShape),
+                        )
+                    }
+                },
+                title = {
+                    Text(
+                        "Welcome to MasterDnsVPN-GG",
+                        color = TealLight,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                    )
+                },
+                text = {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            "An open-source Android client for MasterDnsVPN",
+                            color = TextSecondary,
+                            fontSize = 14.sp,
+                        )
+                        Spacer(Modifier.height(4.dp))
+
+                        AboutLink(icon = Icons.Default.Code, label = "Main GitHub", url = "https://github.com/masterking32/MasterDnsVPN")
+                        AboutLink(icon = Icons.Default.Send, label = "Main Telegram", url = "https://t.me/masterdnsvpn")
+                        AboutLink(icon = Icons.Default.PhoneAndroid, label = "GG Android Client", url = "https://github.com/RevocGG/MasterDnsVPN-AndroidGG")
+
+                        Spacer(Modifier.height(8.dp))
+                        HorizontalDivider(color = TextSecondary.copy(alpha = 0.3f))
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Upstream Engine",
+                            color = TextSecondary,
+                            fontSize = 12.sp,
+                        )
+                        Text(
+                            BuildConfig.UPSTREAM_VERSION,
+                            color = CyanAccent,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 13.sp,
+                        )
+                        Text(
+                            "App Version: ${BuildConfig.VERSION_NAME}",
+                            color = TextSecondary,
+                            fontSize = 12.sp,
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showAboutDialog = false }) {
+                        Text("OK", color = TealLight)
+                    }
+                },
+            )
+        }
+
         // ── Hotspot sharing dialog ─────────────────────────────────────
         if (showHotspotDialog) {
             AlertDialog(
@@ -190,7 +273,7 @@ fun HomeScreen(
                                 Spacer(Modifier.width(10.dp))
                             }
                             Text(
-                                "MasterDnsVPN",
+                                "MasterDnsVPN-GG",
                                 fontWeight = FontWeight.Bold,
                                 color = TealLight,
                             )
@@ -200,6 +283,9 @@ fun HomeScreen(
                         containerColor = androidx.compose.ui.graphics.Color.Transparent,
                     ),
                     actions = {
+                        IconButton(onClick = { showAboutDialog = true }) {
+                            Icon(Icons.Default.Info, "About", tint = CyanAccent)
+                        }
                         IconButton(onClick = onNewMetaProfile) {
                             Icon(Icons.Default.AccountTree, "Meta Profile", tint = CyanAccent)
                         }
@@ -403,6 +489,31 @@ private fun formatBytes(bytes: Long): String {
     if (mb < 1024) return "%.1f MB".format(mb)
     val gb = mb / 1024.0
     return "%.2f GB".format(gb)
+}
+
+@Composable
+private fun AboutLink(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    url: String,
+) {
+    val ctx = LocalContext.current
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+            .background(DarkBg.copy(alpha = 0.5f))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+    ) {
+        Icon(icon, contentDescription = null, tint = CyanAccent, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(10.dp))
+        Column {
+            Text(label, color = TextPrimary, fontWeight = FontWeight.Medium, fontSize = 14.sp)
+            Text(url, color = CyanAccent, fontSize = 11.sp, textDecoration = TextDecoration.Underline)
+        }
+    }
 }
 
 @Composable

@@ -19,9 +19,15 @@ android {
         // Read from Gradle properties injected by CI (-PversionCode=X -PversionName=Y)
         // Fallback to hardcoded values for local development.
         versionCode = (project.findProperty("versionCode") as? String)?.toIntOrNull() ?: 2
-        versionName = project.findProperty("versionName") as? String ?: "1.0.0-beta"
+        versionName = project.findProperty("versionName") as? String ?: "1.0.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        buildConfigField(
+            "String",
+            "UPSTREAM_VERSION",
+            "\"${project.findProperty("upstreamVersion") as? String ?: "v2026.04.03.174728-2b7842c"}\""
+        )
 
         // Include all ABIs in universal APK
         ndk {
@@ -72,9 +78,9 @@ android {
             .forEach { output ->
                 val abi = output.getFilter(com.android.build.api.variant.FilterConfiguration.FilterType.ABI.name)
                 if (abi != null) {
-                    output.outputFileName = "MasterDnsVPN-${variant.versionName}-${abi}.apk"
+                    output.outputFileName = "MasterDnsVPN-GG-${variant.versionName}-${abi}.apk"
                 } else {
-                    output.outputFileName = "MasterDnsVPN-${variant.versionName}-universal.apk"
+                    output.outputFileName = "MasterDnsVPN-GG-${variant.versionName}-universal.apk"
                 }
             }
     }
@@ -90,6 +96,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     // Include the gomobile-generated .aar from android/libs/

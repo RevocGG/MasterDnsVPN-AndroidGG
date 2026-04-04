@@ -167,6 +167,7 @@ jobs:
           ./gradlew assembleRelease \
             -PversionCode=${{ steps.version.outputs.version_code }} \
             -PversionName=${{ steps.version.outputs.version_name }} \
+            -PupstreamVersion=${{ inputs.upstream_version || 'unknown' }} \
             --no-daemon \
             --stacktrace
 
@@ -186,13 +187,13 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name:   ${{ steps.version.outputs.release_tag }}
-          name:       "MasterDnsVPN ${{ steps.version.outputs.version_name }} — upstream ${{ inputs.upstream_version || 'unknown' }}"
+          name:       "MasterDnsVPN-GG ${{ steps.version.outputs.version_name }} — upstream ${{ inputs.upstream_version || 'unknown' }}"
           prerelease: ${{ steps.version.outputs.is_prerelease }}
           generate_release_notes: true
           fail_on_unmatched_files: false
           files: android/app/build/outputs/apk/release/*.apk
           body: |
-            ## MasterDnsVPN ${{ steps.version.outputs.version_name }}
+            ## MasterDnsVPN-GG ${{ steps.version.outputs.version_name }}
 
             | | |
             |---|---|
