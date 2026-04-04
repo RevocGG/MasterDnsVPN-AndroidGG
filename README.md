@@ -6,6 +6,8 @@
 > Before using this app, you must install and configure the **server side** from the main project first.
 > The app will not work without a running MasterDnsVPN server.
 
+<img src="docs/screenshots.jpg" alt="App Screenshots" width="900">
+
 ---
 
 ## What is MasterDnsVPN?
