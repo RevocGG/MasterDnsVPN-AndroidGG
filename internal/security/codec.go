@@ -141,6 +141,24 @@ func (c *Codec) EncryptAndEncode(data []byte) (string, error) {
 	return baseCodec.Encode(encrypted), nil
 }
 
+func (c *Codec) EncryptAndEncodeBytes(data []byte) ([]byte, error) {
+	if c == nil {
+		return nil, ErrInvalidCodecMethod
+	}
+	if c.method == 0 {
+		return baseCodec.EncodeToBytes(data), nil
+	}
+
+	bufPtr := getCryptoBuffer(len(data) + 64)
+	defer putCryptoBuffer(bufPtr)
+
+	encrypted, err := c.encrypt((*bufPtr)[:0], data)
+	if err != nil {
+		return nil, err
+	}
+	return baseCodec.EncodeToBytes(encrypted), nil
+}
+
 func (c *Codec) DecodeAndDecrypt(data []byte) ([]byte, error) {
 	if c == nil {
 		return nil, ErrInvalidCodecMethod

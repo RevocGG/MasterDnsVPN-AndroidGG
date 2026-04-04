@@ -3,7 +3,14 @@ package client
 import (
 	"encoding/binary"
 	"net"
+	"sort"
 	"time"
+)
+
+const (
+	resolverPendingSoftCap   = 8192
+	resolverPendingHardCap   = 12288
+	resolverPendingTargetCap = 8192
 )
 
 type resolverSampleKey struct {
@@ -67,13 +74,23 @@ func (c *Client) trackResolverSend(packet []byte, resolverAddr string, serverKey
 		dnsID:        binary.BigEndian.Uint16(packet[:2]),
 	}
 
+	var timeoutObservations []resolverTimeoutObservation
 	c.resolverStatsMu.Lock()
+	if len(c.resolverPending) >= resolverPendingSoftCap {
+		timeoutObservations = c.pruneResolverSamplesLocked(sentAt)
+		if overflow := len(c.resolverPending) - resolverPendingHardCap; overflow >= 0 {
+			c.evictResolverPendingLocked(overflow + 1)
+		}
+	}
 	c.resolverPending[key] = resolverSample{
 		serverKey: serverKey,
 		sentAt:    sentAt,
 	}
 	c.resolverStatsMu.Unlock()
 
+	for _, observation := range timeoutObservations {
+		c.noteResolverTimeout(observation.serverKey, observation.at)
+	}
 	c.noteResolverSend(serverKey)
 }
 
@@ -221,4 +238,40 @@ func (c *Client) pruneResolverSamplesLocked(now time.Time) []resolverTimeoutObse
 		}
 	}
 	return timeoutObservations
+}
+
+func (c *Client) evictResolverPendingLocked(evictCount int) {
+	if c == nil || evictCount <= 0 || len(c.resolverPending) == 0 {
+		return
+	}
+
+	type pendingEntry struct {
+		key    resolverSampleKey
+		sample resolverSample
+	}
+
+	entries := make([]pendingEntry, 0, len(c.resolverPending))
+	for key, sample := range c.resolverPending {
+		entries = append(entries, pendingEntry{key: key, sample: sample})
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].sample.timedOut != entries[j].sample.timedOut {
+			return entries[i].sample.timedOut
+		}
+		if !entries[i].sample.sentAt.Equal(entries[j].sample.sentAt) {
+			return entries[i].sample.sentAt.Before(entries[j].sample.sentAt)
+		}
+		if entries[i].key.resolverAddr != entries[j].key.resolverAddr {
+			return entries[i].key.resolverAddr < entries[j].key.resolverAddr
+		}
+		return entries[i].key.dnsID < entries[j].key.dnsID
+	})
+
+	if evictCount > len(entries) {
+		evictCount = len(entries)
+	}
+	for i := 0; i < evictCount; i++ {
+		delete(c.resolverPending, entries[i].key)
+	}
 }

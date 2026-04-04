@@ -11,6 +11,7 @@ import (
 "sync"
 
 "masterdnsvpn-go/internal/client"
+"masterdnsvpn-go/internal/config"
 )
 
 type tunnelHandle struct {
@@ -50,7 +51,7 @@ return fmt.Errorf("failed to prepare config files: %w", err)
 }
 configPath := ConfigFilePath(profileDir)
 logPath := filepath.Join(profileDir, "client.log")
-c, err := client.Bootstrap(configPath, logPath)
+c, err := client.Bootstrap(configPath, logPath, config.ClientConfigOverrides{})
 if err != nil {
 return fmt.Errorf("bootstrap failed: %w", err)
 }

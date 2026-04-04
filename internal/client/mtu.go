@@ -10,13 +10,11 @@
 package client
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	DnsParser "masterdnsvpn-go/internal/dnsparser"
 	Enums "masterdnsvpn-go/internal/enums"
@@ -456,7 +454,7 @@ func (c *Client) sendUploadMTUProbe(ctx context.Context, conn *Connection, probe
 		conn.ResolverLabel,
 	)
 
-	payload, code, useBase64, err := c.buildMTUProbePayload(mtuSize, 0)
+	payload, code, useBase64, err := c.buildMTUProbePayload(mtuSize)
 	if err != nil {
 		return false, err
 	}
@@ -513,7 +511,7 @@ func (c *Client) sendUploadMTUProbe(ctx context.Context, conn *Connection, probe
 		)
 		return false, nil
 	}
-	if !bytes.Equal(packet.Payload[:mtuProbeCodeLength], code) {
+	if binary.BigEndian.Uint32(packet.Payload[:mtuProbeCodeLength]) != code {
 		c.logMTUProbe(
 			options.IsRetry,
 			options.Quiet,
@@ -567,7 +565,7 @@ func (c *Client) sendDownloadMTUProbe(ctx context.Context, conn *Connection, pro
 		return false, nil
 	}
 	requestLen := max(1+mtuProbeCodeLength+2, uploadMTU)
-	payload, code, useBase64, err := c.buildMTUProbePayload(requestLen, 2)
+	payload, code, useBase64, err := c.buildMTUProbePayload(requestLen)
 	if err != nil {
 		return false, err
 	}
@@ -637,7 +635,7 @@ func (c *Client) sendDownloadMTUProbe(ctx context.Context, conn *Connection, pro
 		)
 		return false, nil
 	}
-	if !bytes.Equal(packet.Payload[:mtuProbeCodeLength], code) {
+	if binary.BigEndian.Uint32(packet.Payload[:mtuProbeCodeLength]) != code {
 		c.logMTUProbe(
 			options.IsRetry,
 			options.Quiet,
@@ -717,17 +715,15 @@ func (c *Client) canBuildUploadPayload(domain string, payloadLen int) bool {
 	}
 
 	payload := buf[:payloadLen]
-	// No need to fill data just to check length
 	encoded, err := VpnProto.BuildEncoded(VpnProto.BuildOptions{
-		SessionID:       255,
-		PacketType:      maxUploadProbePacketType,
-		SessionCookie:   255,
-		StreamID:        0xFFFF,
-		SequenceNum:     0xFFFF,
-		FragmentID:      0xFF,
-		TotalFragments:  0xFF,
-		CompressionType: 0xFF,
-		Payload:         payload,
+		SessionID:      255,
+		PacketType:     Enums.PACKET_MTU_UP_REQ,
+		SessionCookie:  255,
+		StreamID:       0xFFFF,
+		SequenceNum:    0xFFFF,
+		FragmentID:     0xFF,
+		TotalFragments: 0xFF,
+		Payload:        payload,
 	}, c.codec)
 	if err != nil {
 		return false
@@ -737,9 +733,9 @@ func (c *Client) canBuildUploadPayload(domain string, payloadLen int) bool {
 	return err == nil
 }
 
-func (c *Client) buildMTUProbePayload(length int, reservedTailPrefix int) ([]byte, []byte, bool, error) {
+func (c *Client) buildMTUProbePayload(length int) ([]byte, uint32, bool, error) {
 	if length <= 0 {
-		return nil, nil, false, nil
+		return nil, 0, false, nil
 	}
 
 	payload := make([]byte, length)
@@ -749,44 +745,10 @@ func (c *Client) buildMTUProbePayload(length int, reservedTailPrefix int) ([]byt
 		payload[0] = mtuProbeBase64Reply
 	}
 
-	// Use atomic counter for unique probe IDs (Fast & Unique)
-	code := make([]byte, mtuProbeCodeLength)
-	binary.BigEndian.PutUint32(code, uint32(c.mtuProbeCounter.Add(1)))
-	copy(payload[1:1+mtuProbeCodeLength], code)
-
-	fillOffset := 1 + mtuProbeCodeLength + reservedTailPrefix
-	if fillOffset < len(payload) {
-		fillMTUProbeBytesFast(payload[fillOffset:], uint64(time.Now().UnixNano()))
-	}
+	code := c.mtuProbeCounter.Add(1)
+	binary.BigEndian.PutUint32(payload[1:1+mtuProbeCodeLength], code)
 
 	return payload, code, useBase64, nil
-}
-
-func fillMTUProbeBytesFast(dst []byte, seed uint64) {
-	n := len(dst)
-	if n == 0 {
-		return
-	}
-
-	// Fast Xorshift PRNG to fill with non-duplicate data
-	state := seed
-	if state == 0 {
-		state = 0x9e3779b97f4a7c15
-	}
-
-	for i := 0; i < n; i += 8 {
-		state ^= state << 13
-		state ^= state >> 7
-		state ^= state << 17
-		if n-i >= 8 {
-			binary.BigEndian.PutUint64(dst[i:i+8], state)
-		} else {
-			remaining := n - i
-			var tmp [8]byte
-			binary.BigEndian.PutUint64(tmp[:], state)
-			copy(dst[i:], tmp[:remaining])
-		}
-	}
 }
 
 func summarizeValidMTUConnections(connections []Connection) (validConns []Connection, minUpload int, minDownload int, minUploadChars int) {
@@ -810,7 +772,7 @@ func summarizeValidMTUConnections(connections []Connection) (validConns []Connec
 	return validConns, minUpload, minDownload, minUploadChars
 }
 
-func (c *Client) encodedCharsForPayload(payloadLen int) int {
+func (c *Client) encodedCharsForPacketPayload(packetType uint8, payloadLen int) int {
 	if payloadLen <= 0 {
 		return 0
 	}
@@ -825,7 +787,7 @@ func (c *Client) encodedCharsForPayload(payloadLen int) int {
 	payload := buf[:payloadLen]
 	encoded, err := VpnProto.BuildEncoded(VpnProto.BuildOptions{
 		SessionID:       255,
-		PacketType:      Enums.PACKET_STREAM_DATA,
+		PacketType:      packetType,
 		SessionCookie:   255,
 		StreamID:        0xFFFF,
 		SequenceNum:     0xFFFF,
@@ -840,6 +802,10 @@ func (c *Client) encodedCharsForPayload(payloadLen int) int {
 	}
 
 	return len(encoded)
+}
+
+func (c *Client) encodedCharsForPayload(payloadLen int) int {
+	return c.encodedCharsForPacketPayload(maxUploadProbePacketType, payloadLen)
 }
 
 func effectiveDownloadMTUProbeSize(downloadMTU int) int {

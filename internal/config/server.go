@@ -8,10 +8,13 @@
 package config
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -89,6 +92,16 @@ type ServerConfig struct {
 	ARQTerminalAckWaitTimeoutSec      float64  `toml:"ARQ_TERMINAL_ACK_WAIT_TIMEOUT_SECONDS"`
 }
 
+type ServerConfigOverrides struct {
+	Values map[string]any
+}
+
+type ServerConfigFlagBinder struct {
+	values      ServerConfig
+	setFields   map[string]struct{}
+	flagToField map[string]string
+}
+
 func defaultServerConfig() ServerConfig {
 	workers := min(max(runtime.NumCPU(), 1), 16)
 
@@ -163,6 +176,14 @@ func defaultServerConfig() ServerConfig {
 }
 
 func LoadServerConfig(filename string) (ServerConfig, error) {
+	cfg, err := loadServerConfigFile(filename)
+	if err != nil {
+		return cfg, err
+	}
+	return finalizeServerConfig(cfg)
+}
+
+func loadServerConfigFile(filename string) (ServerConfig, error) {
 	cfg := defaultServerConfig()
 	path, err := filepath.Abs(filename)
 	if err != nil {
@@ -179,6 +200,23 @@ func LoadServerConfig(filename string) (ServerConfig, error) {
 
 	cfg.ConfigPath = path
 	cfg.ConfigDir = filepath.Dir(path)
+	return cfg, nil
+}
+
+func LoadServerConfigWithOverrides(filename string, overrides ServerConfigOverrides) (ServerConfig, error) {
+	cfg, err := loadServerConfigFile(filename)
+	if err != nil {
+		return cfg, err
+	}
+	if len(overrides.Values) > 0 {
+		if err := applyServerConfigOverrideValues(&cfg, overrides.Values); err != nil {
+			return cfg, err
+		}
+	}
+	return finalizeServerConfig(cfg)
+}
+
+func finalizeServerConfig(cfg ServerConfig) (ServerConfig, error) {
 	cfg.ProtocolType = defaultString(strings.ToUpper(strings.TrimSpace(cfg.ProtocolType)), "SOCKS5")
 
 	switch cfg.ProtocolType {
@@ -270,8 +308,8 @@ func LoadServerConfig(filename string) (ServerConfig, error) {
 		cfg.PacketBlockControlDuplication = 1
 	}
 
-	if cfg.PacketBlockControlDuplication > 16 {
-		cfg.PacketBlockControlDuplication = 16
+	if cfg.PacketBlockControlDuplication > 4 {
+		cfg.PacketBlockControlDuplication = 4
 	}
 
 	if len(cfg.DNSUpstreamServers) == 0 {
@@ -346,7 +384,7 @@ func LoadServerConfig(filename string) (ServerConfig, error) {
 		cfg.LogLevel = "INFO"
 	}
 
-	cfg.ARQWindowSize = clampInt(defaultIntBelow(cfg.ARQWindowSize, 1, 2000), 1, 16384)
+	cfg.ARQWindowSize = clampInt(defaultIntBelow(cfg.ARQWindowSize, 1, 2000), 1, 6000)
 	cfg.ARQInitialRTOSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQInitialRTOSeconds, 1.0), 0.05, 60.0)
 	cfg.ARQMaxRTOSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQMaxRTOSeconds, 8.0), cfg.ARQInitialRTOSeconds, 120.0)
 	cfg.ARQControlInitialRTOSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQControlInitialRTOSeconds, 1.0), 0.05, 60.0)
@@ -356,9 +394,9 @@ func LoadServerConfig(filename string) (ServerConfig, error) {
 	cfg.ARQDataPacketTTLSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQDataPacketTTLSeconds, 1800.0), 30.0, 86400.0)
 	cfg.ARQControlPacketTTLSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQControlPacketTTLSeconds, 900.0), 30.0, 86400.0)
 	cfg.ARQMaxDataRetries = clampInt(defaultIntBelow(cfg.ARQMaxDataRetries, 1, 800), 60, 100000)
-	cfg.ARQDataNackMaxGap = clampInt(defaultIntBelow(cfg.ARQDataNackMaxGap, 0, 0), 0, 32)
-	cfg.ARQDataNackInitialDelaySeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQDataNackInitialDelaySeconds, 0.0), 0.0, 30.0)
-	cfg.ARQDataNackRepeatSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQDataNackRepeatSeconds, 2.0), 0.1, 30.0)
+	cfg.ARQDataNackMaxGap = clampInt(defaultIntBelow(cfg.ARQDataNackMaxGap, 0, 0), 0, cfg.ARQWindowSize/4)
+	cfg.ARQDataNackInitialDelaySeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQDataNackInitialDelaySeconds, 0.0), 0.2, 30.0)
+	cfg.ARQDataNackRepeatSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQDataNackRepeatSeconds, 2.0), 0.3, 30.0)
 	cfg.ARQTerminalDrainTimeoutSec = clampFloat(defaultFloatAtMostZero(cfg.ARQTerminalDrainTimeoutSec, 90.0), 10.0, 3600.0)
 	cfg.ARQTerminalAckWaitTimeoutSec = clampFloat(defaultFloatAtMostZero(cfg.ARQTerminalAckWaitTimeoutSec, 60.0), 5.0, 3600.0)
 
@@ -457,4 +495,371 @@ func normalizeCompressionTypeList(values []int) []int {
 		return []int{0}
 	}
 	return out
+}
+
+func applyServerConfigOverrideValues(cfg *ServerConfig, values map[string]any) error {
+	if cfg == nil || len(values) == 0 {
+		return nil
+	}
+
+	elem := reflect.ValueOf(cfg).Elem()
+	typ := elem.Type()
+	for fieldName, rawValue := range values {
+		field, ok := typ.FieldByName(fieldName)
+		if !ok {
+			return fmt.Errorf("unknown server config override field: %s", fieldName)
+		}
+		value := elem.FieldByName(fieldName)
+		if !value.CanSet() {
+			return fmt.Errorf("server config override field is not settable: %s", field.Name)
+		}
+		if err := assignServerConfigOverrideValue(value, rawValue, field.Name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func assignServerConfigOverrideValue(target reflect.Value, rawValue any, fieldName string) error {
+	if !target.IsValid() {
+		return fmt.Errorf("invalid server config override target: %s", fieldName)
+	}
+
+	switch target.Kind() {
+	case reflect.String:
+		v, ok := rawValue.(string)
+		if !ok {
+			return fmt.Errorf("invalid string override for %s", fieldName)
+		}
+		target.SetString(v)
+		return nil
+	case reflect.Bool:
+		v, ok := rawValue.(bool)
+		if !ok {
+			return fmt.Errorf("invalid bool override for %s", fieldName)
+		}
+		target.SetBool(v)
+		return nil
+	case reflect.Int:
+		v, ok := rawValue.(int)
+		if !ok {
+			return fmt.Errorf("invalid int override for %s", fieldName)
+		}
+		target.SetInt(int64(v))
+		return nil
+	case reflect.Float64:
+		v, ok := rawValue.(float64)
+		if !ok {
+			return fmt.Errorf("invalid float override for %s", fieldName)
+		}
+		target.SetFloat(v)
+		return nil
+	case reflect.Slice:
+		switch target.Type().Elem().Kind() {
+		case reflect.String:
+			v, ok := rawValue.([]string)
+			if !ok {
+				return fmt.Errorf("invalid string slice override for %s", fieldName)
+			}
+			target.Set(reflect.ValueOf(append([]string(nil), v...)))
+			return nil
+		case reflect.Int:
+			v, ok := rawValue.([]int)
+			if !ok {
+				return fmt.Errorf("invalid int slice override for %s", fieldName)
+			}
+			target.Set(reflect.ValueOf(append([]int(nil), v...)))
+			return nil
+		}
+	}
+
+	return fmt.Errorf("unsupported server config override type for %s", fieldName)
+}
+
+func NewServerConfigFlagBinder(fs *flag.FlagSet) (*ServerConfigFlagBinder, error) {
+	if fs == nil {
+		return nil, fmt.Errorf("flag set is required")
+	}
+
+	binder := &ServerConfigFlagBinder{
+		values:      defaultServerConfig(),
+		setFields:   make(map[string]struct{}),
+		flagToField: make(map[string]string),
+	}
+
+	valueElem := reflect.ValueOf(&binder.values).Elem()
+	valueType := valueElem.Type()
+	for i := 0; i < valueType.NumField(); i++ {
+		field := valueType.Field(i)
+		tomlTag := field.Tag.Get("toml")
+		if tomlTag == "" || tomlTag == "-" {
+			continue
+		}
+
+		flagName := clientConfigFlagName(tomlTag)
+		binder.flagToField[flagName] = field.Name
+		target := valueElem.Field(i)
+		usage := fmt.Sprintf("Override %s from config file", tomlTag)
+
+		switch target.Kind() {
+		case reflect.String:
+			fs.Var(newServerConfigStringFlag(target.Addr().Interface().(*string), binder, field.Name), flagName, usage)
+		case reflect.Bool:
+			fs.Var(newServerConfigBoolFlag(target.Addr().Interface().(*bool), binder, field.Name), flagName, usage)
+		case reflect.Int:
+			fs.Var(newServerConfigIntFlag(target.Addr().Interface().(*int), binder, field.Name), flagName, usage)
+		case reflect.Float64:
+			fs.Var(newServerConfigFloatFlag(target.Addr().Interface().(*float64), binder, field.Name), flagName, usage)
+		case reflect.Slice:
+			switch target.Type().Elem().Kind() {
+			case reflect.String:
+				fs.Var(newServerConfigStringSliceFlag(target.Addr().Interface().(*[]string), binder, field.Name), flagName, usage+" (comma-separated)")
+			case reflect.Int:
+				fs.Var(newServerConfigIntSliceFlag(target.Addr().Interface().(*[]int), binder, field.Name), flagName, usage+" (comma-separated)")
+			}
+		}
+	}
+
+	return binder, nil
+}
+
+func (b *ServerConfigFlagBinder) Overrides() ServerConfigOverrides {
+	overrides := ServerConfigOverrides{
+		Values: make(map[string]any, len(b.setFields)),
+	}
+	if b == nil {
+		return overrides
+	}
+
+	valueElem := reflect.ValueOf(&b.values).Elem()
+	for fieldName := range b.setFields {
+		field := valueElem.FieldByName(fieldName)
+		if !field.IsValid() {
+			continue
+		}
+		switch field.Kind() {
+		case reflect.String:
+			overrides.Values[fieldName] = field.String()
+		case reflect.Bool:
+			overrides.Values[fieldName] = field.Bool()
+		case reflect.Int:
+			overrides.Values[fieldName] = int(field.Int())
+		case reflect.Float64:
+			overrides.Values[fieldName] = field.Float()
+		case reflect.Slice:
+			switch field.Type().Elem().Kind() {
+			case reflect.String:
+				src := field.Interface().([]string)
+				overrides.Values[fieldName] = append([]string(nil), src...)
+			case reflect.Int:
+				src := field.Interface().([]int)
+				overrides.Values[fieldName] = append([]int(nil), src...)
+			}
+		}
+	}
+
+	return overrides
+}
+
+func (b *ServerConfigFlagBinder) markSet(fieldName string) {
+	if b == nil || fieldName == "" {
+		return
+	}
+	b.setFields[fieldName] = struct{}{}
+}
+
+type serverConfigStringFlag struct {
+	target    *string
+	binder    *ServerConfigFlagBinder
+	fieldName string
+}
+
+func newServerConfigStringFlag(target *string, binder *ServerConfigFlagBinder, fieldName string) *serverConfigStringFlag {
+	return &serverConfigStringFlag{target: target, binder: binder, fieldName: fieldName}
+}
+
+func (f *serverConfigStringFlag) String() string {
+	if f == nil || f.target == nil {
+		return ""
+	}
+	return *f.target
+}
+
+func (f *serverConfigStringFlag) Set(value string) error {
+	if f == nil || f.target == nil {
+		return nil
+	}
+	*f.target = value
+	f.binder.markSet(f.fieldName)
+	return nil
+}
+
+type serverConfigBoolFlag struct {
+	target    *bool
+	binder    *ServerConfigFlagBinder
+	fieldName string
+}
+
+func newServerConfigBoolFlag(target *bool, binder *ServerConfigFlagBinder, fieldName string) *serverConfigBoolFlag {
+	return &serverConfigBoolFlag{target: target, binder: binder, fieldName: fieldName}
+}
+
+func (f *serverConfigBoolFlag) String() string {
+	if f == nil || f.target == nil {
+		return "false"
+	}
+	return strconv.FormatBool(*f.target)
+}
+
+func (f *serverConfigBoolFlag) Set(value string) error {
+	if f == nil || f.target == nil {
+		return nil
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return err
+	}
+	*f.target = parsed
+	f.binder.markSet(f.fieldName)
+	return nil
+}
+
+func (f *serverConfigBoolFlag) IsBoolFlag() bool { return true }
+
+type serverConfigIntFlag struct {
+	target    *int
+	binder    *ServerConfigFlagBinder
+	fieldName string
+}
+
+func newServerConfigIntFlag(target *int, binder *ServerConfigFlagBinder, fieldName string) *serverConfigIntFlag {
+	return &serverConfigIntFlag{target: target, binder: binder, fieldName: fieldName}
+}
+
+func (f *serverConfigIntFlag) String() string {
+	if f == nil || f.target == nil {
+		return "0"
+	}
+	return strconv.Itoa(*f.target)
+}
+
+func (f *serverConfigIntFlag) Set(value string) error {
+	if f == nil || f.target == nil {
+		return nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return err
+	}
+	*f.target = parsed
+	f.binder.markSet(f.fieldName)
+	return nil
+}
+
+type serverConfigFloatFlag struct {
+	target    *float64
+	binder    *ServerConfigFlagBinder
+	fieldName string
+}
+
+func newServerConfigFloatFlag(target *float64, binder *ServerConfigFlagBinder, fieldName string) *serverConfigFloatFlag {
+	return &serverConfigFloatFlag{target: target, binder: binder, fieldName: fieldName}
+}
+
+func (f *serverConfigFloatFlag) String() string {
+	if f == nil || f.target == nil {
+		return "0"
+	}
+	return strconv.FormatFloat(*f.target, 'f', -1, 64)
+}
+
+func (f *serverConfigFloatFlag) Set(value string) error {
+	if f == nil || f.target == nil {
+		return nil
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return err
+	}
+	*f.target = parsed
+	f.binder.markSet(f.fieldName)
+	return nil
+}
+
+type serverConfigStringSliceFlag struct {
+	target    *[]string
+	binder    *ServerConfigFlagBinder
+	fieldName string
+}
+
+func newServerConfigStringSliceFlag(target *[]string, binder *ServerConfigFlagBinder, fieldName string) *serverConfigStringSliceFlag {
+	return &serverConfigStringSliceFlag{target: target, binder: binder, fieldName: fieldName}
+}
+
+func (f *serverConfigStringSliceFlag) String() string {
+	if f == nil || f.target == nil {
+		return ""
+	}
+	return strings.Join(*f.target, ",")
+}
+
+func (f *serverConfigStringSliceFlag) Set(value string) error {
+	if f == nil || f.target == nil {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	items := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		items = append(items, part)
+	}
+	*f.target = items
+	f.binder.markSet(f.fieldName)
+	return nil
+}
+
+type serverConfigIntSliceFlag struct {
+	target    *[]int
+	binder    *ServerConfigFlagBinder
+	fieldName string
+}
+
+func newServerConfigIntSliceFlag(target *[]int, binder *ServerConfigFlagBinder, fieldName string) *serverConfigIntSliceFlag {
+	return &serverConfigIntSliceFlag{target: target, binder: binder, fieldName: fieldName}
+}
+
+func (f *serverConfigIntSliceFlag) String() string {
+	if f == nil || f.target == nil || len(*f.target) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(*f.target))
+	for _, item := range *f.target {
+		parts = append(parts, strconv.Itoa(item))
+	}
+	return strings.Join(parts, ",")
+}
+
+func (f *serverConfigIntSliceFlag) Set(value string) error {
+	if f == nil || f.target == nil {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	items := make([]int, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		parsed, err := strconv.Atoi(part)
+		if err != nil {
+			return err
+		}
+		items = append(items, parsed)
+	}
+	*f.target = items
+	f.binder.markSet(f.fieldName)
+	return nil
 }

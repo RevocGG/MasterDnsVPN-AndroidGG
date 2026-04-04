@@ -14,13 +14,37 @@ import (
 
 var lowerBase32Encoding = base32.NewEncoding("abcdefghijklmnopqrstuvwxyz234567").WithPadding(base32.NoPadding)
 
+func EncodedLenLowerBase32(n int) int {
+	if n <= 0 {
+		return 0
+	}
+	return lowerBase32Encoding.EncodedLen(n)
+}
+
+func EncodeLowerBase32To(dst []byte, data []byte) int {
+	if len(data) == 0 {
+		return 0
+	}
+	n := lowerBase32Encoding.EncodedLen(len(data))
+	lowerBase32Encoding.Encode(dst[:n], data)
+	return n
+}
+
+func EncodeLowerBase32Bytes(data []byte) []byte {
+	if len(data) == 0 {
+		return nil
+	}
+	out := make([]byte, lowerBase32Encoding.EncodedLen(len(data)))
+	lowerBase32Encoding.Encode(out, data)
+	return out
+}
+
 func EncodeLowerBase32(data []byte) string {
 	if len(data) == 0 {
 		return ""
 	}
 
-	out := make([]byte, lowerBase32Encoding.EncodedLen(len(data)))
-	lowerBase32Encoding.Encode(out, data)
+	out := EncodeLowerBase32Bytes(data)
 	return string(out)
 }
 

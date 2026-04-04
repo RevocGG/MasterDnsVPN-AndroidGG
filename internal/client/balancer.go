@@ -42,6 +42,8 @@ type connectionStats struct {
 	rttCount     uint64
 }
 
+const connectionStatsHalfLifeThreshold = 1000
+
 type balancerSnapshot struct {
 	version     uint64
 	connections []Connection
@@ -228,6 +230,7 @@ func (b *Balancer) ReportSend(serverKey string) {
 	if stats := b.statsForKey(serverKey); stats != nil {
 		stats.mu.Lock()
 		stats.sent++
+		stats.applyHalfLifeLocked()
 		stats.mu.Unlock()
 	}
 }
@@ -244,16 +247,7 @@ func (b *Balancer) ReportSuccess(serverKey string, rtt time.Duration) {
 		stats.rttMicrosSum += uint64(rtt / time.Microsecond)
 		stats.rttCount++
 	}
-
-	if stats.sent <= 1000 {
-		stats.mu.Unlock()
-		return
-	}
-
-	stats.sent /= 2
-	stats.acked /= 2
-	stats.rttMicrosSum /= 2
-	stats.rttCount /= 2
+	stats.applyHalfLifeLocked()
 	stats.mu.Unlock()
 }
 
@@ -266,6 +260,24 @@ func (b *Balancer) ResetServerStats(serverKey string) {
 	stats.mu.Lock()
 	stats.sent = 0
 	stats.acked = 0
+	stats.rttMicrosSum = 0
+	stats.rttCount = 0
+	stats.mu.Unlock()
+}
+
+// SeedConservativeStats initialises a re-activated resolver with a moderate
+// loss score so the balancer does not flood it before it has proven reliability.
+// Score = (10-8)*1000/10 = 200, below neutral (500) but not as good as healthy
+// peers — traffic is directed at it gradually as its real delivery rate improves.
+func (b *Balancer) SeedConservativeStats(serverKey string) {
+	stats := b.statsForKey(serverKey)
+	if stats == nil {
+		return
+	}
+
+	stats.mu.Lock()
+	stats.sent = 10
+	stats.acked = 8
 	stats.rttMicrosSum = 0
 	stats.rttCount = 0
 	stats.mu.Unlock()
@@ -412,10 +424,11 @@ func normalizeRequiredCount(validCount, requiredCount, defaultIfInvalid int) int
 }
 
 func (b *Balancer) selectRoundRobin(snap *balancerSnapshot, count int) []Connection {
-	start := int(b.rrCounter.Add(uint64(count)) - uint64(count))
+	n := len(snap.valid)
+	start := roundRobinStartIndex(b.rrCounter.Add(uint64(count))-uint64(count), n)
 	selected := make([]Connection, count)
 	for i := 0; i < count; i++ {
-		conn, ok := derefConnection(snap.connections, snap.valid[(start+i)%len(snap.valid)])
+		conn, ok := derefConnection(snap.connections, snap.valid[(start+i)%n])
 		if ok {
 			selected[i] = conn
 		}
@@ -583,7 +596,7 @@ func (b *Balancer) roundRobinBestConnection(snap *balancerSnapshot) (Connection,
 	if snap == nil || len(snap.valid) == 0 {
 		return Connection{}, false
 	}
-	pos := int(b.rrCounter.Add(1)-1) % len(snap.valid)
+	pos := roundRobinStartIndex(b.rrCounter.Add(1)-1, len(snap.valid))
 	return derefConnection(snap.connections, snap.valid[pos])
 }
 
@@ -610,12 +623,19 @@ func (b *Balancer) rotatedValidIndices(snap *balancerSnapshot, step int) []int {
 		step = 1
 	}
 
-	start := int(b.rrCounter.Add(uint64(step)) - uint64(step))
+	start := roundRobinStartIndex(b.rrCounter.Add(uint64(step))-uint64(step), len(snap.valid))
 	ordered := make([]int, len(snap.valid))
 	for i := range snap.valid {
 		ordered[i] = snap.valid[(start+i)%len(snap.valid)]
 	}
 	return ordered
+}
+
+func roundRobinStartIndex(counter uint64, n int) int {
+	if n <= 0 {
+		return 0
+	}
+	return int(counter % uint64(n))
 }
 
 func (b *Balancer) hasLossSignal(snap *balancerSnapshot) bool {
@@ -671,6 +691,22 @@ func (s *connectionStats) snapshot() (sent uint64, acked uint64, rttMicrosSum ui
 	rttCount = s.rttCount
 	s.mu.RUnlock()
 	return sent, acked, rttMicrosSum, rttCount
+}
+
+func (s *connectionStats) applyHalfLifeLocked() {
+	if s == nil {
+		return
+	}
+	if s.sent <= connectionStatsHalfLifeThreshold &&
+		s.acked <= connectionStatsHalfLifeThreshold &&
+		s.rttCount <= connectionStatsHalfLifeThreshold {
+		return
+	}
+
+	s.sent /= 2
+	s.acked /= 2
+	s.rttMicrosSum /= 2
+	s.rttCount /= 2
 }
 
 func (b *Balancer) nextRandom() uint64 {

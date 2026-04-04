@@ -87,7 +87,7 @@ func (l *TCPListener) Start(ctx context.Context, ip string, port int) error {
 							continue
 						}
 						if l.client != nil && l.client.log != nil {
-							l.client.log.Warnf("⚠️ <yellow>%s listener stopped after accept error: %v</yellow>", l.protocolType, err)
+							l.client.log.Debugf("⚠️ <yellow>%s listener stopped after accept error: %v</yellow>", l.protocolType, err)
 						}
 						return
 					}

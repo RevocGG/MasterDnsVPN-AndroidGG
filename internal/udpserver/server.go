@@ -70,7 +70,6 @@ type Server struct {
 	streamOutboundTTL        time.Duration
 	streamOutboundMaxRetry   int
 	mtuProbePayloadPool      sync.Pool
-	mtuProbeFillPattern      [256]byte
 	packetPool               sync.Pool
 	deferredInflightMu       sync.Mutex
 	deferredInflight         map[uint64]struct{}
@@ -158,8 +157,7 @@ func New(cfg config.ServerConfig, log *logger.Logger, codec *security.Codec) *Se
 				return make([]byte, mtuProbeMaxDownSize)
 			},
 		},
-		mtuProbeFillPattern: buildMTUProbeFillPattern(),
-		deferredInflight:    make(map[uint64]struct{}, 128),
+		deferredInflight: make(map[uint64]struct{}, 128),
 		packetPool: sync.Pool{
 			New: func() any {
 				return make([]byte, cfg.MaxPacketSize)
@@ -173,6 +171,11 @@ type throttledLogState struct {
 	last map[string]int64
 }
 
+const (
+	throttledLogSoftCap = 1024
+	throttledLogHardCap = 1536
+)
+
 func (s *throttledLogState) allow(key string, now time.Time, interval time.Duration) bool {
 	if s == nil {
 		return true
@@ -184,16 +187,56 @@ func (s *throttledLogState) allow(key string, now time.Time, interval time.Durat
 	nowUnixNano := now.UnixNano()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	if s.last == nil {
 		s.last = make(map[string]int64, 64)
 	}
 
+	if len(s.last) > 0 {
+		s.pruneLocked(nowUnixNano, interval)
+	}
+
 	last := s.last[key]
+
 	if last != 0 && nowUnixNano-last < interval.Nanoseconds() {
 		return false
 	}
+
 	s.last[key] = nowUnixNano
 	return true
+}
+
+func (s *throttledLogState) pruneLocked(nowUnixNano int64, interval time.Duration) {
+	if s == nil || len(s.last) == 0 {
+		return
+	}
+
+	cutoff := nowUnixNano - interval.Nanoseconds()
+	for key, last := range s.last {
+		if last == 0 || last <= cutoff {
+			delete(s.last, key)
+		}
+	}
+
+	if len(s.last) <= throttledLogHardCap {
+		return
+	}
+
+	target := throttledLogSoftCap
+	for len(s.last) > target {
+		oldestKey := ""
+		oldestSeen := nowUnixNano
+		for key, last := range s.last {
+			if oldestKey == "" || last < oldestSeen {
+				oldestKey = key
+				oldestSeen = last
+			}
+		}
+		if oldestKey == "" {
+			return
+		}
+		delete(s.last, oldestKey)
+	}
 }
 
 func splitDeferredSessionPools(totalWorkers int, totalQueue int) (dnsWorkers int, connectWorkers int, dnsQueue int, connectQueue int) {

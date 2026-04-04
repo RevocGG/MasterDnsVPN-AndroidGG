@@ -52,6 +52,7 @@ type Client struct {
 	resolverHealth      map[string]*resolverHealthState
 	resolverRecheck     map[string]resolverRecheckState
 	runtimeDisabled     map[string]resolverDisabledState
+	resolverRecheckSem  chan struct{}
 	nowFn               func() time.Time
 	recheckConnectionFn func(conn *Connection) bool
 
@@ -101,9 +102,8 @@ type Client struct {
 	asyncWG              sync.WaitGroup
 	asyncCancel          context.CancelFunc
 	tunnelConn           *net.UDPConn
-	txChannel            chan asyncPacket
+	txChannel            chan rawOutboundTask
 	rxChannel            chan asyncReadPacket
-	encodeChannel        chan rawOutboundTask
 	tunnelReaderWorkers  int
 	tunnelWriterWorkers  int
 	tunnelProcessWorkers int
@@ -185,8 +185,8 @@ type Connection struct {
 
 // Bootstrap initializes a new Client by loading configuration, setting up logging,
 // and preparing the connection map.
-func Bootstrap(configPath string, logPath string) (*Client, error) {
-	cfg, err := config.LoadClientConfig(configPath)
+func Bootstrap(configPath string, logPath string, overrides config.ClientConfigOverrides) (*Client, error) {
+	cfg, err := config.LoadClientConfigWithOverrides(configPath, overrides)
 	if err != nil {
 		return nil, err
 	}
@@ -241,6 +241,7 @@ func New(cfg config.ClientConfig, log *logger.Logger, codec *security.Codec) *Cl
 		resolverHealth:                        make(map[string]*resolverHealthState),
 		resolverRecheck:                       make(map[string]resolverRecheckState),
 		runtimeDisabled:                       make(map[string]resolverDisabledState),
+		resolverRecheckSem:                    make(chan struct{}, max(1, cfg.RecheckBatchSize)),
 		mtuTestRetries:                        cfg.MTUTestRetries,
 		mtuTestTimeout:                        time.Duration(cfg.MTUTestTimeout * float64(time.Second)),
 		mtuSaveToFile:                         cfg.SaveMTUServersToFile,
@@ -257,9 +258,8 @@ func New(cfg config.ClientConfig, log *logger.Logger, codec *security.Codec) *Cl
 		tunnelWriterWorkers:   cfg.TunnelWriterWorkers,
 		tunnelProcessWorkers:  cfg.TunnelProcessWorkers,
 		tunnelPacketTimeout:   time.Duration(cfg.TunnelPacketTimeoutSec * float64(time.Second)),
-		txChannel:             make(chan asyncPacket, cfg.TXChannelSize),
+		txChannel:             make(chan rawOutboundTask, cfg.TXChannelSize),
 		rxChannel:             make(chan asyncReadPacket, cfg.RXChannelSize),
-		encodeChannel:         make(chan rawOutboundTask, cfg.TXChannelSize),
 		active_streams:        make(map[uint16]*Stream_client),
 		recentlyClosedStreams: make(map[uint16]time.Time),
 		txSignal:              make(chan struct{}, 1),

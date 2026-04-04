@@ -24,14 +24,6 @@ import (
 
 const clientRXDropLogInterval = 2 * time.Second
 
-type asyncPacket struct {
-	conn        Connection
-	payload     []byte
-	packetType  uint8
-	streamID    uint16
-	sequenceNum uint16
-}
-
 type asyncReadPacket struct {
 	data []byte
 	addr *net.UDPAddr
@@ -42,7 +34,6 @@ type asyncReadPacket struct {
 func (c *Client) StopAsyncRuntime() {
 	if c.asyncCancel != nil {
 		c.log.Debugf("\U0001F6D1 <yellow>Stopping Async Runtime...</yellow>")
-		c.CloseAllStreams()
 		c.asyncCancel()
 		c.asyncWG.Wait()
 		c.asyncCancel = nil
@@ -139,16 +130,6 @@ func (c *Client) signalTxSpace() {
 	case c.txSpaceSignal <- struct{}{}:
 	default:
 	}
-}
-
-func (c *Client) encodeChannelHasCapacity(needed int) bool {
-	if c == nil || c.encodeChannel == nil {
-		return false
-	}
-	if needed <= 0 {
-		needed = 1
-	}
-	return cap(c.encodeChannel)-len(c.encodeChannel) >= needed
 }
 
 func (c *Client) txChannelHasCapacity(needed int) bool {
@@ -318,13 +299,7 @@ func (c *Client) StartAsyncRuntime(parentCtx context.Context) error {
 		go c.asyncWriterWorker(runtimeCtx, i, conn)
 	}
 
-	// 7. Spawn Encoder Workers
-	for i := 0; i < c.tunnelProcessWorkers; i++ {
-		c.asyncWG.Add(1)
-		go c.asyncEncoderWorker(runtimeCtx, i)
-	}
-
-	// 8. Spawn Dispatcher (Fair Queuing & Packing)
+	// 7. Spawn Dispatcher (Fair Queuing & Packing)
 	c.asyncWG.Add(1)
 	go c.asyncStreamDispatcher(runtimeCtx)
 
@@ -443,7 +418,10 @@ func (c *Client) drainQueues() {
 	// Drain TX
 	for {
 		select {
-		case <-c.txChannel:
+		case task := <-c.txChannel:
+			if !task.wasPacked && task.selected != nil && task.item != nil {
+				task.selected.ReleaseTXPacket(task.item)
+			}
 		default:
 			goto drainRX
 		}
@@ -462,11 +440,18 @@ drainRX:
 	}
 }
 
-// asyncWriterWorker fires packets from txChannel at the destination.
+// asyncWriterWorker encodes, builds DNS questions, and writes packets to the destination.
 func (c *Client) asyncWriterWorker(ctx context.Context, id int, conn *net.UDPConn) {
 	defer c.asyncWG.Done()
 	c.log.Debugf("\U0001F680 <green>Writer Worker <cyan>#%d</cyan> started</green>", id)
 	var lastDeadline time.Time
+	defaultDomain := ""
+	if len(c.cfg.Domains) > 0 {
+		defaultDomain = c.cfg.Domains[0]
+	}
+
+	var packetByDomain map[string][]byte
+	var preparedDomainByName map[string]preparedTunnelDomain
 	refreshWindow := c.tunnelPacketTimeout / 2
 	if refreshWindow < 250*time.Millisecond {
 		refreshWindow = 250 * time.Millisecond
@@ -475,24 +460,103 @@ func (c *Client) asyncWriterWorker(ctx context.Context, id int, conn *net.UDPCon
 		select {
 		case <-ctx.Done():
 			return
-		case pkt := <-c.txChannel:
+		case task, ok := <-c.txChannel:
 			c.signalTxSpace()
-			addr, err := c.getResolverUDPAddr(pkt.conn)
-			if err != nil {
+			if !ok {
+				return
+			}
+
+			conns := task.conns
+			if len(conns) == 0 {
+				if !task.wasPacked && task.selected != nil {
+					task.selected.ReleaseTXPacket(task.item)
+				}
 				continue
 			}
 
-			if c.tunnelPacketTimeout > 0 {
+			encoded, err := c.buildEncodedAutoWithCompressionTrace(task.opts)
+			if err != nil {
+				if !task.wasPacked && task.selected != nil {
+					task.selected.ReleaseTXPacket(task.item)
+				}
+				continue
+			}
+
+			var (
+				firstDomain    string
+				firstDNSPacket []byte
+			)
+			if packetByDomain != nil {
+				clear(packetByDomain)
+			}
+			if preparedDomainByName != nil {
+				clear(preparedDomainByName)
+			}
+
+			for _, resolverConn := range conns {
+				domain := resolverConn.Domain
+				if domain == "" {
+					domain = defaultDomain
+				}
+
+				addr, err := c.getResolverUDPAddr(resolverConn)
+				if err != nil {
+					continue
+				}
+
+				prepared, cachedPrepared := preparedDomainByName[domain]
+				if !cachedPrepared {
+					prepared, err = prepareTunnelDomain(domain)
+					if err != nil {
+						continue
+					}
+					if preparedDomainByName == nil {
+						preparedDomainByName = make(map[string]preparedTunnelDomain, len(conns))
+					}
+					preparedDomainByName[domain] = prepared
+				}
+
+				var dnsPacket []byte
+				switch {
+				case firstDNSPacket == nil:
+					dnsPacket, err = buildTunnelTXTQuestionBytesPrepared(prepared, encoded)
+					if err != nil {
+						continue
+					}
+					firstDomain = domain
+					firstDNSPacket = dnsPacket
+				case domain == firstDomain:
+					dnsPacket = firstDNSPacket
+				default:
+					if packetByDomain == nil {
+						packetByDomain = make(map[string][]byte, len(conns)-1)
+					}
+					var cached bool
+					dnsPacket, cached = packetByDomain[domain]
+					if !cached {
+						dnsPacket, err = buildTunnelTXTQuestionBytesPrepared(prepared, encoded)
+						if err != nil {
+							continue
+						}
+						packetByDomain[domain] = dnsPacket
+					}
+				}
+
 				now := time.Now()
-				if lastDeadline.IsZero() || now.Add(refreshWindow).After(lastDeadline) {
-					lastDeadline = now.Add(c.tunnelPacketTimeout)
-					_ = conn.SetWriteDeadline(lastDeadline)
+				if c.tunnelPacketTimeout > 0 {
+					if lastDeadline.IsZero() || now.Add(refreshWindow).After(lastDeadline) {
+						lastDeadline = now.Add(c.tunnelPacketTimeout)
+						_ = conn.SetWriteDeadline(lastDeadline)
+					}
+				}
+
+				if _, err := conn.WriteToUDP(dnsPacket, addr); err == nil {
+					c.trackResolverSend(dnsPacket, addr.String(), resolverConn.Key, now)
 				}
 			}
 
-			sentAt := time.Now()
-			if _, err := conn.WriteToUDP(pkt.payload, addr); err == nil {
-				c.trackResolverSend(pkt.payload, addr.String(), pkt.conn.Key, sentAt)
+			if !task.wasPacked && task.selected != nil {
+				task.selected.ReleaseTXPacket(task.item)
 			}
 		}
 	}
@@ -605,75 +669,4 @@ func (c *Client) handleInboundPacket(data []byte, addr *net.UDPAddr) {
 		c.log.Warnf("\U0001F6A8 <red>Handler execution failed: %v</red>", err)
 	}
 
-}
-
-// asyncEncoderWorker pulls from encodeChannel, performs the heavy DNS building and crypto, and pushes to txChannel.
-func (c *Client) asyncEncoderWorker(ctx context.Context, id int) {
-	defer c.asyncWG.Done()
-	c.log.Debugf("\U0001F5A5 <green>Encoder Worker <cyan>#%d</cyan> started</green>", id)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case task, ok := <-c.encodeChannel:
-			c.signalTxSpace()
-			if !ok {
-				return
-			}
-
-			conns := task.conns
-			if len(conns) == 0 {
-				if !task.wasPacked && task.selected != nil {
-					task.selected.ReleaseTXPacket(task.item)
-				}
-				continue
-			}
-
-			encoded, err := c.buildEncodedAutoWithCompressionTrace(task.opts)
-			if err != nil {
-				if !task.wasPacked && task.selected != nil {
-					task.selected.ReleaseTXPacket(task.item)
-				}
-				continue
-			}
-
-			packetByDomain := make(map[string][]byte, len(conns))
-			for _, conn := range conns {
-				domain := conn.Domain
-				if domain == "" {
-					domain = c.cfg.Domains[0]
-				}
-
-				dnsPacket, ok := packetByDomain[domain]
-				if !ok {
-					dnsPacket, err = buildTunnelTXTQuestion(domain, encoded)
-					if err != nil {
-						continue
-					}
-					packetByDomain[domain] = dnsPacket
-				}
-
-				pkt := asyncPacket{
-					packetType:  task.packetType,
-					streamID:    task.opts.StreamID,
-					payload:     dnsPacket,
-					conn:        conn,
-					sequenceNum: task.opts.SequenceNum,
-				}
-
-				select {
-				case c.txChannel <- pkt:
-				case <-ctx.Done():
-					if !task.wasPacked && task.selected != nil {
-						task.selected.ReleaseTXPacket(task.item)
-					}
-					return
-				}
-			}
-
-			if !task.wasPacked && task.selected != nil {
-				task.selected.ReleaseTXPacket(task.item)
-			}
-		}
-	}
 }

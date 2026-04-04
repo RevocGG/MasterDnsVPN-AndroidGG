@@ -796,7 +796,7 @@ func (s *Server) handleMTUDownRequest(questionPacket []byte, _ DnsParser.LitePac
 	copy(payload[:mtuProbeCodeLength], vpnPacket.Payload[1:mtuProbeUpMinSize])
 	binary.BigEndian.PutUint16(payload[mtuProbeCodeLength:], uint16(downloadSize))
 	if downloadSize > mtuProbeMetaLength {
-		fillMTUProbeBytes(payload[mtuProbeMetaLength:], s.mtuProbeFillPattern[:])
+		fillMTUProbeBytes(payload[mtuProbeMetaLength:])
 	}
 
 	response, err := DnsParser.BuildVPNResponsePacket(questionPacket, decision.RequestName, VpnProto.Packet{

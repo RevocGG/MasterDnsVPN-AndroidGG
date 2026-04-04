@@ -196,12 +196,15 @@ func (s *Stream_client) PushTXPacket(priority int, packetType uint8, sequenceNum
 	// Delegate to MLQ (Mechanism)
 	priority = Enums.NormalizePacketPriority(packetType, priority)
 
+	s.txQueueMu.Lock()
+	defer s.txQueueMu.Unlock()
+
 	// Skip Ping packets if the queue is already congested (prevent bloat)
 	if packetType == Enums.PACKET_PING && s.txQueue != nil && s.txQueue.FastSize() > 500 {
 		return false
 	}
 
-	// Get a packet from the pool
+	// Get a packet from the pool after congestion/duplicate guards.
 	p := txPacketPool.Get().(*clientStreamTXPacket)
 	p.PacketType = packetType
 	p.SequenceNum = sequenceNum
@@ -213,9 +216,6 @@ func (s *Stream_client) PushTXPacket(priority int, packetType uint8, sequenceNum
 	p.TTL = ttl
 	p.RetryCount = 0
 	p.Scheduled = false
-
-	s.txQueueMu.Lock()
-	defer s.txQueueMu.Unlock()
 
 	switch packetType {
 	case Enums.PACKET_STREAM_DATA:

@@ -8,10 +8,13 @@
 package config
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,6 +26,7 @@ import (
 type ClientConfig struct {
 	ConfigDir                             string            `toml:"-"`
 	ConfigPath                            string            `toml:"-"`
+	ResolversFilePath                     string            `toml:"-"`
 	ProtocolType                          string            `toml:"PROTOCOL_TYPE"`
 	Domains                               []string          `toml:"DOMAINS"`
 	ListenIP                              string            `toml:"LISTEN_IP"`
@@ -116,6 +120,17 @@ type ClientConfig struct {
 	ARQTerminalAckWaitTimeoutSec          float64           `toml:"ARQ_TERMINAL_ACK_WAIT_TIMEOUT_SECONDS"`
 	Resolvers                             []ResolverAddress `toml:"-"`
 	ResolverMap                           map[string]int    `toml:"-"`
+}
+
+type ClientConfigOverrides struct {
+	ResolversFilePath *string
+	Values            map[string]any
+}
+
+type ClientConfigFlagBinder struct {
+	values      ClientConfig
+	setFields   map[string]struct{}
+	flagToField map[string]string
 }
 
 func defaultClientConfig() ClientConfig {
@@ -215,6 +230,14 @@ func defaultClientConfig() ClientConfig {
 }
 
 func LoadClientConfig(filename string) (ClientConfig, error) {
+	cfg, err := loadClientConfigFile(filename)
+	if err != nil {
+		return cfg, err
+	}
+	return finalizeClientConfig(cfg)
+}
+
+func loadClientConfigFile(filename string) (ClientConfig, error) {
 	cfg := defaultClientConfig()
 	path, err := filepath.Abs(filename)
 	if err != nil {
@@ -231,6 +254,29 @@ func LoadClientConfig(filename string) (ClientConfig, error) {
 
 	cfg.ConfigPath = path
 	cfg.ConfigDir = filepath.Dir(path)
+	cfg.ResolversFilePath = ""
+	return cfg, nil
+}
+
+func LoadClientConfigWithOverrides(filename string, overrides ClientConfigOverrides) (ClientConfig, error) {
+	cfg, err := loadClientConfigFile(filename)
+	if err != nil {
+		return cfg, err
+	}
+
+	if overrides.ResolversFilePath != nil {
+		cfg.ResolversFilePath = strings.TrimSpace(*overrides.ResolversFilePath)
+	}
+	if len(overrides.Values) > 0 {
+		if err := applyClientConfigOverrideValues(&cfg, overrides.Values); err != nil {
+			return cfg, err
+		}
+	}
+
+	return finalizeClientConfig(cfg)
+}
+
+func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 	cfg.ProtocolType = strings.ToUpper(strings.TrimSpace(cfg.ProtocolType))
 	cfg.LogLevel = strings.TrimSpace(cfg.LogLevel)
 	if cfg.LogLevel == "" {
@@ -286,14 +332,14 @@ func LoadClientConfig(filename string) (ClientConfig, error) {
 		return cfg, fmt.Errorf("invalid DOWNLOAD_COMPRESSION_TYPE: %d", cfg.DownloadCompressionType)
 	}
 
-	cfg.CompressionMinSize = defaultIntBelow(cfg.CompressionMinSize, 1, compression.DefaultMinSize)
+	cfg.CompressionMinSize = defaultIntBelow(cfg.CompressionMinSize, 100, compression.DefaultMinSize)
 
 	if cfg.ResolverBalancingStrategy < 0 || cfg.ResolverBalancingStrategy > 4 {
 		return cfg, fmt.Errorf("invalid RESOLVER_BALANCING_STRATEGY: %d", cfg.ResolverBalancingStrategy)
 	}
 
-	cfg.PacketDuplicationCount = clampInt(defaultIntBelow(cfg.PacketDuplicationCount, 1, 1), 1, 8)
-	cfg.SetupPacketDuplicationCount = clampInt(defaultIntBelow(cfg.SetupPacketDuplicationCount, 1, max(2, cfg.PacketDuplicationCount)), cfg.PacketDuplicationCount, 8)
+	cfg.PacketDuplicationCount = clampInt(defaultIntBelow(cfg.PacketDuplicationCount, 1, 1), 1, 4)
+	cfg.SetupPacketDuplicationCount = clampInt(defaultIntBelow(cfg.SetupPacketDuplicationCount, 1, max(2, cfg.PacketDuplicationCount)), cfg.PacketDuplicationCount, 4)
 	cfg.StreamResolverFailoverResendThreshold = clampInt(defaultIntBelow(cfg.StreamResolverFailoverResendThreshold, 1, 2), 1, 128)
 	cfg.StreamResolverFailoverCooldownSec = clampFloat(defaultFloatAtMostZero(cfg.StreamResolverFailoverCooldownSec, 1.0), 0.1, 120.0)
 	cfg.RecheckInactiveIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.RecheckInactiveIntervalSeconds, 1800.0), 60.0, 86400.0)
@@ -303,7 +349,7 @@ func LoadClientConfig(filename string) (ClientConfig, error) {
 	cfg.AutoDisableMinObservations = clampInt(defaultIntBelow(cfg.AutoDisableMinObservations, 1, 6), 1, 10000)
 	cfg.AutoDisableCheckIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.AutoDisableCheckIntervalSeconds, 3.0), 0.25, 600.0)
 	cfg.MaxPacketsPerBatch = clampInt(defaultIntBelow(cfg.MaxPacketsPerBatch, 1, 10), 1, 64)
-	cfg.ARQWindowSize = clampInt(defaultIntBelow(cfg.ARQWindowSize, 1, 600), 1, 16384)
+	cfg.ARQWindowSize = clampInt(defaultIntBelow(cfg.ARQWindowSize, 1, 600), 1, 6000)
 	cfg.ARQInitialRTOSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQInitialRTOSeconds, 1.0), 0.05, 60.0)
 	cfg.ARQMaxRTOSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQMaxRTOSeconds, 8.0), cfg.ARQInitialRTOSeconds, 120.0)
 	cfg.ARQControlInitialRTOSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQControlInitialRTOSeconds, 1.0), 0.05, 60.0)
@@ -313,9 +359,9 @@ func LoadClientConfig(filename string) (ClientConfig, error) {
 	cfg.ARQDataPacketTTLSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQDataPacketTTLSeconds, 1800.0), 30.0, 86400.0)
 	cfg.ARQControlPacketTTLSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQControlPacketTTLSeconds, 900.0), 30.0, 86400.0)
 	cfg.ARQMaxDataRetries = clampInt(defaultIntBelow(cfg.ARQMaxDataRetries, 1, 800), 60, 100000)
-	cfg.ARQDataNackMaxGap = clampInt(defaultIntBelow(cfg.ARQDataNackMaxGap, 0, 0), 0, 32)
-	cfg.ARQDataNackInitialDelaySeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQDataNackInitialDelaySeconds, 0.0), 0.0, 30.0)
-	cfg.ARQDataNackRepeatSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQDataNackRepeatSeconds, 2.0), 0.1, 30.0)
+	cfg.ARQDataNackMaxGap = clampInt(defaultIntBelow(cfg.ARQDataNackMaxGap, 0, 0), 0, cfg.ARQWindowSize/4)
+	cfg.ARQDataNackInitialDelaySeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQDataNackInitialDelaySeconds, 0.0), 0.2, 30.0)
+	cfg.ARQDataNackRepeatSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQDataNackRepeatSeconds, 2.0), 0.3, 30.0)
 	cfg.ARQTerminalDrainTimeoutSec = clampFloat(defaultFloatAtMostZero(cfg.ARQTerminalDrainTimeoutSec, 90.0), 10.0, 3600.0)
 	cfg.ARQTerminalAckWaitTimeoutSec = clampFloat(defaultFloatAtMostZero(cfg.ARQTerminalAckWaitTimeoutSec, 60.0), 5.0, 3600.0)
 
@@ -339,7 +385,7 @@ func LoadClientConfig(filename string) (ClientConfig, error) {
 	cfg.TunnelProcessWorkers = clampInt(defaultIntBelow(cfg.TunnelProcessWorkers, 1, 4), 1, 64)
 	cfg.TunnelPacketTimeoutSec = clampFloat(defaultFloatAtMostZero(cfg.TunnelPacketTimeoutSec, 8.0), 0.5, 120.0)
 	cfg.DispatcherIdlePollIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.DispatcherIdlePollIntervalSeconds, 0.020), 0.001, 1.0)
-	cfg.PingAggressiveIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.PingAggressiveIntervalSeconds, 0.300), 0.05, 30.0)
+	cfg.PingAggressiveIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.PingAggressiveIntervalSeconds, 0.100), 0.1, 30.0)
 	cfg.PingLazyIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.PingLazyIntervalSeconds, 1.0), cfg.PingAggressiveIntervalSeconds, 60.0)
 	cfg.PingCooldownIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.PingCooldownIntervalSeconds, 3.0), cfg.PingLazyIntervalSeconds, 300.0)
 	cfg.PingColdIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.PingColdIntervalSeconds, 30.0), cfg.PingCooldownIntervalSeconds, 3600.0)
@@ -377,6 +423,8 @@ func LoadClientConfig(filename string) (ClientConfig, error) {
 		return cfg, fmt.Errorf("DOMAINS must contain at least one domain")
 	}
 
+	cfg.ResolversFilePath = strings.TrimSpace(cfg.ResolversFilePath)
+
 	resolvers, resolverMap, err := LoadClientResolvers(cfg.ResolversPath())
 	if err != nil {
 		return cfg, err
@@ -387,6 +435,15 @@ func LoadClientConfig(filename string) (ClientConfig, error) {
 }
 
 func (c ClientConfig) ResolversPath() string {
+	if c.ResolversFilePath != "" {
+		if filepath.IsAbs(c.ResolversFilePath) {
+			return c.ResolversFilePath
+		}
+		if c.ConfigDir != "" {
+			return filepath.Join(c.ConfigDir, c.ResolversFilePath)
+		}
+		return c.ResolversFilePath
+	}
 	return filepath.Join(c.ConfigDir, "client_resolvers.txt")
 }
 
@@ -503,6 +560,322 @@ func (c ClientConfig) SessionInitRetryMax() time.Duration {
 
 func (c ClientConfig) SessionInitBusyRetryInterval() time.Duration {
 	return time.Duration(c.SessionInitBusyRetryIntervalSeconds * float64(time.Second))
+}
+
+func applyClientConfigOverrideValues(cfg *ClientConfig, values map[string]any) error {
+	if cfg == nil || len(values) == 0 {
+		return nil
+	}
+
+	elem := reflect.ValueOf(cfg).Elem()
+	typ := elem.Type()
+	for fieldName, rawValue := range values {
+		field, ok := typ.FieldByName(fieldName)
+		if !ok {
+			return fmt.Errorf("unknown client config override field: %s", fieldName)
+		}
+		value := elem.FieldByName(fieldName)
+		if !value.CanSet() {
+			return fmt.Errorf("client config override field is not settable: %s", fieldName)
+		}
+		if err := assignClientConfigOverrideValue(value, rawValue, field.Name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func assignClientConfigOverrideValue(target reflect.Value, rawValue any, fieldName string) error {
+	if !target.IsValid() {
+		return fmt.Errorf("invalid client config override target: %s", fieldName)
+	}
+
+	switch target.Kind() {
+	case reflect.String:
+		v, ok := rawValue.(string)
+		if !ok {
+			return fmt.Errorf("invalid string override for %s", fieldName)
+		}
+		target.SetString(v)
+		return nil
+	case reflect.Bool:
+		v, ok := rawValue.(bool)
+		if !ok {
+			return fmt.Errorf("invalid bool override for %s", fieldName)
+		}
+		target.SetBool(v)
+		return nil
+	case reflect.Int:
+		v, ok := rawValue.(int)
+		if !ok {
+			return fmt.Errorf("invalid int override for %s", fieldName)
+		}
+		target.SetInt(int64(v))
+		return nil
+	case reflect.Float64:
+		v, ok := rawValue.(float64)
+		if !ok {
+			return fmt.Errorf("invalid float override for %s", fieldName)
+		}
+		target.SetFloat(v)
+		return nil
+	case reflect.Slice:
+		if target.Type().Elem().Kind() == reflect.String {
+			v, ok := rawValue.([]string)
+			if !ok {
+				return fmt.Errorf("invalid string slice override for %s", fieldName)
+			}
+			target.Set(reflect.ValueOf(append([]string(nil), v...)))
+			return nil
+		}
+	}
+
+	return fmt.Errorf("unsupported client config override type for %s", fieldName)
+}
+
+func NewClientConfigFlagBinder(fs *flag.FlagSet) (*ClientConfigFlagBinder, error) {
+	if fs == nil {
+		return nil, fmt.Errorf("flag set is required")
+	}
+
+	binder := &ClientConfigFlagBinder{
+		values:      defaultClientConfig(),
+		setFields:   make(map[string]struct{}),
+		flagToField: make(map[string]string),
+	}
+
+	valueElem := reflect.ValueOf(&binder.values).Elem()
+	valueType := valueElem.Type()
+	for i := 0; i < valueType.NumField(); i++ {
+		field := valueType.Field(i)
+		tomlTag := field.Tag.Get("toml")
+		if tomlTag == "" || tomlTag == "-" {
+			continue
+		}
+
+		flagName := clientConfigFlagName(tomlTag)
+		binder.flagToField[flagName] = field.Name
+		target := valueElem.Field(i)
+		usage := fmt.Sprintf("Override %s from config file", tomlTag)
+
+		switch target.Kind() {
+		case reflect.String:
+			fs.Var(newClientConfigStringFlag(target.Addr().Interface().(*string), binder, field.Name), flagName, usage)
+		case reflect.Bool:
+			fs.Var(newClientConfigBoolFlag(target.Addr().Interface().(*bool), binder, field.Name), flagName, usage)
+		case reflect.Int:
+			fs.Var(newClientConfigIntFlag(target.Addr().Interface().(*int), binder, field.Name), flagName, usage)
+		case reflect.Float64:
+			fs.Var(newClientConfigFloatFlag(target.Addr().Interface().(*float64), binder, field.Name), flagName, usage)
+		case reflect.Slice:
+			if target.Type().Elem().Kind() != reflect.String {
+				continue
+			}
+			fs.Var(newClientConfigStringSliceFlag(target.Addr().Interface().(*[]string), binder, field.Name), flagName, usage+" (comma-separated)")
+		default:
+			continue
+		}
+	}
+
+	return binder, nil
+}
+
+func (b *ClientConfigFlagBinder) Overrides() ClientConfigOverrides {
+	overrides := ClientConfigOverrides{
+		Values: make(map[string]any, len(b.setFields)),
+	}
+	if b == nil {
+		return overrides
+	}
+
+	valueElem := reflect.ValueOf(&b.values).Elem()
+	for fieldName := range b.setFields {
+		field := valueElem.FieldByName(fieldName)
+		if !field.IsValid() {
+			continue
+		}
+		switch field.Kind() {
+		case reflect.String:
+			overrides.Values[fieldName] = field.String()
+		case reflect.Bool:
+			overrides.Values[fieldName] = field.Bool()
+		case reflect.Int:
+			overrides.Values[fieldName] = int(field.Int())
+		case reflect.Float64:
+			overrides.Values[fieldName] = field.Float()
+		case reflect.Slice:
+			if field.Type().Elem().Kind() == reflect.String {
+				src := field.Interface().([]string)
+				overrides.Values[fieldName] = append([]string(nil), src...)
+			}
+		}
+	}
+
+	return overrides
+}
+
+func (b *ClientConfigFlagBinder) markSet(fieldName string) {
+	if b == nil || fieldName == "" {
+		return
+	}
+	b.setFields[fieldName] = struct{}{}
+}
+
+func clientConfigFlagName(tomlTag string) string {
+	return strings.ToLower(strings.ReplaceAll(tomlTag, "_", "-"))
+}
+
+type clientConfigStringFlag struct {
+	target    *string
+	binder    *ClientConfigFlagBinder
+	fieldName string
+}
+
+func newClientConfigStringFlag(target *string, binder *ClientConfigFlagBinder, fieldName string) *clientConfigStringFlag {
+	return &clientConfigStringFlag{target: target, binder: binder, fieldName: fieldName}
+}
+
+func (f *clientConfigStringFlag) String() string {
+	if f == nil || f.target == nil {
+		return ""
+	}
+	return *f.target
+}
+
+func (f *clientConfigStringFlag) Set(value string) error {
+	if f == nil || f.target == nil {
+		return nil
+	}
+	*f.target = value
+	f.binder.markSet(f.fieldName)
+	return nil
+}
+
+type clientConfigBoolFlag struct {
+	target    *bool
+	binder    *ClientConfigFlagBinder
+	fieldName string
+}
+
+func newClientConfigBoolFlag(target *bool, binder *ClientConfigFlagBinder, fieldName string) *clientConfigBoolFlag {
+	return &clientConfigBoolFlag{target: target, binder: binder, fieldName: fieldName}
+}
+
+func (f *clientConfigBoolFlag) String() string {
+	if f == nil || f.target == nil {
+		return "false"
+	}
+	return strconv.FormatBool(*f.target)
+}
+
+func (f *clientConfigBoolFlag) Set(value string) error {
+	if f == nil || f.target == nil {
+		return nil
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return err
+	}
+	*f.target = parsed
+	f.binder.markSet(f.fieldName)
+	return nil
+}
+
+func (f *clientConfigBoolFlag) IsBoolFlag() bool { return true }
+
+type clientConfigIntFlag struct {
+	target    *int
+	binder    *ClientConfigFlagBinder
+	fieldName string
+}
+
+func newClientConfigIntFlag(target *int, binder *ClientConfigFlagBinder, fieldName string) *clientConfigIntFlag {
+	return &clientConfigIntFlag{target: target, binder: binder, fieldName: fieldName}
+}
+
+func (f *clientConfigIntFlag) String() string {
+	if f == nil || f.target == nil {
+		return "0"
+	}
+	return strconv.Itoa(*f.target)
+}
+
+func (f *clientConfigIntFlag) Set(value string) error {
+	if f == nil || f.target == nil {
+		return nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return err
+	}
+	*f.target = parsed
+	f.binder.markSet(f.fieldName)
+	return nil
+}
+
+type clientConfigFloatFlag struct {
+	target    *float64
+	binder    *ClientConfigFlagBinder
+	fieldName string
+}
+
+func newClientConfigFloatFlag(target *float64, binder *ClientConfigFlagBinder, fieldName string) *clientConfigFloatFlag {
+	return &clientConfigFloatFlag{target: target, binder: binder, fieldName: fieldName}
+}
+
+func (f *clientConfigFloatFlag) String() string {
+	if f == nil || f.target == nil {
+		return "0"
+	}
+	return strconv.FormatFloat(*f.target, 'f', -1, 64)
+}
+
+func (f *clientConfigFloatFlag) Set(value string) error {
+	if f == nil || f.target == nil {
+		return nil
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return err
+	}
+	*f.target = parsed
+	f.binder.markSet(f.fieldName)
+	return nil
+}
+
+type clientConfigStringSliceFlag struct {
+	target    *[]string
+	binder    *ClientConfigFlagBinder
+	fieldName string
+}
+
+func newClientConfigStringSliceFlag(target *[]string, binder *ClientConfigFlagBinder, fieldName string) *clientConfigStringSliceFlag {
+	return &clientConfigStringSliceFlag{target: target, binder: binder, fieldName: fieldName}
+}
+
+func (f *clientConfigStringSliceFlag) String() string {
+	if f == nil || f.target == nil {
+		return ""
+	}
+	return strings.Join(*f.target, ",")
+}
+
+func (f *clientConfigStringSliceFlag) Set(value string) error {
+	if f == nil || f.target == nil {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	items := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		items = append(items, part)
+	}
+	*f.target = items
+	f.binder.markSet(f.fieldName)
+	return nil
 }
 
 func clampInt(value int, minValue int, maxValue int) int {

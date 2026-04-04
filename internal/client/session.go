@@ -65,7 +65,7 @@ func (c *Client) initializeSessionOnce() error {
 		return ErrSessionInitFailed
 	}
 
-	packet, err := c.exchangeDNSOverConnection(conn, query, c.mtuTestTimeout)
+	packet, err := c.exchangeDNSOverConnection(conn, query, c.mtuTestTimeout*2)
 	if err != nil {
 		return ErrSessionInitFailed
 	}
@@ -105,22 +105,13 @@ func (c *Client) buildSessionInitPayload() ([]byte, bool, [4]byte, error) {
 	}
 	copy(verifyCode[:], randomPart)
 
-	// Use pool for temporary buffer to avoid allocation
-	buf := c.udpBufferPool.Get().([]byte)
-	defer c.udpBufferPool.Put(buf)
-
-	if sessionInitPayloadSize > len(buf) {
-		return nil, false, verifyCode, errors.New("buffer pool slice too small")
-	}
-
 	payload := make([]byte, sessionInitPayloadSize)
 	if c.cfg.BaseEncodeData {
 		payload[0] = mtuProbeBase64Reply
 	}
 	// Always send the user-configured compression types for negotiation.
-	// The MTU policy in applySessionCompressionPolicy() only suppresses compression
-	// for the current active session; it must not affect what we request here so
-	// that future sessions can re-negotiate if MTU improves.
+	// applySessionCompressionPolicy() may suppress compression for the active session
+	// but must not affect what we request so future sessions can re-negotiate.
 	payload[1] = compression.PackPair(
 		uint8(c.cfg.UploadCompressionType),
 		uint8(c.cfg.DownloadCompressionType),

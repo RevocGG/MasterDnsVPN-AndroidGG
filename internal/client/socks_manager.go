@@ -347,12 +347,32 @@ func (c *Client) handleSOCKSConnect(ctx context.Context, conn net.Conn, addr str
 	targetPayload = append(targetPayload, atyp)
 	switch atyp {
 	case SOCKS5_ATYP_IPV4:
-		targetPayload = append(targetPayload, net.ParseIP(addr).To4()...)
+		ip4 := net.ParseIP(addr).To4()
+		if ip4 == nil {
+			if socksVersion == SOCKS4_VERSION {
+				_ = c.sendSocks4Reply(conn, false)
+			} else {
+				_ = c.sendSocksReply(conn, SOCKS5_REPLY_HOST_UNREACHABLE, SOCKS5_ATYP_IPV4, net.IPv4zero, 0)
+			}
+			_ = conn.Close()
+			return
+		}
+		targetPayload = append(targetPayload, ip4...)
 	case SOCKS5_ATYP_DOMAIN:
 		targetPayload = append(targetPayload, byte(len(addr)))
 		targetPayload = append(targetPayload, []byte(addr)...)
 	case SOCKS5_ATYP_IPV6:
-		targetPayload = append(targetPayload, net.ParseIP(addr).To16()...)
+		ip6 := net.ParseIP(addr).To16()
+		if ip6 == nil {
+			if socksVersion == SOCKS4_VERSION {
+				_ = c.sendSocks4Reply(conn, false)
+			} else {
+				_ = c.sendSocksReply(conn, SOCKS5_REPLY_HOST_UNREACHABLE, SOCKS5_ATYP_IPV4, net.IPv4zero, 0)
+			}
+			_ = conn.Close()
+			return
+		}
+		targetPayload = append(targetPayload, ip6...)
 	}
 
 	pBuf := make([]byte, 2)
@@ -610,15 +630,27 @@ func (c *Client) handleSocksUDPAssociate(ctx context.Context, conn net.Conn, cli
 		var targetAddr string
 		switch buf[3] {
 		case SOCKS5_ATYP_IPV4:
+			if n < 10 {
+				continue
+			}
 			payloadOffset = 10
 			targetAddr = net.IP(buf[4:8]).String()
 			targetPort = binary.BigEndian.Uint16(buf[8:10])
 		case SOCKS5_ATYP_DOMAIN:
+			if n < 5 {
+				continue
+			}
 			domainLen := int(buf[4])
 			payloadOffset = 4 + 1 + domainLen + 2
+			if payloadOffset > n || 5+domainLen > n {
+				continue
+			}
 			targetAddr = string(buf[5 : 5+domainLen])
 			targetPort = binary.BigEndian.Uint16(buf[4+1+domainLen : payloadOffset])
 		case SOCKS5_ATYP_IPV6:
+			if n < 22 {
+				continue
+			}
 			payloadOffset = 22
 			targetAddr = net.IP(buf[4:20]).String()
 			targetPort = binary.BigEndian.Uint16(buf[20:22])

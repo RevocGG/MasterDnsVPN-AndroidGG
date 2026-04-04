@@ -62,7 +62,7 @@ func (c *Client) asyncStreamDispatcher(ctx context.Context) {
 			return true
 		}
 		for {
-			if c.encodeChannelHasCapacity(required) {
+			if c.txChannelHasCapacity(required) {
 				return true
 			}
 
@@ -216,6 +216,22 @@ dispatchLoop:
 
 		conns := c.selectTargetConnections(peekedItem.PacketType, selectedStreamID)
 		if len(conns) == 0 {
+			// No valid connections available for this packet. Don't block the
+			// dispatcher — doing so would stall ALL streams until a resolver
+			// comes back. Instead, pop and discard non-retriable control packets
+			// so the queue doesn't jam, and leave data/resend packets for ARQ
+			// retransmission. Signal txSignal to keep the dispatcher alive.
+			if peekedItem.PacketType != Enums.PACKET_STREAM_DATA && peekedItem.PacketType != Enums.PACKET_STREAM_RESEND {
+				if selected != nil {
+					if dropped, _, ok := selected.PopNextTXPacket(); ok && dropped != nil {
+						selected.ReleaseTXPacket(dropped)
+					}
+				} else if selectedID == -1 {
+					c.orphanQueue.Pop(func(p VpnProto.Packet) uint64 {
+						return Enums.PacketTypeStreamKey(p.StreamID, p.PacketType)
+					})
+				}
+			}
 			if !waitForWork() {
 				return
 			}
@@ -263,7 +279,8 @@ dispatchLoop:
 			continue dispatchLoop
 		}
 
-		var finalPacket asyncPacket
+		var finalPacketType uint8
+		var finalPayload []byte
 		wasPacked := false
 		maxBlocks := c.maxPackedBlocks
 		if maxBlocks < 1 {
@@ -352,36 +369,35 @@ dispatchLoop:
 			}
 
 			if blocks > 1 {
-				finalPacket.packetType = Enums.PACKET_PACKED_CONTROL_BLOCKS
-				finalPacket.payload = payload
+				finalPacketType = Enums.PACKET_PACKED_CONTROL_BLOCKS
+				finalPayload = payload
 				wasPacked = true
 
 				if selected != nil {
 					selected.ReleaseTXPacket(item)
 				}
 			} else {
-				finalPacket.packetType = item.PacketType
-				finalPacket.payload = item.Payload
+				finalPacketType = item.PacketType
+				finalPayload = item.Payload
 			}
 		} else {
-			finalPacket.packetType = item.PacketType
-			finalPacket.payload = item.Payload
+			finalPacketType = item.PacketType
+			finalPayload = item.Payload
 		}
 
-		c.pingManager.NotifyPacket(finalPacket.packetType, false)
-		finalPacket.streamID = selectedStreamID
+		c.pingManager.NotifyPacket(finalPacketType, false)
 
 		opts := VpnProto.BuildOptions{
 			SessionID:     c.sessionID,
 			SessionCookie: c.sessionCookie,
-			PacketType:    finalPacket.packetType,
+			PacketType:    finalPacketType,
 			CompressionType: func() uint8 {
 				if wasPacked {
 					return c.uploadCompression
 				}
 				return item.CompressionType
 			}(),
-			Payload: finalPacket.payload,
+			Payload: finalPayload,
 		}
 
 		if wasPacked {
@@ -394,8 +410,8 @@ dispatchLoop:
 		}
 
 		task := rawOutboundTask{
-			packetType: finalPacket.packetType,
-			payload:    finalPacket.payload,
+			packetType: finalPacketType,
+			payload:    finalPayload,
 			opts:       opts,
 			wasPacked:  wasPacked,
 			item:       item,
@@ -404,7 +420,7 @@ dispatchLoop:
 		}
 
 		select {
-		case c.encodeChannel <- task:
+		case c.txChannel <- task:
 		case <-ctx.Done():
 			if !wasPacked && selected != nil {
 				selected.ReleaseTXPacket(item)

@@ -90,7 +90,7 @@ func (c *Client) logInboundPacket(packetType uint8, sessionID uint8, payloadLen 
 		}
 		return
 	}
-	c.log.Warnf(format, Enums.PacketTypeName(packetType), sessionID, payloadLen, streamID, sequenceNum, fragmentID, totalFragments, packedSummary)
+	c.log.Debugf(format, Enums.PacketTypeName(packetType), sessionID, payloadLen, streamID, sequenceNum, fragmentID, totalFragments, packedSummary)
 }
 
 func (c *Client) logOutboundPacket(packetType uint8, sessionID uint8, payloadLen int, streamID uint16, sequenceNum uint16, fragmentID uint8, totalFragments uint8, packedSummary string) {
@@ -104,7 +104,7 @@ func (c *Client) logOutboundPacket(packetType uint8, sessionID uint8, payloadLen
 		}
 		return
 	}
-	c.log.Warnf(format, Enums.PacketTypeName(packetType), sessionID, payloadLen, streamID, sequenceNum, fragmentID, totalFragments, packedSummary)
+	c.log.Debugf(format, Enums.PacketTypeName(packetType), sessionID, payloadLen, streamID, sequenceNum, fragmentID, totalFragments, packedSummary)
 }
 
 func (c *Client) getResolverUDPAddr(conn Connection) (*net.UDPAddr, error) {

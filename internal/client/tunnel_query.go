@@ -15,34 +15,50 @@ import (
 	VpnProto "masterdnsvpn-go/internal/vpnproto"
 )
 
-// buildTunnelTXTQuestion constructs a DNS TXT question packet for the given domain and encoded payload.
-func buildTunnelTXTQuestion(domain string, encoded string) ([]byte, error) {
-	name, err := DnsParser.BuildTunnelQuestionName(domain, encoded)
+type preparedTunnelDomain struct {
+	normalized string
+	qname      []byte
+}
+
+func buildTunnelTXTQuestionBytes(domain string, encoded []byte) ([]byte, error) {
+	return DnsParser.BuildTunnelTXTQuestionPacket(domain, encoded, Enums.DNS_RECORD_TYPE_TXT, EDnsSafeUDPSize)
+}
+
+func prepareTunnelDomain(domain string) (preparedTunnelDomain, error) {
+	normalized, qname, err := DnsParser.PrepareTunnelDomainQname(domain)
 	if err != nil {
-		return nil, err
+		return preparedTunnelDomain{}, err
 	}
-	return DnsParser.BuildTXTQuestionPacket(name, Enums.DNS_RECORD_TYPE_TXT, EDnsSafeUDPSize)
+	return preparedTunnelDomain{normalized: normalized, qname: qname}, nil
+}
+
+func buildTunnelTXTQuestionBytesPrepared(domain preparedTunnelDomain, encoded []byte) ([]byte, error) {
+	return DnsParser.BuildTunnelTXTQuestionPacketPrepared(domain.normalized, domain.qname, encoded, Enums.DNS_RECORD_TYPE_TXT, EDnsSafeUDPSize)
 }
 
 // buildTunnelTXTQueryRaw builds an encoded tunnel query using the provided options and codec.
 func (c *Client) buildTunnelTXTQueryRaw(domain string, options VpnProto.BuildOptions) ([]byte, error) {
-	encoded, err := VpnProto.BuildEncoded(options, c.codec)
+	raw, err := VpnProto.BuildRaw(options)
 	if err != nil {
 		return nil, err
 	}
-	return buildTunnelTXTQuestion(domain, encoded)
+	encoded, err := c.codec.EncryptAndEncodeBytes(raw)
+	if err != nil {
+		return nil, err
+	}
+	return buildTunnelTXTQuestionBytes(domain, encoded)
 }
 
-func (c *Client) buildEncodedAutoWithCompressionTrace(options VpnProto.BuildOptions) (string, error) {
+func (c *Client) buildEncodedAutoWithCompressionTrace(options VpnProto.BuildOptions) ([]byte, error) {
 	raw, err := VpnProto.BuildRawAuto(options, c.cfg.CompressionMinSize)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	if c.codec == nil {
-		return "", VpnProto.ErrCodecUnavailable
+		return nil, VpnProto.ErrCodecUnavailable
 	}
-	return c.codec.EncryptAndEncode(raw)
+	return c.codec.EncryptAndEncodeBytes(raw)
 }
 
 // buildTunnelTXTQuery builds an encoded tunnel query with automatic option handling.
@@ -51,5 +67,5 @@ func (c *Client) buildTunnelTXTQuery(domain string, options VpnProto.BuildOption
 	if err != nil {
 		return nil, err
 	}
-	return buildTunnelTXTQuestion(domain, encoded)
+	return buildTunnelTXTQuestionBytes(domain, encoded)
 }

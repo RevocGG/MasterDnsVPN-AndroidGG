@@ -21,6 +21,5 @@ require (
 
 require (
 	github.com/google/btree v1.1.2 // indirect
-	golang.org/x/mobile v0.0.0-20260312152759-81488f6aeb60 // indirect
 	golang.org/x/time v0.12.0 // indirect
 )

@@ -27,6 +27,10 @@ func (c *Client) runtimePacketDuplicationCount(packetType uint8) int {
 		}
 	}
 
+	if packetType == Enums.PACKET_PING {
+		return min(count, 2)
+	}
+
 	return count
 }
 
@@ -71,17 +75,22 @@ func (c *Client) selectTargetConnectionsForPacket(packetType uint8, streamID uin
 
 	selected := make([]Connection, 0, targetCount)
 	selected = append(selected, preferred)
-	seenKeys := map[string]struct{}{preferred.Key: {}}
 
 	for _, connection := range c.balancer.GetUniqueConnections(targetCount) {
 		if !connection.IsValid || connection.Key == "" {
 			continue
 		}
-		if _, exists := seenKeys[connection.Key]; exists {
+		dup := false
+		for _, s := range selected {
+			if s.Key == connection.Key {
+				dup = true
+				break
+			}
+		}
+		if dup {
 			continue
 		}
 		selected = append(selected, connection)
-		seenKeys[connection.Key] = struct{}{}
 		if len(selected) >= targetCount {
 			return selected, nil
 		}
@@ -109,7 +118,19 @@ func (c *Client) selectUniqueRuntimeConnections(requiredCount int) ([]Connection
 		return nil, ErrNoValidConnections
 	}
 
-	return connections, nil
+	// Filter out runtime-disabled resolvers so control packets
+	// (SYN, CLOSE, RST, ACK, etc.) are not sent to known-bad resolvers.
+	filtered := connections[:0]
+	for _, conn := range connections {
+		if !c.isRuntimeDisabledResolver(conn.Key) {
+			filtered = append(filtered, conn)
+		}
+	}
+	if len(filtered) == 0 {
+		return nil, ErrNoValidConnections
+	}
+
+	return filtered, nil
 }
 
 func (c *Client) selectStreamPreferredConnectionForResend(stream *Stream_client) (Connection, bool) {
@@ -138,6 +159,9 @@ func (c *Client) getValidStreamPreferredConnection(stream *Stream_client) (Conne
 	if preferredKey == "" {
 		return Connection{}, false
 	}
+	if c.isRuntimeDisabledResolver(preferredKey) {
+		return Connection{}, false
+	}
 	connection, ok := c.GetConnectionByKey(preferredKey)
 	if !ok || !connection.IsValid {
 		return Connection{}, false
@@ -151,13 +175,16 @@ func (c *Client) selectAlternateStreamConnection(excludeKey string) (Connection,
 	}
 
 	if excludeKey != "" {
-		if replacement, ok := c.balancer.GetBestConnectionExcluding(excludeKey); ok {
+		if replacement, ok := c.balancer.GetBestConnectionExcluding(excludeKey); ok && !c.isRuntimeDisabledResolver(replacement.Key) {
 			return replacement, true
 		}
 	}
 
 	for _, connection := range c.balancer.GetAllValidConnections() {
 		if !connection.IsValid || connection.Key == "" {
+			continue
+		}
+		if c.isRuntimeDisabledResolver(connection.Key) {
 			continue
 		}
 		if excludeKey != "" && connection.Key == excludeKey {
@@ -198,14 +225,14 @@ func (c *Client) ensureStreamPreferredConnection(stream *Stream_client) (Connect
 	if preferred, ok := c.getValidStreamPreferredConnection(stream); ok {
 		return preferred, true
 	}
-	if c.balancer == nil {
-		return Connection{}, false
+
+	stream.resolverMu.Lock()
+	excludeKey := stream.PreferredServerKey
+	stream.resolverMu.Unlock()
+	if fallback, ok := c.selectAlternateStreamConnection(excludeKey); ok {
+		return c.assignStreamPreferredConnection(stream, fallback, false)
 	}
-	fallback, ok := c.balancer.GetBestConnection()
-	if !ok {
-		return Connection{}, false
-	}
-	return c.assignStreamPreferredConnection(stream, fallback, false)
+	return Connection{}, false
 }
 
 func (c *Client) maybeFailoverStreamPreferredConnection(stream *Stream_client) (Connection, bool) {

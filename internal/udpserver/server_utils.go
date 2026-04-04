@@ -104,23 +104,9 @@ func buildMTUProbeMetaPayload(probeCode []byte, payloadLen int) [mtuProbeMetaLen
 	return payload
 }
 
-func buildMTUProbeFillPattern() [256]byte {
-	var pattern [256]byte
-	var state uint32 = 0x9E3779B9
-	for i := range pattern {
-		state = state*1664525 + 1013904223
-		pattern[i] = byte(state >> 24)
-	}
-	return pattern
-}
-
-func fillMTUProbeBytes(dst []byte, pattern []byte) {
-	if len(dst) == 0 || len(pattern) == 0 {
+func fillMTUProbeBytes(dst []byte) {
+	if len(dst) == 0 {
 		return
 	}
-
-	copied := copy(dst, pattern)
-	for copied < len(dst) {
-		copied += copy(dst[copied:], dst[:copied])
-	}
+	clear(dst)
 }

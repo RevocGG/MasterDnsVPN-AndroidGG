@@ -22,7 +22,8 @@ import (
 
 const (
 	// RuntimeUDPReadBufferSize defines the maximum size of the UDP read buffer.
-	RuntimeUDPReadBufferSize = 65535
+	RuntimeUDPReadBufferSize         = 65535
+	runtimeUDPMaxMismatchedResponses = 64
 
 	// pooledConnMaxAge is the maximum time a UDP connection can remain idle in
 	// the resolver pool before it is discarded and re-dialed. Stale connections can have their
@@ -55,6 +56,7 @@ func (c *Client) exchangeUDPQueryWithConn(conn *net.UDPConn, packet []byte, time
 	}
 
 	buffer := c.getRuntimeUDPBuffer()
+	mismatchedResponses := 0
 
 	for {
 		n, err := conn.Read(buffer)
@@ -69,6 +71,12 @@ func (c *Client) exchangeUDPQueryWithConn(conn *net.UDPConn, packet []byte, time
 			copy(result, buffer[:n])
 			c.putRuntimeUDPBuffer(buffer)
 			return result, nil
+		}
+
+		mismatchedResponses++
+		if mismatchedResponses >= runtimeUDPMaxMismatchedResponses {
+			c.putRuntimeUDPBuffer(buffer)
+			return nil, errors.New("too many mismatched dns responses on shared udp socket")
 		}
 	}
 }

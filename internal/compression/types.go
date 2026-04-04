@@ -208,9 +208,7 @@ func compressZLIB(data []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	out := make([]byte, buffer.Len())
-	copy(out, buffer.Bytes())
-	return out, nil
+	return bytes.Clone(buffer.Bytes()), nil
 }
 
 func decompressZLIB(data []byte) ([]byte, error) {
@@ -234,16 +232,13 @@ func decompressZLIB(data []byte) ([]byte, error) {
 		return nil, ErrDecompressedTooLarge
 	}
 
-	out := make([]byte, buffer.Len())
-	copy(out, buffer.Bytes())
-	return out, nil
+	return bytes.Clone(buffer.Bytes()), nil
 }
 
 func compressZSTD(data []byte) ([]byte, error) {
 	encoder := zstdEncoderPool.Get().(*zstd.Encoder)
 	defer zstdEncoderPool.Put(encoder)
 
-	// Single-pass compression into a fresh buffer (to avoid holding pooled buffer refs in result)
 	out := encoder.EncodeAll(data, nil)
 	return out, nil
 }
@@ -268,9 +263,7 @@ func decompressZSTD(data []byte) ([]byte, error) {
 		return nil, ErrDecompressedTooLarge
 	}
 
-	out := make([]byte, buffer.Len())
-	copy(out, buffer.Bytes())
-	return out, nil
+	return bytes.Clone(buffer.Bytes()), nil
 }
 
 func compressLZ4(data []byte) ([]byte, error) {
