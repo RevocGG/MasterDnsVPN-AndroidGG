@@ -1,54 +1,11 @@
-# ==============================================================================
-# MasterDnsVPN — Automated Android Build & Release
+# MasterDnsVPN — Manual Android Build & Release
 #
-# HOW IT WORKS
-# ─────────────────────────────────────────────────────────────────────────────
-# 1. Every 6 hours (schedule):
-#      • Fetches upstream https://github.com/masterking32/MasterDnsVPN
-#      • If upstream has new commits → merges them into `android-app` branch
-#        and pushes → then builds & publishes a pre-release
-#      • If nothing new → stops without building (saves CI minutes)
-#
-# 2. Push to android-app branch (your own changes):
-#      → builds & publishes a pre-release automatically
-#
-# 3. Push a tag  v1.2.3:
-#      → builds & publishes a full named release
-#
-# 4. Actions → Run workflow (manual):
-#      → builds & publishes, optionally with a custom version name
-#
-# REQUIRED SECRETS  (Settings → Secrets and variables → Actions)
-# ─────────────────────────────────────────────────────────────────────────────
-#   KEYSTORE_BASE64    base64 of your .jks file
-#                      PowerShell: [Convert]::ToBase64String(
-#                        [IO.File]::ReadAllBytes("android\masterdnsvpn-release.jks")
-#                      ) | Set-Clipboard
-#   KEYSTORE_PASSWORD  keystore password
-#   KEY_ALIAS          key alias inside the jks
-#   KEY_PASSWORD       key password
-#
-# If the secrets are not set the bundled keystore is used (test builds only).
-# ==============================================================================
+# Trigger: Actions → Run workflow
+# Required secrets: KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD
 
 name: Build & Release Android
 
 on:
-  schedule:
-    - cron: "0 */6 * * *"          # every 6 h — checks upstream for updates
-
-  push:
-    branches: [android-app]        # your working branch
-    paths:
-      - "**.go"
-      - "go.mod"
-      - "go.sum"
-      - "vendor/**"
-      - "android/**"
-      - ".github/workflows/build-android.yml"
-    tags:
-      - "v*"                       # release tag e.g. v1.2.3
-
   workflow_dispatch:
     inputs:
       version_name:
@@ -68,86 +25,17 @@ env:
   JAVA_VERSION: "17"
   NDK_VERSION: "27.3.13750724"
   ANDROID_API: "26"
-  UPSTREAM_REPO: "https://github.com/masterking32/MasterDnsVPN.git"
-  UPSTREAM_BRANCH: "main"
-  OUR_BRANCH: "android-app"
 
-# ════════════════════════════════════════════════════════════════════════════
-# JOB 1 — Sync from upstream  (runs on schedule only)
-# ════════════════════════════════════════════════════════════════════════════
 jobs:
-  sync_upstream:
-    name: "Sync <- upstream"
-    runs-on: ubuntu-latest
-    if: github.event_name == 'schedule'
-    outputs:
-      updated: ${{ steps.check.outputs.updated }}
-    steps:
-      - name: Checkout (full history)
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ env.OUR_BRANCH }}
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Configure git identity
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Fetch upstream
-        run: |
-          git remote add upstream "${{ env.UPSTREAM_REPO }}" 2>/dev/null || true
-          git fetch upstream "${{ env.UPSTREAM_BRANCH }}"
-
-      - name: Check for new upstream commits
-        id: check
-        run: |
-          NEW=$(git rev-list HEAD..upstream/${{ env.UPSTREAM_BRANCH }} --count)
-          echo "New upstream commits: $NEW"
-          if [ "$NEW" -gt "0" ]; then
-            echo "updated=true"  >> "$GITHUB_OUTPUT"
-          else
-            echo "No upstream changes - skipping build."
-            echo "updated=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Merge upstream into ${{ env.OUR_BRANCH }}
-        if: steps.check.outputs.updated == 'true'
-        run: |
-          # --strategy-option=ours keeps OUR version of any conflicting files
-          git merge "upstream/${{ env.UPSTREAM_BRANCH }}" \
-            --no-edit \
-            --strategy-option=ours \
-            -m "chore: sync upstream $(date -u +%Y-%m-%d)"
-          git show --stat HEAD
-
-      - name: Push merge commit
-        if: steps.check.outputs.updated == 'true'
-        run: git push origin "${{ env.OUR_BRANCH }}"
-
-  # ════════════════════════════════════════════════════════════════════════════
-  # JOB 2 — Build .aar + APKs -> GitHub Release
-  # ════════════════════════════════════════════════════════════════════════════
   build:
     name: "Build & Release"
     runs-on: ubuntu-latest
 
-    # On schedule: wait for sync_upstream and only run if it found new commits.
-    # On push / tag / dispatch: sync_upstream is skipped so always() lets us run.
-    needs: [sync_upstream]
-    if: |
-      always() && (
-        github.event_name != 'schedule' ||
-        needs.sync_upstream.outputs.updated == 'true'
-      )
-
     steps:
       # ── Checkout ─────────────────────────────────────────────────────────
-      - name: Checkout ${{ env.OUR_BRANCH }}
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.OUR_BRANCH }}
           fetch-depth: 0
 
       # ── Go ────────────────────────────────────────────────────────────────
@@ -194,12 +82,7 @@ jobs:
       - name: Determine version
         id: version
         run: |
-          REF="${GITHUB_REF}"
-
-          if [[ "$REF" == refs/tags/v* ]]; then
-            VER="${GITHUB_REF_NAME#v}"
-            PRERELEASE=false
-          elif [[ -n "${{ inputs.version_name }}" ]]; then
+          if [[ -n "${{ inputs.version_name }}" ]]; then
             VER="${{ inputs.version_name }}"
             PRERELEASE="${{ inputs.prerelease || 'false' }}"
           else
