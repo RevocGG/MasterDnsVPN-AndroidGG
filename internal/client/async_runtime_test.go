@@ -31,8 +31,7 @@ func createTestClient(t *testing.T) *Client {
 		},
 		TXChannelSize:        10,
 		RXChannelSize:        10,
-		TunnelReaderWorkers:  1,
-		TunnelWriterWorkers:  1,
+		RX_TX_Workers:        1,
 		TunnelProcessWorkers: 1,
 		DataEncryptionMethod: 1,
 		EncryptionKey:        "testkey",
@@ -124,16 +123,21 @@ func TestOnRXDropIncrementsCounter(t *testing.T) {
 
 func TestDrainQueues(t *testing.T) {
 	c := createTestClient(t)
-	c.txChannel = make(chan asyncPacket, 5)
+	c.txChannel = make(chan rawOutboundTask, 5)
+	c.encodedTXChannel = make(chan encodedOutboundTask, 5)
 	c.rxChannel = make(chan asyncReadPacket, 5)
 
-	c.txChannel <- asyncPacket{}
+	c.txChannel <- rawOutboundTask{}
+	c.encodedTXChannel <- encodedOutboundTask{}
 	c.rxChannel <- asyncReadPacket{data: make([]byte, 10)}
 
 	c.drainQueues()
 
 	if len(c.txChannel) != 0 {
 		t.Errorf("expected txChannel empty, got %d", len(c.txChannel))
+	}
+	if len(c.encodedTXChannel) != 0 {
+		t.Errorf("expected encodedTXChannel empty, got %d", len(c.encodedTXChannel))
 	}
 	if len(c.rxChannel) != 0 {
 		t.Errorf("expected rxChannel empty, got %d", len(c.rxChannel))
@@ -220,8 +224,8 @@ func TestStartAsyncRuntime(t *testing.T) {
 		return
 	}
 
-	if c.tunnelConn == nil {
-		t.Error("expected tunnelConn not nil")
+	if len(c.tunnelConns) != c.tunnelRX_TX_Workers {
+		t.Fatalf("expected %d tunnel sockets, got %d", c.tunnelRX_TX_Workers, len(c.tunnelConns))
 	}
 	if c.asyncCancel == nil {
 		t.Error("expected asyncCancel not nil")
@@ -245,8 +249,8 @@ func TestStartAsyncRuntimeCleansUpOnListenerStartFailure(t *testing.T) {
 	if c.asyncCancel != nil {
 		t.Fatal("expected asyncCancel to be cleared after startup failure")
 	}
-	if c.tunnelConn != nil {
-		t.Fatal("expected tunnelConn to be closed after startup failure")
+	if len(c.tunnelConns) != 0 {
+		t.Fatal("expected tunnel sockets to be closed after startup failure")
 	}
 }
 
@@ -319,7 +323,7 @@ func TestHandleInboundPacketTreatsMissingTXTAsResolverSuccess(t *testing.T) {
 		sentAt:    time.Now().Add(-200 * time.Millisecond),
 	}
 
-	c.handleInboundPacket(response, addr)
+	c.handleInboundPacket(response, addr, "")
 
 	if len(c.resolverPending) != 0 {
 		t.Fatalf("expected resolverPending to be cleared after empty DNS success, got=%d", len(c.resolverPending))
@@ -349,7 +353,7 @@ func TestHandleInboundPacketTreatsServerFailureWithoutTXTAsResolverFailure(t *te
 		sentAt:    time.Now().Add(-200 * time.Millisecond),
 	}
 
-	c.handleInboundPacket(response, addr)
+	c.handleInboundPacket(response, addr, "")
 
 	if len(c.resolverPending) != 0 {
 		t.Fatalf("expected resolverPending to be cleared after SERVFAIL response, got=%d", len(c.resolverPending))

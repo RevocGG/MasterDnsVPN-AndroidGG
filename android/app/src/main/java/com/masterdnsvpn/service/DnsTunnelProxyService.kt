@@ -91,6 +91,7 @@ class DnsTunnelProxyService : Service() {
                         try {
                             val cfg = ProfileConfigMapper.toMobileConfig(profile)
                             bridge.startInstance(profile.id, dir, cfg, profile.resolversText)
+                            if (profile.identityLocked) bridge.setLockedDomains(profile.id, profile.domains.split(","))
                             tunnelStateManager.onTunnelStarted(profile.id)
                             upstreamAddrs.add("${cfg.listenIP}:${cfg.listenPort}")
                             logManager.append(LogEntry(level = LogLevel.INFO, timestamp = "system", message = "Meta sub-profile started (SOCKS): ${profile.name} on ${cfg.listenIP}:${cfg.listenPort}"))
@@ -106,8 +107,9 @@ class DnsTunnelProxyService : Service() {
                     // Wait for proxies to initialize
                     delay(1000)
 
-                    // Start SOCKS balancer on a meta port
-                    if (upstreamAddrs.size > 1) {
+                    // Start SOCKS balancer on a meta port — always start even with a single
+                    // upstream so that the configured socksPort is always bound.
+                    if (upstreamAddrs.isNotEmpty()) {
                         val csv = upstreamAddrs.joinToString(",")
                         val bindAddr = if (socksPort > 0) "127.0.0.1:$socksPort" else "127.0.0.1:0"
                         val addr = bridge.startSocksBalancer(bindAddr, csv, strategy)
@@ -137,6 +139,7 @@ class DnsTunnelProxyService : Service() {
                     java.io.File(profileDir).mkdirs()
                     logManager.appendSystem(LogLevel.INFO, "Proxy service starting: ${profile.name}")
 
+                    if (profile.identityLocked) bridge.setLockedDomains(profile.id, profile.domains.split(","))
                     bridge.startInstance(
                         profileId = profile.id,
                         profileDir = profileDir,
@@ -198,6 +201,7 @@ class DnsTunnelProxyService : Service() {
         if (activeMetaId != null) {
             for (subId in activeSubProfileIds) {
                 try { bridge.stopInstance(subId) } catch (_: Exception) {}
+                bridge.clearLockedDomains(subId)
                 tunnelStateManager.onTunnelStopped(subId)
             }
             tunnelStateManager.onMetaStopped(activeMetaId!!)
@@ -205,6 +209,7 @@ class DnsTunnelProxyService : Service() {
         // Stop single profile
         activeProfileId?.let { id ->
             try { bridge.stopInstance(id) } catch (_: Exception) {}
+            bridge.clearLockedDomains(id)
             tunnelStateManager.onTunnelStopped(id)
         }
         stopForeground(STOP_FOREGROUND_REMOVE)

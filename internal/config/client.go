@@ -27,6 +27,7 @@ type ClientConfig struct {
 	ConfigDir                             string            `toml:"-"`
 	ConfigPath                            string            `toml:"-"`
 	ResolversFilePath                     string            `toml:"-"`
+	explicitRX_TX_Workers                 bool              `toml:"-"`
 	ProtocolType                          string            `toml:"PROTOCOL_TYPE"`
 	Domains                               []string          `toml:"DOMAINS"`
 	ListenIP                              string            `toml:"LISTEN_IP"`
@@ -68,8 +69,9 @@ type ClientConfig struct {
 	MTUTestRetries                        int               `toml:"MTU_TEST_RETRIES"`
 	MTUTestTimeout                        float64           `toml:"MTU_TEST_TIMEOUT"`
 	MTUTestParallelism                    int               `toml:"MTU_TEST_PARALLELISM"`
-	TunnelReaderWorkers                   int               `toml:"TUNNEL_READER_WORKERS"`
-	TunnelWriterWorkers                   int               `toml:"TUNNEL_WRITER_WORKERS"`
+	RX_TX_Workers                         int               `toml:"RX_TX_WORKERS"`
+	LegacyTunnelReaderWorkers             int               `toml:"TUNNEL_READER_WORKERS"`
+	LegacyTunnelWriterWorkers             int               `toml:"TUNNEL_WRITER_WORKERS"`
 	TunnelProcessWorkers                  int               `toml:"TUNNEL_PROCESS_WORKERS"`
 	TunnelPacketTimeoutSec                float64           `toml:"TUNNEL_PACKET_TIMEOUT_SECONDS"`
 	DispatcherIdlePollIntervalSeconds     float64           `toml:"DISPATCHER_IDLE_POLL_INTERVAL_SECONDS"`
@@ -176,8 +178,7 @@ func defaultClientConfig() ClientConfig {
 		MTUTestRetries:                        2,
 		MTUTestTimeout:                        4.0,
 		MTUTestParallelism:                    16,
-		TunnelReaderWorkers:                   6,
-		TunnelWriterWorkers:                   6,
+		RX_TX_Workers:                         6,
 		TunnelProcessWorkers:                  4,
 		TunnelPacketTimeoutSec:                8.0,
 		DispatcherIdlePollIntervalSeconds:     0.020,
@@ -248,13 +249,15 @@ func loadClientConfigFile(filename string) (ClientConfig, error) {
 		return cfg, fmt.Errorf("config file not found: %s", path)
 	}
 
-	if _, err := toml.DecodeFile(path, &cfg); err != nil {
+	meta, err := toml.DecodeFile(path, &cfg)
+	if err != nil {
 		return cfg, fmt.Errorf("parse TOML failed for %s: %w", path, err)
 	}
 
 	cfg.ConfigPath = path
 	cfg.ConfigDir = filepath.Dir(path)
 	cfg.ResolversFilePath = ""
+	cfg.explicitRX_TX_Workers = meta.IsDefined("RX_TX_WORKERS")
 	return cfg, nil
 }
 
@@ -339,7 +342,7 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 	}
 
 	cfg.PacketDuplicationCount = clampInt(defaultIntBelow(cfg.PacketDuplicationCount, 1, 1), 1, 4)
-	cfg.SetupPacketDuplicationCount = clampInt(defaultIntBelow(cfg.SetupPacketDuplicationCount, 1, max(2, cfg.PacketDuplicationCount)), cfg.PacketDuplicationCount, 4)
+	cfg.SetupPacketDuplicationCount = clampInt(defaultIntBelow(cfg.SetupPacketDuplicationCount, 1, max(2, cfg.PacketDuplicationCount)), cfg.PacketDuplicationCount, 5)
 	cfg.StreamResolverFailoverResendThreshold = clampInt(defaultIntBelow(cfg.StreamResolverFailoverResendThreshold, 1, 2), 1, 128)
 	cfg.StreamResolverFailoverCooldownSec = clampFloat(defaultFloatAtMostZero(cfg.StreamResolverFailoverCooldownSec, 1.0), 0.1, 120.0)
 	cfg.RecheckInactiveIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.RecheckInactiveIntervalSeconds, 1800.0), 60.0, 86400.0)
@@ -360,8 +363,8 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 	cfg.ARQControlPacketTTLSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQControlPacketTTLSeconds, 900.0), 30.0, 86400.0)
 	cfg.ARQMaxDataRetries = clampInt(defaultIntBelow(cfg.ARQMaxDataRetries, 1, 800), 60, 100000)
 	cfg.ARQDataNackMaxGap = clampInt(defaultIntBelow(cfg.ARQDataNackMaxGap, 0, 0), 0, cfg.ARQWindowSize/4)
-	cfg.ARQDataNackInitialDelaySeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQDataNackInitialDelaySeconds, 0.0), 0.2, 30.0)
-	cfg.ARQDataNackRepeatSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQDataNackRepeatSeconds, 2.0), 0.3, 30.0)
+	cfg.ARQDataNackInitialDelaySeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQDataNackInitialDelaySeconds, 0.0), 0.05, 30.0)
+	cfg.ARQDataNackRepeatSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQDataNackRepeatSeconds, 2.0), 0.08, 30.0)
 	cfg.ARQTerminalDrainTimeoutSec = clampFloat(defaultFloatAtMostZero(cfg.ARQTerminalDrainTimeoutSec, 90.0), 10.0, 3600.0)
 	cfg.ARQTerminalAckWaitTimeoutSec = clampFloat(defaultFloatAtMostZero(cfg.ARQTerminalAckWaitTimeoutSec, 60.0), 5.0, 3600.0)
 
@@ -380,12 +383,15 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 	cfg.MTUTestRetries = defaultIntBelow(cfg.MTUTestRetries, 1, 1)
 	cfg.MTUTestTimeout = defaultFloatAtMostZero(cfg.MTUTestTimeout, 1.0)
 	cfg.MTUTestParallelism = defaultIntBelow(cfg.MTUTestParallelism, 1, 1)
-	cfg.TunnelReaderWorkers = clampInt(defaultIntBelow(cfg.TunnelReaderWorkers, 1, 6), 1, 64)
-	cfg.TunnelWriterWorkers = clampInt(defaultIntBelow(cfg.TunnelWriterWorkers, 1, 6), 1, 64)
-	cfg.TunnelProcessWorkers = clampInt(defaultIntBelow(cfg.TunnelProcessWorkers, 1, 4), 1, 64)
+	legacyRX_TX_Workers := max(cfg.LegacyTunnelReaderWorkers, cfg.LegacyTunnelWriterWorkers)
+	if !cfg.explicitRX_TX_Workers && legacyRX_TX_Workers > 0 {
+		cfg.RX_TX_Workers = legacyRX_TX_Workers
+	}
+	cfg.RX_TX_Workers = clampInt(defaultIntBelow(cfg.RX_TX_Workers, 1, 6), 1, 64)
+	cfg.TunnelProcessWorkers = max(clampInt(defaultIntBelow(cfg.TunnelProcessWorkers, 1, 4), 1, 64), cfg.RX_TX_Workers)
 	cfg.TunnelPacketTimeoutSec = clampFloat(defaultFloatAtMostZero(cfg.TunnelPacketTimeoutSec, 8.0), 0.5, 120.0)
 	cfg.DispatcherIdlePollIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.DispatcherIdlePollIntervalSeconds, 0.020), 0.001, 1.0)
-	cfg.PingAggressiveIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.PingAggressiveIntervalSeconds, 0.100), 0.1, 30.0)
+	cfg.PingAggressiveIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.PingAggressiveIntervalSeconds, 0.100), 0.05, 30.0)
 	cfg.PingLazyIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.PingLazyIntervalSeconds, 1.0), cfg.PingAggressiveIntervalSeconds, 60.0)
 	cfg.PingCooldownIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.PingCooldownIntervalSeconds, 3.0), cfg.PingLazyIntervalSeconds, 300.0)
 	cfg.PingColdIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.PingColdIntervalSeconds, 30.0), cfg.PingCooldownIntervalSeconds, 3600.0)

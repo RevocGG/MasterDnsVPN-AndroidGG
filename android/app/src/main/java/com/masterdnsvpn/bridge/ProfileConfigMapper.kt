@@ -71,8 +71,7 @@ object ProfileConfigMapper {
         c.setMTUTestParallel(p.mtuTestParallelism.toLong())
 
         // Section 8: Workers & Timeouts
-        c.tunnelReaderWorkers = p.tunnelReaderWorkers.toLong()
-        c.tunnelWriterWorkers = p.tunnelWriterWorkers.toLong()
+        c.rxTxWorkers = p.rxTxWorkers.toLong()
         c.tunnelProcessWorkers = p.tunnelProcessWorkers.toLong()
         c.tunnelPacketTimeoutSec = p.tunnelPacketTimeoutSec
         c.dispatcherIdlePollIntervalSec = p.dispatcherIdlePollIntervalSeconds
@@ -105,7 +104,14 @@ object ProfileConfigMapper {
 
         // Section 11: MTU files
         c.saveMTUServersToFile = p.saveMtuServersToFile
-        c.setMTUServersFileName(p.mtuServersFileName)
+        // If a custom output directory is set, prefix the filename with that directory so
+        // the Go runtime writes the file to accessible storage (e.g. Downloads folder).
+        val effectiveMtuFileName = if (p.mtuServersFileDir.isNotBlank()) {
+            "${p.mtuServersFileDir.trimEnd('/')}/${p.mtuServersFileName}"
+        } else {
+            p.mtuServersFileName
+        }
+        c.setMTUServersFileName(effectiveMtuFileName)
         c.setMTUServersFileFormat(p.mtuServersFileFormat)
         c.setMTUUsingSeparatorText(p.mtuUsingSeparatorText)
         c.setMTURemovedServerLogFormat(p.mtuRemovedServerLogFormat)

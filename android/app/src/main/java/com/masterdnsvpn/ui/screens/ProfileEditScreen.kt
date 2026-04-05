@@ -13,6 +13,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileOpen
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -83,6 +84,23 @@ fun ProfileEditScreen(
             context.contentResolver.openOutputStream(uri)
                 ?.bufferedWriter()?.use { it.write(toml) }
         } catch (_: Exception) { }
+    }
+
+    // MTU output directory picker
+    val mtuDirLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            // Persist access so the path remains usable across reboots
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+            )
+            // Resolve to a real filesystem path for the Go runtime
+            val resolved = resolveUriToPath(context, uri)
+            vm.update { copy(mtuServersFileDir = resolved) }
+        }
     }
 
     // Show import error as snackbar
@@ -244,9 +262,7 @@ fun ProfileEditScreen(
                 if (profile.identityLocked) {
                     LockedField("DOMAINS")
                 } else {
-                    ProfileTextField("DOMAINS (comma-separated)", profile.domains, hint = "DOMAINS") {
-                        vm.update { copy(domains = it) }
-                    }
+                    DomainsTextField(profile.domains) { vm.update { copy(domains = it) } }
                 }
             }
 
@@ -394,8 +410,7 @@ fun ProfileEditScreen(
 
             // Section 8: Workers & Timeouts
             ExpandableSection("Workers & Timeouts") {
-                ProfileIntField("TUNNEL_READER_WORKERS", profile.tunnelReaderWorkers) { vm.update { copy(tunnelReaderWorkers = it) } }
-                ProfileIntField("TUNNEL_WRITER_WORKERS", profile.tunnelWriterWorkers) { vm.update { copy(tunnelWriterWorkers = it) } }
+                ProfileIntField("RX_TX_WORKERS", profile.rxTxWorkers) { vm.update { copy(rxTxWorkers = it) } }
                 ProfileIntField("TUNNEL_PROCESS_WORKERS", profile.tunnelProcessWorkers) { vm.update { copy(tunnelProcessWorkers = it) } }
                 ProfileDoubleField("TUNNEL_PACKET_TIMEOUT_SECONDS", profile.tunnelPacketTimeoutSec) { vm.update { copy(tunnelPacketTimeoutSec = it) } }
                 ProfileDoubleField("DISPATCHER_IDLE_POLL_INTERVAL_SECONDS", profile.dispatcherIdlePollIntervalSeconds) { vm.update { copy(dispatcherIdlePollIntervalSeconds = it) } }
@@ -481,6 +496,36 @@ fun ProfileEditScreen(
                     vm.update { copy(saveMtuServersToFile = it) }
                 }
                 if (profile.saveMtuServersToFile) {
+                    // Directory picker row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        OutlinedTextField(
+                            value = profile.mtuServersFileDir.ifBlank { "(internal app folder)" },
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("OUTPUT_DIRECTORY") },
+                            modifier = Modifier.weight(1f),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = com.masterdnsvpn.ui.theme.CyanAccent,
+                                unfocusedBorderColor = com.masterdnsvpn.ui.theme.TextSecondary.copy(alpha = 0.4f),
+                                focusedLabelColor = com.masterdnsvpn.ui.theme.CyanAccent,
+                                unfocusedLabelColor = com.masterdnsvpn.ui.theme.TextSecondary,
+                                focusedTextColor = com.masterdnsvpn.ui.theme.TextPrimary,
+                                unfocusedTextColor = com.masterdnsvpn.ui.theme.TextPrimary,
+                                cursorColor = com.masterdnsvpn.ui.theme.CyanAccent,
+                            ),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        IconButton(onClick = { mtuDirLauncher.launch(null) }) {
+                            Icon(
+                                Icons.Default.FileOpen,
+                                contentDescription = "Choose directory",
+                                tint = com.masterdnsvpn.ui.theme.CyanAccent,
+                            )
+                        }
+                    }
                     ProfileTextField("MTU_SERVERS_FILE_NAME", profile.mtuServersFileName) {
                         vm.update { copy(mtuServersFileName = it) }
                     }
@@ -507,6 +552,63 @@ fun ProfileEditScreen(
 // ---------------------------------------------------------------------------
 // Reusable field composables
 // ---------------------------------------------------------------------------
+
+/**
+ * Attempt to resolve a SAF tree URI to a real filesystem path.
+ * Falls back to the external documents directory if resolution fails
+ * (e.g. on emulators or obscure storage providers).
+ */
+private fun resolveUriToPath(context: android.content.Context, uri: android.net.Uri): String {
+    try {
+        // Most common case on Android 10+: primary external storage
+        // content://com.android.externalstorage.documents/tree/primary:path/to/dir
+        val docId = android.provider.DocumentsContract.getTreeDocumentId(uri)
+        if (docId != null) {
+            val split = docId.split(":")
+            val type = split.getOrElse(0) { "" }
+            val relativePath = split.getOrElse(1) { "" }
+            if (type.equals("primary", ignoreCase = true)) {
+                val root = android.os.Environment.getExternalStorageDirectory()
+                val path = if (relativePath.isBlank()) root.absolutePath else "${root.absolutePath}/$relativePath"
+                val dir = java.io.File(path)
+                if (dir.exists() || dir.mkdirs()) return dir.absolutePath
+            }
+        }
+    } catch (_: Exception) {}
+    // Fallback: app-owned external documents directory (always writable, no special permission)
+    val fallback = context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS)
+        ?: context.filesDir
+    fallback.mkdirs()
+    return fallback.absolutePath
+}
+
+@Composable
+fun DomainsTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+) {
+    // Internal representation: one domain per line; stored value: comma-separated
+    fun toDisplay(csv: String) = csv.split(",").map { it.trim() }.filter { it.isNotBlank() }.joinToString("\n")
+    fun toCsv(display: String) = display.lines().map { it.trim() }.filter { it.isNotBlank() }.joinToString(",")
+
+    var local by remember(value) { mutableStateOf(toDisplay(value)) }
+    OutlinedTextField(
+        value = local,
+        onValueChange = { raw ->
+            local = raw
+            onValueChange(toCsv(raw))
+        },
+        label = { Text("DOMAINS") },
+        placeholder = { Text("One domain per line", style = MaterialTheme.typography.labelSmall) },
+        modifier = Modifier.fillMaxWidth(),
+        minLines = 2,
+        maxLines = 8,
+        supportingText = {
+            val count = local.lines().count { it.isNotBlank() }
+            Text("$count domain(s)", style = MaterialTheme.typography.labelSmall)
+        },
+    )
+}
 
 @Composable
 fun ProfileTextField(

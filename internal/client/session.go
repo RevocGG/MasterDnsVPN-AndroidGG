@@ -65,7 +65,7 @@ func (c *Client) initializeSessionOnce() error {
 		return ErrSessionInitFailed
 	}
 
-	packet, err := c.exchangeDNSOverConnection(conn, query, c.mtuTestTimeout*2)
+	packet, err := c.exchangeDNSOverConnection(conn, query, c.mtuTestTimeout*3)
 	if err != nil {
 		return ErrSessionInitFailed
 	}

@@ -15,6 +15,7 @@ const (
 
 type resolverSampleKey struct {
 	resolverAddr string
+	localAddr    string
 	dnsID        uint16
 }
 
@@ -64,13 +65,14 @@ func (c *Client) noteResolverSuccess(serverKey string, rtt time.Duration) {
 	c.recordResolverHealthEvent(serverKey, true, c.now())
 }
 
-func (c *Client) trackResolverSend(packet []byte, resolverAddr string, serverKey string, sentAt time.Time) {
+func (c *Client) trackResolverSend(packet []byte, resolverAddr string, localAddr string, serverKey string, sentAt time.Time) {
 	if c == nil || len(packet) < 2 || resolverAddr == "" || serverKey == "" {
 		return
 	}
 
 	key := resolverSampleKey{
 		resolverAddr: resolverAddr,
+		localAddr:    localAddr,
 		dnsID:        binary.BigEndian.Uint16(packet[:2]),
 	}
 
@@ -94,13 +96,14 @@ func (c *Client) trackResolverSend(packet []byte, resolverAddr string, serverKey
 	c.noteResolverSend(serverKey)
 }
 
-func (c *Client) trackResolverSuccess(packet []byte, addr *net.UDPAddr, receivedAt time.Time) {
+func (c *Client) trackResolverSuccess(packet []byte, addr *net.UDPAddr, localAddr string, receivedAt time.Time) {
 	if c == nil || len(packet) < 2 || addr == nil {
 		return
 	}
 
 	key := resolverSampleKey{
 		resolverAddr: addr.String(),
+		localAddr:    localAddr,
 		dnsID:        binary.BigEndian.Uint16(packet[:2]),
 	}
 
@@ -122,13 +125,14 @@ func (c *Client) trackResolverSuccess(packet []byte, addr *net.UDPAddr, received
 	c.noteResolverSuccess(sample.serverKey, receivedAt.Sub(sample.sentAt))
 }
 
-func (c *Client) trackResolverFailure(packet []byte, addr *net.UDPAddr, failedAt time.Time) {
+func (c *Client) trackResolverFailure(packet []byte, addr *net.UDPAddr, localAddr string, failedAt time.Time) {
 	if c == nil || len(packet) < 2 || addr == nil {
 		return
 	}
 
 	key := resolverSampleKey{
 		resolverAddr: addr.String(),
+		localAddr:    localAddr,
 		dnsID:        binary.BigEndian.Uint16(packet[:2]),
 	}
 

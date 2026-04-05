@@ -74,8 +74,7 @@ MTUTestRetries  int
 MTUTestTimeout  float64
 MTUTestParallel int
 // Workers & Timeouts
-TunnelReaderWorkers           int
-TunnelWriterWorkers           int
+RxTxWorkers                  int
 TunnelProcessWorkers          int
 TunnelPacketTimeoutSec        float64
 DispatcherIdlePollIntervalSec float64
@@ -367,8 +366,7 @@ MaxDownloadMTU:     c.MaxDownloadMTU,
 MTUTestRetries:     c.MTUTestRetries,
 MTUTestTimeout:     c.MTUTestTimeout,
 MTUTestParallelism: c.MTUTestParallel,
-TunnelReaderWorkers:               c.TunnelReaderWorkers,
-TunnelWriterWorkers:               c.TunnelWriterWorkers,
+RxTxWorkers:                         c.RxTxWorkers,
 TunnelProcessWorkers:              c.TunnelProcessWorkers,
 TunnelPacketTimeoutSec:            c.TunnelPacketTimeoutSec,
 DispatcherIdlePollIntervalSeconds: c.DispatcherIdlePollIntervalSec,
@@ -462,8 +460,7 @@ c.MaxDownloadMTU  = d.MaxDownloadMTU
 c.MTUTestRetries  = d.MTUTestRetries
 c.MTUTestTimeout  = d.MTUTestTimeout
 c.MTUTestParallel = d.MTUTestParallelism
-c.TunnelReaderWorkers  = d.TunnelReaderWorkers
-c.TunnelWriterWorkers  = d.TunnelWriterWorkers
+c.RxTxWorkers          = d.RxTxWorkers
 c.TunnelProcessWorkers = d.TunnelProcessWorkers
 c.TunnelPacketTimeoutSec        = d.TunnelPacketTimeoutSec
 c.DispatcherIdlePollIntervalSec = d.DispatcherIdlePollIntervalSeconds

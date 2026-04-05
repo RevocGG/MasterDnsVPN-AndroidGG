@@ -49,8 +49,7 @@ MaxDownloadMTU    int
 MTUTestRetries    int
 MTUTestTimeout    float64
 MTUTestParallelism int
-TunnelReaderWorkers               int
-TunnelWriterWorkers               int
+RxTxWorkers                       int
 TunnelProcessWorkers              int
 TunnelPacketTimeoutSec            float64
 DispatcherIdlePollIntervalSeconds float64
@@ -118,7 +117,7 @@ AutoDisableMinObservations: 6, AutoDisableCheckIntervalSeconds: 3.0,
 BaseEncodeData: false, UploadCompressionType: 0, DownloadCompressionType: 0, CompressionMinSize: 100,
 MinUploadMTU: 40, MinDownloadMTU: 100, MaxUploadMTU: 64, MaxDownloadMTU: 140,
 MTUTestRetries: 2, MTUTestTimeout: 4.0, MTUTestParallelism: 16,
-TunnelReaderWorkers: 6, TunnelWriterWorkers: 6, TunnelProcessWorkers: 4,
+RxTxWorkers: 6, TunnelProcessWorkers: 4,
 TunnelPacketTimeoutSec: 8.0, DispatcherIdlePollIntervalSeconds: 0.020,
 PingAggressiveIntervalSeconds: 0.300, PingLazyIntervalSeconds: 1.0,
 PingCooldownIntervalSeconds: 3.0, PingColdIntervalSeconds: 30.0,
@@ -198,7 +197,7 @@ tpl := "DOMAINS = %s\nDATA_ENCRYPTION_METHOD = %d\nENCRYPTION_KEY = %q\n" +
 "COMPRESSION_MIN_SIZE = %d\n" +
 "MIN_UPLOAD_MTU = %d\nMIN_DOWNLOAD_MTU = %d\nMAX_UPLOAD_MTU = %d\nMAX_DOWNLOAD_MTU = %d\n" +
 "MTU_TEST_RETRIES = %d\nMTU_TEST_TIMEOUT = %g\nMTU_TEST_PARALLELISM = %d\n" +
-"TUNNEL_READER_WORKERS = %d\nTUNNEL_WRITER_WORKERS = %d\nTUNNEL_PROCESS_WORKERS = %d\n" +
+"RX_TX_WORKERS = %d\nTUNNEL_PROCESS_WORKERS = %d\n" +
 "TUNNEL_PACKET_TIMEOUT_SECONDS = %g\nDISPATCHER_IDLE_POLL_INTERVAL_SECONDS = %g\n" +
 "PING_AGGRESSIVE_INTERVAL_SECONDS = %g\nPING_LAZY_INTERVAL_SECONDS = %g\n" +
 "PING_COOLDOWN_INTERVAL_SECONDS = %g\nPING_COLD_INTERVAL_SECONDS = %g\n" +
@@ -235,7 +234,7 @@ cfg.AutoDisableMinObservations, cfg.AutoDisableCheckIntervalSeconds,
 cfg.BaseEncodeData, cfg.UploadCompressionType, cfg.DownloadCompressionType, cfg.CompressionMinSize,
 cfg.MinUploadMTU, cfg.MinDownloadMTU, cfg.MaxUploadMTU, cfg.MaxDownloadMTU,
 cfg.MTUTestRetries, cfg.MTUTestTimeout, cfg.MTUTestParallelism,
-cfg.TunnelReaderWorkers, cfg.TunnelWriterWorkers, cfg.TunnelProcessWorkers,
+cfg.RxTxWorkers, cfg.TunnelProcessWorkers,
 cfg.TunnelPacketTimeoutSec, cfg.DispatcherIdlePollIntervalSeconds,
 cfg.PingAggressiveIntervalSeconds, cfg.PingLazyIntervalSeconds,
 cfg.PingCooldownIntervalSeconds, cfg.PingColdIntervalSeconds,

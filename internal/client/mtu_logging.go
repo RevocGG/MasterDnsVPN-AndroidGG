@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"masterdnsvpn-go/internal/logger"
 )
@@ -72,19 +73,21 @@ func (c *Client) logMTUCompletion(validConns []Connection) {
 	c.log.Infof("<cyan>Valid Connections After MTU Testing:</cyan>")
 	c.log.Infof("%s", strings.Repeat("=", 80))
 	c.log.Infof(
-		"%-20s %-15s %-15s %-30s",
+		"%-20s %-15s %-15s %-14s %-30s",
 		"Resolver",
 		"Upload MTU",
 		"Download MTU",
+		"Resolve Time",
 		"Domain",
 	)
 	c.log.Infof("%s", strings.Repeat("-", 80))
 	for _, conn := range validConns {
 		c.log.Infof(
-			"<cyan>%-20s</cyan> <green>%-15d</green> <green>%-15d</green> <blue>%-30s</blue>",
+			"<cyan>%-20s</cyan> <green>%-15d</green> <green>%-15d</green> <yellow>%-14s</yellow> <blue>%-30s</blue>",
 			conn.ResolverLabel,
 			conn.UploadMTUBytes,
 			conn.DownloadMTUBytes,
+			formatResolverRTT(conn.MTUResolveTime),
 			conn.Domain,
 		)
 	}
@@ -116,6 +119,16 @@ func (c *Client) logMTUCompletion(validConns []Connection) {
 		c.syncedUploadMTU,
 		c.syncedDownloadMTU,
 	)
+}
+
+func formatResolverRTT(rtt time.Duration) string {
+	if rtt <= 0 {
+		return "n/a"
+	}
+	if rtt < time.Millisecond {
+		return "<1ms"
+	}
+	return rtt.Round(time.Millisecond).String()
 }
 
 func (c *Client) resolveMTUSuccessOutputPath() string {

@@ -11,6 +11,7 @@ import com.masterdnsvpn.log.LogManager
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -30,6 +31,37 @@ class GoMobileBridge @Inject constructor(
     private val logManager: LogManager,
 ) {
     private var logCallbackRegistered = false
+
+    /**
+     * Domains to redact from Go runtime log messages — keyed by profileId.
+     * Populated for identity-locked profiles so their domain names never
+     * appear in the user-visible log screen.
+     */
+    private val lockedProfileDomains = ConcurrentHashMap<String, Set<String>>()
+
+    /** Register domains that must be redacted from Go logs for [profileId]. */
+    fun setLockedDomains(profileId: String, domains: Collection<String>) {
+        val filtered = domains.filter { it.isNotBlank() }.toSet()
+        if (filtered.isNotEmpty()) lockedProfileDomains[profileId] = filtered
+    }
+
+    /** Remove domain redaction for [profileId] (call when profile stops). */
+    fun clearLockedDomains(profileId: String) {
+        lockedProfileDomains.remove(profileId)
+    }
+
+    private fun redact(message: String): String {
+        if (lockedProfileDomains.isEmpty()) return message
+        var result = message
+        for (domains in lockedProfileDomains.values) {
+            for (domain in domains) {
+                if (domain.isNotBlank() && result.contains(domain, ignoreCase = true)) {
+                    result = result.replace(domain, "[redacted]", ignoreCase = true)
+                }
+            }
+        }
+        return result
+    }
 
     // UTC parser for Go timestamps: "2006/01/02 15:04:05"
     private val goTimestampFmt = SimpleDateFormat("yyyy/MM/dd HH:mm:ss", Locale.US).apply {
@@ -59,7 +91,7 @@ class GoMobileBridge @Inject constructor(
                 } catch (_: Exception) {
                     System.currentTimeMillis()
                 }
-                logManager.append(LogEntry(level = logLevel, timestamp = timestamp, message = message, epochMs = epochMs))
+                logManager.append(LogEntry(level = logLevel, timestamp = timestamp, message = redact(message), epochMs = epochMs))
             }
         })
         logCallbackRegistered = true

@@ -754,7 +754,7 @@ func (c *Client) recheckResolverConnection(ctx context.Context, conn *Connection
 		if err := ctx.Err(); err != nil {
 			return false
 		}
-		passed, err := c.sendUploadMTUProbe(ctx, conn, transport, c.syncedUploadMTU, mtuProbeOptions{Quiet: true, IsRetry: attempt > 0})
+		passed, _, err := c.sendUploadMTUProbe(ctx, conn, transport, c.syncedUploadMTU, mtuProbeOptions{Quiet: true, IsRetry: attempt > 0})
 		if err == nil && passed {
 			upOK = true
 			break
@@ -769,7 +769,7 @@ func (c *Client) recheckResolverConnection(ctx context.Context, conn *Connection
 		if err := ctx.Err(); err != nil {
 			return false
 		}
-		passed, err := c.sendDownloadMTUProbe(ctx, conn, transport, c.syncedDownloadMTU, c.syncedUploadMTU, mtuProbeOptions{Quiet: true, IsRetry: attempt > 0})
+		passed, _, err := c.sendDownloadMTUProbe(ctx, conn, transport, c.syncedDownloadMTU, c.syncedUploadMTU, mtuProbeOptions{Quiet: true, IsRetry: attempt > 0})
 		if err == nil && passed {
 			downOK = true
 			break

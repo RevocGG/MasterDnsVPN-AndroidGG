@@ -44,7 +44,6 @@ func (c *Client) asyncStreamDispatcher(ctx context.Context) {
 		case <-ctx.Done():
 			return false
 		case <-c.txSignal:
-		case <-c.txSpaceSignal:
 		case <-idleTimer.C:
 		}
 		if !idleTimer.Stop() {

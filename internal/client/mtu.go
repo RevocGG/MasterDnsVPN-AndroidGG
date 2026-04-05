@@ -15,6 +15,7 @@ import (
 	"errors"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	DnsParser "masterdnsvpn-go/internal/dnsparser"
 	Enums "masterdnsvpn-go/internal/enums"
@@ -60,6 +61,7 @@ type mtuConnectionProbeResult struct {
 	UploadBytes   int
 	UploadChars   int
 	DownloadBytes int
+	ResolveTime   time.Duration
 }
 
 type mtuScanCounters struct {
@@ -140,10 +142,11 @@ func (c *Client) prepareConnectionMTUScanState(conn *Connection) {
 	if conn == nil {
 		return
 	}
-	conn.IsValid = false
+	conn.IsValid = true
 	conn.UploadMTUBytes = 0
 	conn.UploadMTUChars = 0
 	conn.DownloadMTUBytes = 0
+	conn.MTUResolveTime = 0
 }
 
 func (c *Client) runConnectionMTUTest(ctx context.Context, conn *Connection, serverID int, total int, maxUploadPayload int, counters *mtuScanCounters) {
@@ -232,6 +235,7 @@ func (c *Client) runConnectionMTUTest(ctx context.Context, conn *Connection, ser
 	conn.UploadMTUBytes = result.UploadBytes
 	conn.UploadMTUChars = result.UploadChars
 	conn.DownloadMTUBytes = result.DownloadBytes
+	conn.MTUResolveTime = result.ResolveTime
 
 	completed := counters.completed.Add(1)
 	validNow := counters.valid.Add(1)
@@ -262,7 +266,7 @@ func (c *Client) probeConnectionMTU(ctx context.Context, conn *Connection, maxUp
 	}
 	defer probeTransport.conn.Close()
 
-	upOK, upBytes, upChars, err := c.testUploadMTU(ctx, conn, probeTransport, maxUploadPayload)
+	upOK, upBytes, upChars, upRTT, err := c.testUploadMTU(ctx, conn, probeTransport, maxUploadPayload)
 	if err != nil || !upOK {
 		conn.IsValid = false
 		result.UploadBytes = upBytes
@@ -272,13 +276,14 @@ func (c *Client) probeConnectionMTU(ctx context.Context, conn *Connection, maxUp
 	result.UploadBytes = upBytes
 	result.UploadChars = upChars
 
-	downOK, downBytes, err := c.testDownloadMTU(ctx, conn, probeTransport, upBytes)
+	downOK, downBytes, downRTT, err := c.testDownloadMTU(ctx, conn, probeTransport, upBytes)
 	if err != nil || !downOK {
 		conn.IsValid = false
 		result.DownloadBytes = downBytes
 		return result, mtuRejectDownload
 	}
 	result.DownloadBytes = downBytes
+	result.ResolveTime = averageMTUProbeRTT(upRTT, downRTT)
 	return result, mtuRejectNone
 }
 
@@ -293,9 +298,9 @@ func (c *Client) precomputeUploadCaps() map[string]int {
 	return caps
 }
 
-func (c *Client) testUploadMTU(ctx context.Context, conn *Connection, probeTransport *udpQueryTransport, maxPayload int) (bool, int, int, error) {
+func (c *Client) testUploadMTU(ctx context.Context, conn *Connection, probeTransport *udpQueryTransport, maxPayload int) (bool, int, int, time.Duration, error) {
 	if maxPayload <= 0 {
-		return false, 0, 0, nil
+		return false, 0, 0, 0, nil
 	}
 	if c.log != nil && c.log.Enabled(logger.LevelDebug) {
 		c.log.Debugf("<cyan>[MTU]</cyan> Testing upload MTU for %s", conn.Domain)
@@ -309,47 +314,47 @@ func (c *Client) testUploadMTU(ctx context.Context, conn *Connection, probeTrans
 		maxPayload = maxLimit
 	}
 
-	best := c.binarySearchMTU(
+	best, bestRTT := c.binarySearchMTU(
 		ctx,
 		"upload mtu",
 		c.cfg.MinUploadMTU,
 		maxPayload,
-		func(candidate int, isRetry bool) (bool, error) {
+		func(candidate int, isRetry bool) (bool, time.Duration, error) {
 			return c.sendUploadMTUProbe(ctx, conn, probeTransport, candidate, mtuProbeOptions{
 				IsRetry: isRetry,
 			})
 		},
 	)
 	if best < max(defaultMTUMinFloor, c.cfg.MinUploadMTU) {
-		return false, 0, 0, nil
+		return false, 0, 0, 0, nil
 	}
-	return true, best, c.encodedCharsForPayload(best), nil
+	return true, best, c.encodedCharsForPayload(best), bestRTT, nil
 }
 
-func (c *Client) testDownloadMTU(ctx context.Context, conn *Connection, probeTransport *udpQueryTransport, uploadMTU int) (bool, int, error) {
+func (c *Client) testDownloadMTU(ctx context.Context, conn *Connection, probeTransport *udpQueryTransport, uploadMTU int) (bool, int, time.Duration, error) {
 	if c.log != nil && c.log.Enabled(logger.LevelDebug) {
 		c.log.Debugf("<cyan>[MTU]</cyan> Testing download MTU for %s", conn.Domain)
 	}
-	best := c.binarySearchMTU(
+	best, bestRTT := c.binarySearchMTU(
 		ctx,
 		"download mtu",
 		c.cfg.MinDownloadMTU,
 		c.cfg.MaxDownloadMTU,
-		func(candidate int, isRetry bool) (bool, error) {
+		func(candidate int, isRetry bool) (bool, time.Duration, error) {
 			return c.sendDownloadMTUProbe(ctx, conn, probeTransport, candidate, uploadMTU, mtuProbeOptions{
 				IsRetry: isRetry,
 			})
 		},
 	)
 	if best < max(defaultMTUMinFloor, c.cfg.MinDownloadMTU) {
-		return false, 0, nil
+		return false, 0, 0, nil
 	}
-	return true, best, nil
+	return true, best, bestRTT, nil
 }
 
-func (c *Client) binarySearchMTU(ctx context.Context, label string, minValue, maxValue int, testFn func(int, bool) (bool, error)) int {
+func (c *Client) binarySearchMTU(ctx context.Context, label string, minValue, maxValue int, testFn func(int, bool) (bool, time.Duration, error)) (int, time.Duration) {
 	if maxValue <= 0 {
-		return 0
+		return 0, 0
 	}
 
 	low := max(minValue, defaultMTUMinFloor)
@@ -363,7 +368,7 @@ func (c *Client) binarySearchMTU(ctx context.Context, label string, minValue, ma
 				high,
 			)
 		}
-		return 0
+		return 0, 0
 	}
 	if c.log != nil && c.log.Enabled(logger.LevelDebug) {
 		c.log.Debugf(
@@ -374,29 +379,31 @@ func (c *Client) binarySearchMTU(ctx context.Context, label string, minValue, ma
 		)
 	}
 
-	check := func(value int) bool {
+	check := func(value int) (bool, time.Duration) {
 		ok := false
+		var measuredRTT time.Duration
 		for attempt := 0; attempt < c.mtuTestRetries; attempt++ {
 			if err := ctx.Err(); err != nil {
-				return false
+				return false, 0
 			}
-			passed, err := testFn(value, attempt > 0)
+			passed, rtt, err := testFn(value, attempt > 0)
 			if err != nil && c.log != nil && c.log.Enabled(logger.LevelDebug) {
 				c.log.Debugf("MTU test callable raised for %d: %v", value, err)
 			}
 			if err == nil && passed {
 				ok = true
+				measuredRTT = rtt
 				break
 			}
 		}
-		return ok
+		return ok, measuredRTT
 	}
 
-	if check(high) {
+	if ok, rtt := check(high); ok {
 		if c.log != nil && c.log.Enabled(logger.LevelDebug) {
 			c.log.Debugf("<cyan>[MTU]</cyan> Max MTU %d is valid.", high)
 		}
-		return high
+		return high, rtt
 	}
 	if low == high {
 		if c.log != nil && c.log.Enabled(logger.LevelDebug) {
@@ -405,9 +412,10 @@ func (c *Client) binarySearchMTU(ctx context.Context, label string, minValue, ma
 				low,
 			)
 		}
-		return 0
+		return 0, 0
 	}
-	if !check(low) {
+	lowOK, lowRTT := check(low)
+	if !lowOK {
 		if c.log != nil && c.log.Enabled(logger.LevelDebug) {
 			c.log.Debugf(
 				"<cyan>[MTU]</cyan> Both boundary MTUs failed (min=%d, max=%d). Skipping middle checks.",
@@ -415,19 +423,21 @@ func (c *Client) binarySearchMTU(ctx context.Context, label string, minValue, ma
 				high,
 			)
 		}
-		return 0
+		return 0, 0
 	}
 
 	best := low
+	bestRTT := lowRTT
 	left := low + 1
 	right := high - 1
 	for left <= right {
 		if err := ctx.Err(); err != nil {
-			return 0
+			return 0, 0
 		}
 		mid := (left + right) / 2
-		if check(mid) {
+		if ok, rtt := check(mid); ok {
 			best = mid
+			bestRTT = rtt
 			left = mid + 1
 		} else {
 			right = mid - 1
@@ -436,15 +446,15 @@ func (c *Client) binarySearchMTU(ctx context.Context, label string, minValue, ma
 	if c.log != nil && c.log.Enabled(logger.LevelDebug) {
 		c.log.Debugf("<cyan>[MTU]</cyan> Binary search result: %d", best)
 	}
-	return best
+	return best, bestRTT
 }
 
-func (c *Client) sendUploadMTUProbe(ctx context.Context, conn *Connection, probeTransport *udpQueryTransport, mtuSize int, options mtuProbeOptions) (bool, error) {
+func (c *Client) sendUploadMTUProbe(ctx context.Context, conn *Connection, probeTransport *udpQueryTransport, mtuSize int, options mtuProbeOptions) (bool, time.Duration, error) {
 	if mtuSize < 1+mtuProbeCodeLength {
-		return false, nil
+		return false, 0, nil
 	}
 	if err := ctx.Err(); err != nil {
-		return false, err
+		return false, 0, err
 	}
 	c.logMTUProbe(
 		options.IsRetry,
@@ -456,14 +466,15 @@ func (c *Client) sendUploadMTUProbe(ctx context.Context, conn *Connection, probe
 
 	payload, code, useBase64, err := c.buildMTUProbePayload(mtuSize)
 	if err != nil {
-		return false, err
+		return false, 0, err
 	}
 
 	query, err := c.buildMTUProbeQuery(conn.Domain, Enums.PACKET_MTU_UP_REQ, payload)
 	if err != nil {
-		return false, nil
+		return false, 0, nil
 	}
 
+	startedAt := time.Now()
 	response, err := c.exchangeUDPQuery(probeTransport, query, c.mtuTestTimeout)
 	if err != nil {
 		c.logMTUProbe(
@@ -474,8 +485,9 @@ func (c *Client) sendUploadMTUProbe(ctx context.Context, conn *Connection, probe
 			conn.ResolverLabel,
 			conn.Domain,
 		)
-		return false, nil
+		return false, 0, nil
 	}
+	rtt := time.Since(startedAt)
 
 	packet, err := DnsParser.ExtractVPNResponse(response, useBase64)
 	if err != nil {
@@ -487,7 +499,7 @@ func (c *Client) sendUploadMTUProbe(ctx context.Context, conn *Connection, probe
 			conn.ResolverLabel,
 			conn.Domain,
 		)
-		return false, nil
+		return false, 0, nil
 	}
 	if packet.PacketType != Enums.PACKET_MTU_UP_RES {
 		c.logMTUProbe(
@@ -498,7 +510,7 @@ func (c *Client) sendUploadMTUProbe(ctx context.Context, conn *Connection, probe
 			conn.ResolverLabel,
 			conn.Domain,
 		)
-		return false, nil
+		return false, 0, nil
 	}
 	if len(packet.Payload) != 6 {
 		c.logMTUProbe(
@@ -509,7 +521,7 @@ func (c *Client) sendUploadMTUProbe(ctx context.Context, conn *Connection, probe
 			conn.ResolverLabel,
 			conn.Domain,
 		)
-		return false, nil
+		return false, 0, nil
 	}
 	if binary.BigEndian.Uint32(packet.Payload[:mtuProbeCodeLength]) != code {
 		c.logMTUProbe(
@@ -520,7 +532,7 @@ func (c *Client) sendUploadMTUProbe(ctx context.Context, conn *Connection, probe
 			conn.ResolverLabel,
 			conn.Domain,
 		)
-		return false, nil
+		return false, 0, nil
 	}
 	ok := int(binary.BigEndian.Uint16(packet.Payload[mtuProbeCodeLength:mtuProbeCodeLength+2])) == mtuSize
 	if ok {
@@ -542,15 +554,15 @@ func (c *Client) sendUploadMTUProbe(ctx context.Context, conn *Connection, probe
 			conn.Domain,
 		)
 	}
-	return ok, nil
+	return ok, rtt, nil
 }
 
-func (c *Client) sendDownloadMTUProbe(ctx context.Context, conn *Connection, probeTransport *udpQueryTransport, mtuSize int, uploadMTU int, options mtuProbeOptions) (bool, error) {
+func (c *Client) sendDownloadMTUProbe(ctx context.Context, conn *Connection, probeTransport *udpQueryTransport, mtuSize int, uploadMTU int, options mtuProbeOptions) (bool, time.Duration, error) {
 	if mtuSize < defaultMTUMinFloor {
-		return false, nil
+		return false, 0, nil
 	}
 	if err := ctx.Err(); err != nil {
-		return false, err
+		return false, 0, err
 	}
 	c.logMTUProbe(
 		options.IsRetry,
@@ -562,20 +574,21 @@ func (c *Client) sendDownloadMTUProbe(ctx context.Context, conn *Connection, pro
 
 	effectiveDownloadSize := effectiveDownloadMTUProbeSize(mtuSize)
 	if effectiveDownloadSize < defaultMTUMinFloor {
-		return false, nil
+		return false, 0, nil
 	}
 	requestLen := max(1+mtuProbeCodeLength+2, uploadMTU)
 	payload, code, useBase64, err := c.buildMTUProbePayload(requestLen)
 	if err != nil {
-		return false, err
+		return false, 0, err
 	}
 	binary.BigEndian.PutUint16(payload[1+mtuProbeCodeLength:1+mtuProbeCodeLength+2], uint16(effectiveDownloadSize))
 
 	query, err := c.buildMTUProbeQuery(conn.Domain, Enums.PACKET_MTU_DOWN_REQ, payload)
 	if err != nil {
-		return false, nil
+		return false, 0, nil
 	}
 
+	startedAt := time.Now()
 	response, err := c.exchangeUDPQuery(probeTransport, query, c.mtuTestTimeout)
 	if err != nil {
 		c.logMTUProbe(
@@ -586,8 +599,9 @@ func (c *Client) sendDownloadMTUProbe(ctx context.Context, conn *Connection, pro
 			conn.ResolverLabel,
 			conn.Domain,
 		)
-		return false, nil
+		return false, 0, nil
 	}
+	rtt := time.Since(startedAt)
 
 	packet, err := DnsParser.ExtractVPNResponse(response, useBase64)
 	if err != nil {
@@ -599,7 +613,7 @@ func (c *Client) sendDownloadMTUProbe(ctx context.Context, conn *Connection, pro
 			conn.ResolverLabel,
 			conn.Domain,
 		)
-		return false, nil
+		return false, 0, nil
 	}
 
 	if packet.PacketType != Enums.PACKET_MTU_DOWN_RES {
@@ -611,7 +625,7 @@ func (c *Client) sendDownloadMTUProbe(ctx context.Context, conn *Connection, pro
 			conn.ResolverLabel,
 			conn.Domain,
 		)
-		return false, nil
+		return false, 0, nil
 	}
 	if len(packet.Payload) != effectiveDownloadSize {
 		c.logMTUProbe(
@@ -622,7 +636,7 @@ func (c *Client) sendDownloadMTUProbe(ctx context.Context, conn *Connection, pro
 			conn.ResolverLabel,
 			conn.Domain,
 		)
-		return false, nil
+		return false, 0, nil
 	}
 	if len(packet.Payload) < 1+mtuProbeCodeLength+1 {
 		c.logMTUProbe(
@@ -633,7 +647,7 @@ func (c *Client) sendDownloadMTUProbe(ctx context.Context, conn *Connection, pro
 			conn.ResolverLabel,
 			conn.Domain,
 		)
-		return false, nil
+		return false, 0, nil
 	}
 	if binary.BigEndian.Uint32(packet.Payload[:mtuProbeCodeLength]) != code {
 		c.logMTUProbe(
@@ -644,7 +658,7 @@ func (c *Client) sendDownloadMTUProbe(ctx context.Context, conn *Connection, pro
 			conn.ResolverLabel,
 			conn.Domain,
 		)
-		return false, nil
+		return false, 0, nil
 	}
 	ok := int(binary.BigEndian.Uint16(packet.Payload[mtuProbeCodeLength:mtuProbeCodeLength+2])) == effectiveDownloadSize
 	if ok {
@@ -666,7 +680,7 @@ func (c *Client) sendDownloadMTUProbe(ctx context.Context, conn *Connection, pro
 			conn.Domain,
 		)
 	}
-	return ok, nil
+	return ok, rtt, nil
 }
 
 func (c *Client) buildMTUProbeQuery(domain string, packetType uint8, payload []byte) ([]byte, error) {
@@ -749,6 +763,22 @@ func (c *Client) buildMTUProbePayload(length int) ([]byte, uint32, bool, error) 
 	binary.BigEndian.PutUint32(payload[1:1+mtuProbeCodeLength], code)
 
 	return payload, code, useBase64, nil
+}
+
+func averageMTUProbeRTT(values ...time.Duration) time.Duration {
+	var sum time.Duration
+	count := 0
+	for _, value := range values {
+		if value <= 0 {
+			continue
+		}
+		sum += value
+		count++
+	}
+	if count == 0 {
+		return 0
+	}
+	return sum / time.Duration(count)
 }
 
 func summarizeValidMTUConnections(connections []Connection) (validConns []Connection, minUpload int, minDownload int, minUploadChars int) {

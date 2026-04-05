@@ -11,7 +11,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -127,16 +126,14 @@ fun MetaProfileEditScreen(
                     OutlinedTextField(
                         value = socksPortText,
                         onValueChange = { v ->
-                            socksPortText = v.filter { it.isDigit() }.take(5)
+                            val filtered = v.filter { it.isDigit() }.take(5)
+                            socksPortText = filtered
+                            val port = filtered.toIntOrNull() ?: 0
+                            vm.update { copy(socksPort = port.coerceIn(0, 65535)) }
                         },
                         label = { Text("SOCKS Output Port (0 = auto-assign)") },
                         placeholder = { Text("e.g. 1080") },
-                        modifier = Modifier.fillMaxWidth().onFocusChanged { focus ->
-                            if (!focus.isFocused) {
-                                val port = socksPortText.toIntOrNull() ?: 0
-                                vm.update { copy(socksPort = port.coerceIn(0, 65535)) }
-                            }
-                        },
+                        modifier = Modifier.fillMaxWidth(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,
                         textStyle = MaterialTheme.typography.bodyLarge.copy(color = TextPrimary),

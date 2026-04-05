@@ -120,6 +120,7 @@ class DnsTunnelVpnService : VpnService() {
                         val dir = "${filesDir.absolutePath}/profiles/${p.id}"
                         java.io.File(dir).mkdirs()
                         val cfg = ProfileConfigMapper.toMobileConfig(p)
+                        if (p.identityLocked) bridge.setLockedDomains(p.id, p.domains.split(","))
                         bridge.startInstance(p.id, dir, cfg, p.resolversText)
                         tunnelStateManager.onTunnelStarted(p.id)
                         upstreamAddrs.add("${cfg.listenIP}:${cfg.listenPort}")
@@ -212,6 +213,7 @@ class DnsTunnelVpnService : VpnService() {
                     logManager.appendSystem(LogLevel.INFO, "VPN service starting: ${profile.name}")
 
                     val cfg = ProfileConfigMapper.toMobileConfig(profile)
+                    if (profile.identityLocked) bridge.setLockedDomains(profile.id, profile.domains.split(","))
                     bridge.startInstance(
                         profileId = profile.id,
                         profileDir = profileDir,
@@ -273,6 +275,7 @@ class DnsTunnelVpnService : VpnService() {
             if (activeMetaId != null) {
                 for (subId in activeSubProfileIds) {
                     try { bridge.stopInstance(subId) } catch (_: Exception) {}
+                    bridge.clearLockedDomains(subId)
                     tunnelStateManager.onTunnelStopped(subId)
                 }
                 tunnelStateManager.onMetaStopped(activeMetaId!!)
@@ -283,6 +286,7 @@ class DnsTunnelVpnService : VpnService() {
             // Stop single profile if running
             activeProfileId?.let { pid ->
                 try { bridge.stopInstance(pid) } catch (_: Exception) {}
+                bridge.clearLockedDomains(pid)
                 tunnelStateManager.onTunnelStopped(pid)
                 activeProfileId = null
             }

@@ -1,9 +1,13 @@
 package com.masterdnsvpn.ui.screens
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -15,9 +19,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.animation.core.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -341,10 +347,19 @@ fun HomeScreen(
                         )
                     }
                     items(uiState.metaProfiles, key = { "meta_${it.id}" }) { meta ->
+                        val subIds = remember(meta.profileIds) {
+                            meta.profileIds.split(",").filter { it.isNotBlank() }
+                        }
+                        val metaIsReady = remember(monitorState.activeProfiles, subIds) {
+                            subIds.any { sid ->
+                                monitorState.activeProfiles.any { it.profile.id == sid && it.stats?.sessionReady == true }
+                            }
+                        }
                         MetaProfileCard(
                             meta = meta,
                             isRunning = uiState.runningMetaIds.contains(meta.id),
                             isBusy = uiState.busyIds.contains(meta.id),
+                            isReady = metaIsReady,
                             onStart = { vm.connectMetaProfile(ctx, meta) },
                             onStop = { vm.disconnectMetaProfile(ctx, meta.id) },
                             onEdit = { onEditMetaProfile(meta.id) },
@@ -543,6 +558,38 @@ private fun ProfileCard(
     LaunchedEffect(isRunning, isBusy) { localBusy = false }
     val effectiveBusy = localBusy || isBusy
 
+    // Scanning = tunnel started but session not ready yet
+    val isScanning = isRunning && monitorInfo?.stats?.sessionReady != true
+    val isReady = isRunning && monitorInfo?.stats?.sessionReady == true
+
+    // Vibrate once when session transitions to ready.
+    // rememberSaveable survives navigation so it won't re-fire on back-nav.
+    // LaunchedEffect also reacts to isRunning so prevReady is cleared when
+    // the profile stops, allowing vibration to fire again on next reconnect.
+    val ctx = LocalContext.current
+    var prevReady by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(isRunning, isReady) {
+        if (!isRunning) {
+            prevReady = false
+        } else if (isReady && !prevReady) {
+            try {
+                @Suppress("DEPRECATION")
+                val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    (ctx.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as android.os.VibratorManager).defaultVibrator
+                } else {
+                    ctx.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    vibrator.vibrate(VibrationEffect.createOneShot(120, VibrationEffect.DEFAULT_AMPLITUDE))
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator.vibrate(120)
+                }
+            } catch (_: Exception) { /* vibrate is optional — never crash */ }
+            prevReady = true
+        }
+    }
+
     if (showDeleteDialog) {
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
@@ -560,15 +607,27 @@ private fun ProfileCard(
     GlassCard {
         Column {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                // Status indicator
+                // Status indicator — blinks orange while scanning, solid green when ready
+                val scanTransition = rememberInfiniteTransition(label = "dot_blink")
+                val scanAlpha by scanTransition.animateFloat(
+                    initialValue = 1f,
+                    targetValue = 0.15f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(500, easing = LinearEasing),
+                        repeatMode = RepeatMode.Reverse,
+                    ),
+                    label = "dot_alpha",
+                )
+                val dotColor = when {
+                    isBusy -> Color(0xFFFFAA00)
+                    isScanning -> Color(0xFFFFAA00)
+                    isReady -> GreenOnline
+                    else -> TextSecondary.copy(alpha = 0.3f)
+                }
                 Icon(
                     Icons.Default.Circle,
                     contentDescription = null,
-                    tint = when {
-                        isBusy -> Color(0xFFFFAA00)
-                        isRunning -> GreenOnline
-                        else -> TextSecondary.copy(alpha = 0.3f)
-                    },
+                    tint = if (isScanning) dotColor.copy(alpha = scanAlpha) else dotColor,
                     modifier = Modifier.size(12.dp),
                 )
                 Spacer(Modifier.width(10.dp))
@@ -579,16 +638,36 @@ private fun ProfileCard(
                         fontWeight = FontWeight.SemiBold,
                         color = TextPrimary,
                     )
+                    // Animated dots: Scanning. → Scanning.. → Scanning... → Scanning.
+                    var scanDots by remember { mutableIntStateOf(1) }
+                    LaunchedEffect(isScanning) {
+                        if (isScanning) {
+                            while (true) {
+                                kotlinx.coroutines.delay(400)
+                                scanDots = if (scanDots >= 3) 1 else scanDots + 1
+                            }
+                        } else {
+                            scanDots = 1
+                        }
+                    }
                     Text(
                         buildString {
                             append(profile.tunnelMode)
-                            if (isBusy) append(" - Processing...")
-                            else if (isRunning) append(" - Connected")
-                            else if (profile.identityLocked) append(" - \uD83D\uDD12 Locked")
-                            else append(" - ${profile.domains.take(40).ifEmpty { "no domains" }}")
+                            when {
+                                isBusy -> append(" - Processing...")
+                                isScanning -> append(" - Scanning" + ".".repeat(scanDots))
+                                isReady -> append(" - Connected")
+                                profile.identityLocked -> append(" - \uD83D\uDD12 Locked")
+                                else -> append(" - ${profile.domains.take(40).ifEmpty { "no domains" }}")
+                            }
                         },
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (isBusy) Color(0xFFFFAA00) else TextSecondary,
+                        color = when {
+                            isBusy -> Color(0xFFFFAA00)
+                            isScanning -> Color(0xFFFFAA00)
+                            isReady -> GreenOnline
+                            else -> TextSecondary
+                        },
                         fontSize = 11.sp,
                     )
                 }
@@ -658,8 +737,10 @@ private fun ProfileCard(
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text("Resolvers", color = TextSecondary, fontSize = 9.sp)
                             val valid = stats?.validResolverCount ?: 0
-                            val total = remember(profile.resolversText) {
-                                profile.resolversText.lines().count { it.isNotBlank() }
+                            val total = remember(profile.resolversText, profile.domains) {
+                                val resolvers = profile.resolversText.lines().count { it.isNotBlank() }
+                                val domainCount = profile.domains.split(",").count { it.isNotBlank() }.coerceAtLeast(1)
+                                resolvers * domainCount
                             }
                             Text(
                                 "$valid/$total",
@@ -772,6 +853,7 @@ private fun MetaProfileCard(
     meta: MetaProfileEntity,
     isRunning: Boolean,
     isBusy: Boolean,
+    isReady: Boolean,
     onStart: () -> Unit,
     onStop: () -> Unit,
     onEdit: () -> Unit,
@@ -781,6 +863,9 @@ private fun MetaProfileCard(
     var localBusy by remember { mutableStateOf(false) }
     LaunchedEffect(isRunning, isBusy) { localBusy = false }
     val effectiveBusy = localBusy || isBusy
+
+    // Scanning = running but no sub-profile is sessionReady yet
+    val isScanning = isRunning && !isReady
 
     if (showDeleteDialog) {
         AlertDialog(
@@ -799,12 +884,24 @@ private fun MetaProfileCard(
     GlassCard {
         Column {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                // Status dot — blinks orange while scanning, solid green when ready
+                val scanTransition = rememberInfiniteTransition(label = "meta_dot_blink")
+                val scanAlpha by scanTransition.animateFloat(
+                    initialValue = 1f,
+                    targetValue = 0.15f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(600, easing = LinearEasing),
+                        repeatMode = RepeatMode.Reverse,
+                    ),
+                    label = "meta_dot_alpha",
+                )
                 Icon(
                     Icons.Default.Circle,
                     contentDescription = null,
                     tint = when {
+                        isScanning -> Color(0xFFFFAA00).copy(alpha = scanAlpha)
                         isBusy -> Color(0xFFFFAA00)
-                        isRunning -> GreenOnline
+                        isReady -> GreenOnline
                         else -> TextSecondary.copy(alpha = 0.3f)
                     },
                     modifier = Modifier.size(12.dp),
@@ -827,14 +924,32 @@ private fun MetaProfileCard(
                         else -> "Default"
                     }
                     val count = meta.profileIds.split(",").filter { it.isNotBlank() }.size
+
+                    // Animated "Scanning…" text while waiting for sub-profiles
+                    val scanDots by scanTransition.animateFloat(
+                        initialValue = 0f,
+                        targetValue = 3f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(1200, easing = LinearEasing),
+                            repeatMode = RepeatMode.Restart,
+                        ),
+                        label = "meta_scan_dots",
+                    )
+                    val dotsStr = ".".repeat(scanDots.toInt() + 1)
+
                     Text(
                         buildString {
                             append("${meta.tunnelMode} - $strategy - $count profiles")
-                            if (isBusy) append(" - Processing...")
-                            else if (isRunning) append(" - Active")
+                            if (isScanning) append(" - Scanning$dotsStr")
+                            else if (isBusy) append(" - Processing...")
+                            else if (isReady) append(" - Active")
                         },
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (isBusy) Color(0xFFFFAA00) else TextSecondary,
+                        color = when {
+                            isScanning -> Color(0xFFFFAA00)
+                            isBusy -> Color(0xFFFFAA00)
+                            else -> TextSecondary
+                        },
                         fontSize = 11.sp,
                     )
                 }

@@ -265,6 +265,17 @@ func (b *Balancer) ResetServerStats(serverKey string) {
 	stats.mu.Unlock()
 }
 
+func (b *Balancer) AverageRTT(serverKey string) (time.Duration, bool) {
+	stats := b.statsForKey(serverKey)
+	if stats == nil {
+		return 0, false
+	}
+	_, _, sum, count := stats.snapshot()
+	if count == 0 {
+		return 0, false
+	}
+	return time.Duration(sum/count) * time.Microsecond, true
+}
 // SeedConservativeStats initialises a re-activated resolver with a moderate
 // loss score so the balancer does not flood it before it has proven reliability.
 // Score = (10-8)*1000/10 = 200, below neutral (500) but not as good as healthy

@@ -112,8 +112,7 @@ object TomlConfigMapper {
             mtuRemovedServerLogFormat = str("MTU_REMOVED_SERVER_LOG_FORMAT") ?: base.mtuRemovedServerLogFormat,
             mtuAddedServerLogFormat = str("MTU_ADDED_SERVER_LOG_FORMAT") ?: base.mtuAddedServerLogFormat,
             // Section 7 Workers
-            tunnelReaderWorkers = int("TUNNEL_READER_WORKERS") ?: base.tunnelReaderWorkers,
-            tunnelWriterWorkers = int("TUNNEL_WRITER_WORKERS") ?: base.tunnelWriterWorkers,
+            rxTxWorkers = int("RX_TX_WORKERS") ?: maxOf(int("TUNNEL_READER_WORKERS") ?: 0, int("TUNNEL_WRITER_WORKERS") ?: 0).takeIf { it > 0 } ?: base.rxTxWorkers,
             tunnelProcessWorkers = int("TUNNEL_PROCESS_WORKERS") ?: base.tunnelProcessWorkers,
             tunnelPacketTimeoutSec = dbl("TUNNEL_PACKET_TIMEOUT_SECONDS") ?: base.tunnelPacketTimeoutSec,
             dispatcherIdlePollIntervalSeconds = dbl("DISPATCHER_IDLE_POLL_INTERVAL_SECONDS") ?: base.dispatcherIdlePollIntervalSeconds,
@@ -317,8 +316,7 @@ object TomlConfigMapper {
             appendLine("# 7) Runtime Workers, Queues, and Timers")
             appendLine("# ------------------------------------------------------------------------------")
             appendLine()
-            appendLine("TUNNEL_READER_WORKERS = ${p.tunnelReaderWorkers}")
-            appendLine("TUNNEL_WRITER_WORKERS = ${p.tunnelWriterWorkers}")
+            appendLine("RX_TX_WORKERS = ${p.rxTxWorkers}")
             appendLine("TUNNEL_PROCESS_WORKERS = ${p.tunnelProcessWorkers}")
             appendLine()
             appendLine("TUNNEL_PACKET_TIMEOUT_SECONDS = ${d(p.tunnelPacketTimeoutSec)}")
@@ -410,16 +408,40 @@ object TomlConfigMapper {
      */
     private fun parseToml(toml: String): Map<String, String> {
         val result = mutableMapOf<String, String>()
+        var inArray = false
+        var arrayKey = ""
+        val arrayBuf = StringBuilder()
+
         for (rawLine in toml.lineSequence()) {
+            // Continuation of a multiline array
+            if (inArray) {
+                arrayBuf.append(rawLine.trim())
+                if (rawLine.contains(']')) {
+                    result[arrayKey] = stripInlineComment(arrayBuf.toString())
+                    inArray = false
+                    arrayKey = ""
+                    arrayBuf.clear()
+                }
+                continue
+            }
+
             val line = rawLine.trim()
             if (line.isEmpty() || line.startsWith("#")) continue
             val eqIdx = line.indexOf('=')
             if (eqIdx < 1) continue
             val key = line.substring(0, eqIdx).trim()
             val value = line.substring(eqIdx + 1).trim()
-            // strip inline comment (outside strings/arrays)
-            val clean = stripInlineComment(value)
-            result[key] = clean
+
+            // Multiline array: starts with '[' but closing ']' is on a later line
+            if (value.startsWith('[') && !value.contains(']')) {
+                inArray = true
+                arrayKey = key
+                arrayBuf.setLength(0)
+                arrayBuf.append(value)
+                continue
+            }
+
+            result[key] = stripInlineComment(value)
         }
         return result
     }

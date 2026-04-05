@@ -23,4 +23,6 @@ sealed class Screen(val route: String) {
     }
 
     data object Settings : Screen("settings")
+    data object PerAppVpn : Screen("per_app_vpn")
+    data object Update : Screen("update")
 }

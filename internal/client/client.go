@@ -101,11 +101,11 @@ type Client struct {
 	// Async Runtime Workers & Channels
 	asyncWG              sync.WaitGroup
 	asyncCancel          context.CancelFunc
-	tunnelConn           *net.UDPConn
+	tunnelConns          []*net.UDPConn
 	txChannel            chan rawOutboundTask
+	encodedTXChannel     chan encodedOutboundTask
 	rxChannel            chan asyncReadPacket
-	tunnelReaderWorkers  int
-	tunnelWriterWorkers  int
+	tunnelRX_TX_Workers  int
 	tunnelProcessWorkers int
 	tunnelPacketTimeout  time.Duration
 
@@ -170,6 +170,19 @@ type rawOutboundTask struct {
 	conns      []Connection
 }
 
+type encodedOutboundDatagram struct {
+	addr      *net.UDPAddr
+	serverKey string
+	packet    []byte
+}
+
+type encodedOutboundTask struct {
+	wasPacked bool
+	item      *clientStreamTXPacket
+	selected  *Stream_client
+	frames    []encodedOutboundDatagram
+}
+
 // Connection represents a unique domain-resolver pair with its associated metadata and MTU states.
 type Connection struct {
 	Domain           string
@@ -181,6 +194,7 @@ type Connection struct {
 	UploadMTUBytes   int
 	UploadMTUChars   int
 	DownloadMTUBytes int
+	MTUResolveTime   time.Duration
 }
 
 // Bootstrap initializes a new Client by loading configuration, setting up logging,
@@ -254,11 +268,11 @@ func New(cfg config.ClientConfig, log *logger.Logger, codec *security.Codec) *Cl
 		streamResolverFailoverCooldown:        time.Duration(cfg.StreamResolverFailoverCooldownSec * float64(time.Second)),
 
 		// Workers config
-		tunnelReaderWorkers:   cfg.TunnelReaderWorkers,
-		tunnelWriterWorkers:   cfg.TunnelWriterWorkers,
+		tunnelRX_TX_Workers:   cfg.RX_TX_Workers,
 		tunnelProcessWorkers:  cfg.TunnelProcessWorkers,
 		tunnelPacketTimeout:   time.Duration(cfg.TunnelPacketTimeoutSec * float64(time.Second)),
 		txChannel:             make(chan rawOutboundTask, cfg.TXChannelSize),
+		encodedTXChannel:      make(chan encodedOutboundTask, max(24, cfg.RX_TX_Workers*24)),
 		rxChannel:             make(chan asyncReadPacket, cfg.RXChannelSize),
 		active_streams:        make(map[uint16]*Stream_client),
 		recentlyClosedStreams: make(map[uint16]time.Time),

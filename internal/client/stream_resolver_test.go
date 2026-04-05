@@ -182,8 +182,8 @@ func TestSelectTargetConnectionsForPacketAppliesDuplicationCountToPing(t *testin
 	if err != nil {
 		t.Fatalf("packet %s: unexpected error: %v", Enums.PacketTypeName(Enums.PACKET_PING), err)
 	}
-	if len(selected) != 3 {
-		t.Fatalf("packet %s: expected duplication count to apply, got=%d", Enums.PacketTypeName(Enums.PACKET_PING), len(selected))
+	if len(selected) != 2 {
+		t.Fatalf("packet %s: expected duplication count to be capped at 2, got=%d", Enums.PacketTypeName(Enums.PACKET_PING), len(selected))
 	}
 }
 

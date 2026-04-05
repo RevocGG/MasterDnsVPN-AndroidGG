@@ -68,9 +68,22 @@ private fun MainNavHost() {
                 LogViewerScreen()
             }
 
-            // Settings — per-app VPN selection
+            // Settings — menu
             composable(Screen.Settings.route) {
-                SettingsScreen()
+                SettingsScreen(
+                    onNavigateToPerAppVpn = { navController.navigate(Screen.PerAppVpn.route) },
+                    onNavigateToUpdate = { navController.navigate(Screen.Update.route) },
+                )
+            }
+
+            // Per-app VPN selection
+            composable(Screen.PerAppVpn.route) {
+                PerAppVpnScreen(onNavigateUp = { navController.popBackStack() })
+            }
+
+            // Update screen
+            composable(Screen.Update.route) {
+                UpdateScreen(onNavigateUp = { navController.popBackStack() })
             }
 
             // Profile create / edit

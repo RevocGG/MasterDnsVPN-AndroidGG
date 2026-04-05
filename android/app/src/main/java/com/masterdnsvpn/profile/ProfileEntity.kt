@@ -45,7 +45,7 @@ data class ProfileEntity(
     // Section 3: Local DNS
     val localDnsEnabled: Boolean = false,
     val localDnsIP: String = "127.0.0.1",
-    val localDnsPort: Int = 53,
+    val localDnsPort: Int = 5353,
     val localDnsCacheMaxRecords: Int = 10000,
     val localDnsCacheTtlSeconds: Double = 14400.0,
     val localDnsPendingTimeoutSec: Double = 300.0,
@@ -57,18 +57,18 @@ data class ProfileEntity(
     val resolverBalancingStrategy: Int = 0,
     val packetDuplicationCount: Int = 2,
     val setupPacketDuplicationCount: Int = 2,
-    val streamResolverFailoverResendThreshold: Int = 3,
-    val streamResolverFailoverCooldownSec: Double = 8.0,
+    val streamResolverFailoverResendThreshold: Int = 2,
+    val streamResolverFailoverCooldownSec: Double = 2.5,
 
     // Section 5: Resolver Health
     val recheckInactiveServersEnabled: Boolean = true,
     val recheckInactiveIntervalSeconds: Double = 60.0,
     val recheckServerIntervalSeconds: Double = 3.0,
-    val recheckBatchSize: Int = 5,
+    val recheckBatchSize: Int = 10,
     val autoDisableTimeoutServers: Boolean = true,
-    val autoDisableTimeoutWindowSeconds: Double = 90.0,
-    val autoDisableMinObservations: Int = 8,
-    val autoDisableCheckIntervalSeconds: Double = 4.0,
+    val autoDisableTimeoutWindowSeconds: Double = 30.0,
+    val autoDisableMinObservations: Int = 5,
+    val autoDisableCheckIntervalSeconds: Double = 2.0,
 
     // Section 6: Encoding/Compression
     val baseEncodeData: Boolean = false,
@@ -86,8 +86,7 @@ data class ProfileEntity(
     val mtuTestParallelism: Int = 32,
 
     // Section 8: Workers & Timeouts
-    val tunnelReaderWorkers: Int = 2,
-    val tunnelWriterWorkers: Int = 2,
+    val rxTxWorkers: Int = 6,
     val tunnelProcessWorkers: Int = 2,
     val tunnelPacketTimeoutSec: Double = 10.0,
     val dispatcherIdlePollIntervalSeconds: Double = 0.020,
@@ -119,6 +118,7 @@ data class ProfileEntity(
 
     // Section 11: MTU files
     val saveMtuServersToFile: Boolean = false,
+    val mtuServersFileDir: String = "",  // empty = use internal profile dir; set to absolute path for accessible output
     val mtuServersFileName: String = "masterdnsvpn_success_test_{time}.log",
     val mtuServersFileFormat: String = "{IP} - UP: {UP_MTU} DOWN: {DOWN-MTU}",
     val mtuUsingSeparatorText: String = "",

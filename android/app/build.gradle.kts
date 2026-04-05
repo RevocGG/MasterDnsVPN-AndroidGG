@@ -18,8 +18,8 @@ android {
         targetSdk = 35
         // Read from Gradle properties injected by CI (-PversionCode=X -PversionName=Y)
         // Fallback to hardcoded values for local development.
-        versionCode = (project.findProperty("versionCode") as? String)?.toIntOrNull() ?: 4
-        versionName = project.findProperty("versionName") as? String ?: "1.0.3"
+        versionCode = (project.findProperty("versionCode") as? String)?.toIntOrNull() ?: 5
+        versionName = project.findProperty("versionName") as? String ?: "1.0.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

@@ -108,6 +108,22 @@ func TestResolverHealthRecheckReactivatesConnection(t *testing.T) {
 
 	waitForResolverHealthCondition(t, 500*time.Millisecond, func() bool {
 		conn, ok := c.GetConnectionByKey("a")
+		if !ok || conn.IsValid {
+			return false
+		}
+		c.resolverHealthMu.Lock()
+		defer c.resolverHealthMu.Unlock()
+		state, disabled := c.runtimeDisabled["a"]
+		meta := c.resolverRecheck["a"]
+		return disabled && state.SuccessCount == 1 && !meta.InFlight && meta.NextAt.After(now)
+	}, "expected first successful recheck to keep runtime-disabled resolver invalid")
+
+	now = now.Add(3 * time.Second)
+	c.nowFn = func() time.Time { return now }
+	c.runResolverRecheckBatch(context.Background(), now)
+
+	waitForResolverHealthCondition(t, 500*time.Millisecond, func() bool {
+		conn, ok := c.GetConnectionByKey("a")
 		return ok && conn.IsValid
 	}, "expected recheck to reactivate resolver")
 
@@ -181,6 +197,22 @@ func TestResolverHealthRecheckUsesSnapshotUpdateInsteadOfMutatingSharedConnectio
 		return conn.Key == "a"
 	}
 
+	c.runResolverRecheckBatch(context.Background(), now)
+
+	waitForResolverHealthCondition(t, 500*time.Millisecond, func() bool {
+		conn, ok := c.GetConnectionByKey("a")
+		if !ok || conn.IsValid {
+			return false
+		}
+		c.resolverHealthMu.Lock()
+		defer c.resolverHealthMu.Unlock()
+		state, disabled := c.runtimeDisabled["a"]
+		meta := c.resolverRecheck["a"]
+		return disabled && state.SuccessCount == 1 && !meta.InFlight && meta.NextAt.After(now)
+	}, "expected first successful recheck to keep runtime-disabled resolver invalid")
+
+	now = now.Add(3 * time.Second)
+	c.nowFn = func() time.Time { return now }
 	c.runResolverRecheckBatch(context.Background(), now)
 
 	waitForResolverHealthCondition(t, 500*time.Millisecond, func() bool {
@@ -752,7 +784,7 @@ func TestLateResolverSuccessRetractsPriorTimeoutEvent(t *testing.T) {
 	}
 
 	c.collectExpiredResolverTimeouts(timeoutAt)
-	c.trackResolverSuccess([]byte{0x00, 0x4d}, &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 5350}, receivedAt)
+	c.trackResolverSuccess([]byte{0x00, 0x4d}, &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 5350}, "", receivedAt)
 
 	c.resolverHealthMu.Lock()
 	state := c.resolverHealth["a"]
