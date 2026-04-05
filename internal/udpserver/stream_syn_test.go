@@ -625,6 +625,17 @@ func TestDeferredSessionProcessorSessionCapRejectsExcessSingleSessionLoad(t *tes
 	}
 }
 
+func TestDeferredSessionProcessorSessionCapScalesForDNSSizedQueue(t *testing.T) {
+	processor := newDeferredSessionProcessor(1, 256, nil)
+	if processor == nil {
+		t.Fatal("expected deferred processor")
+	}
+
+	if got := processor.sessionCap(); got != 128 {
+		t.Fatalf("expected dns-sized deferred session cap of 128, got %d", got)
+	}
+}
+
 func TestDeferredSessionProcessorFastFailsWhenWorkerQueueIsFull(t *testing.T) {
 	processor := newDeferredSessionProcessor(1, 1, nil)
 	if processor == nil {

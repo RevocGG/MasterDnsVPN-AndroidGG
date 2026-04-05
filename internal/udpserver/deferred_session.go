@@ -46,6 +46,32 @@ type deferredSessionProcessor struct {
 	nextWorker         int
 }
 
+func deriveDeferredSessionPendingCap(workerCount int, queueLimit int) int32 {
+	if workerCount <= 0 {
+		workerCount = 1
+	}
+
+	if queueLimit < 1 {
+		queueLimit = 256
+	}
+
+	// Keep the per-session cap comfortably below the total queue budget, but
+	// large enough that one busy session does not trip overflow logs long before
+	// the processor itself is under real pressure.
+	capGuess := min(max(queueLimit/2, 32), 1024)
+
+	totalCapacity := workerCount * queueLimit
+	if capGuess > totalCapacity {
+		capGuess = totalCapacity
+	}
+
+	if capGuess < 8 {
+		capGuess = 8
+	}
+
+	return int32(capGuess)
+}
+
 func newDeferredSessionProcessor(workerCount int, queueLimit int, log *logger.Logger) *deferredSessionProcessor {
 	if workerCount <= 0 {
 		return nil
@@ -72,7 +98,7 @@ func newDeferredSessionProcessor(workerCount int, queueLimit int, log *logger.Lo
 		cancelled:         make(map[deferredSessionLane]struct{}, 128),
 		running:           make(map[deferredSessionLane]context.CancelFunc, 128),
 		sessionPending:    make(map[uint8]int32, 64),
-		sessionPendingCap: int32(max(8, workerCount*4)),
+		sessionPendingCap: deriveDeferredSessionPendingCap(workerCount, queueLimit),
 	}
 }
 
