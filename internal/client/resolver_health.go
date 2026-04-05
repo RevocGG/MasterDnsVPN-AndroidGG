@@ -408,7 +408,7 @@ func (c *Client) disableResolverConnection(serverKey string, cause string) bool 
 	c.balancer.ResetServerStats(serverKey)
 	if c.log != nil {
 		c.log.Warnf(
-			"\U0001F6D1 <yellow>DNS server <cyan>%s</cyan> disabled due to: <red>%s</red></yellow> <magenta>|</magenta> <blue>Active Resolvers</blue>: <cyan>%d</cyan>",
+			"\U0001F6D1 <yellow>DNS server <cyan>%s</cyan> disabled due to: <red>%s</red></yellow> <magenta>|</magenta> <green>Active Resolvers</green>: <cyan>%d</cyan>",
 			conn.ResolverLabel,
 			cause,
 			c.activeResolverCount(),
@@ -482,7 +482,7 @@ func (c *Client) reactivateResolverConnection(serverKey string) bool {
 	c.balancer.SeedConservativeStats(serverKey)
 	if c.log != nil {
 		c.log.Infof(
-			"\U0001F504 <green>DNS server <cyan>%s</cyan> re-activated after successful recheck.</green> <magenta>|</magenta> <blue>Active Resolvers</blue>: <cyan>%d</cyan>",
+			"\U0001F504 <green>DNS server <cyan>%s</cyan> re-activated after successful recheck.</green> <magenta>|</magenta> <green>Active Resolvers</green>: <cyan>%d</cyan>",
 			conn.ResolverLabel,
 			c.activeResolverCount(),
 		)
@@ -764,7 +764,7 @@ func (c *Client) recheckResolverConnection(ctx context.Context, conn *Connection
 		if err := ctx.Err(); err != nil {
 			return false
 		}
-		passed, err := c.sendUploadMTUProbe(ctx, conn, transport, c.syncedUploadMTU, mtuProbeOptions{Quiet: true, IsRetry: attempt > 0})
+		passed, _, err := c.sendUploadMTUProbe(ctx, conn, transport, c.syncedUploadMTU, mtuProbeOptions{Quiet: true, IsRetry: attempt > 0})
 		if err == nil && passed {
 			upOK = true
 			break
@@ -779,7 +779,7 @@ func (c *Client) recheckResolverConnection(ctx context.Context, conn *Connection
 		if err := ctx.Err(); err != nil {
 			return false
 		}
-		passed, err := c.sendDownloadMTUProbe(ctx, conn, transport, c.syncedDownloadMTU, c.syncedUploadMTU, mtuProbeOptions{Quiet: true, IsRetry: attempt > 0})
+		passed, _, err := c.sendDownloadMTUProbe(ctx, conn, transport, c.syncedDownloadMTU, c.syncedUploadMTU, mtuProbeOptions{Quiet: true, IsRetry: attempt > 0})
 		if err == nil && passed {
 			downOK = true
 			break

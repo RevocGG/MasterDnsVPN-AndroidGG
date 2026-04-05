@@ -385,6 +385,20 @@ func (b *Balancer) GetAllValidConnections() []Connection {
 	return snapshotConnections(snap.connections, snap.valid)
 }
 
+func (b *Balancer) AverageRTT(serverKey string) (time.Duration, bool) {
+	stats := b.statsForKey(serverKey)
+	if stats == nil {
+		return 0, false
+	}
+
+	_, _, sum, count := stats.snapshot()
+	if count == 0 {
+		return 0, false
+	}
+
+	return time.Duration(sum/count) * time.Microsecond, true
+}
+
 func rebuildValidIndices(connections []Connection) []int {
 	valid := make([]int, 0, len(connections))
 	for idx := range connections {

@@ -181,6 +181,7 @@ type Connection struct {
 	UploadMTUBytes   int
 	UploadMTUChars   int
 	DownloadMTUBytes int
+	MTUResolveTime   time.Duration
 }
 
 // Bootstrap initializes a new Client by loading configuration, setting up logging,
