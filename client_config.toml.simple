@@ -283,6 +283,11 @@ SESSION_INIT_RETRY_MAX_SECONDS = 60.0
 # Clamped to [1s, 3600s].
 SESSION_INIT_BUSY_RETRY_INTERVAL_SECONDS = 60.0
 
+# Concurrent racing session initialization attempts.
+# Higher values improve reliability on unstable networks but increase DNS traffic.
+# Clamped to [1, 5].
+SESSION_INIT_RACING_COUNT = 3
+
 # Ping/keepalive pacing.
 # These control how aggressively the client sends ping traffic depending on
 # recent activity.

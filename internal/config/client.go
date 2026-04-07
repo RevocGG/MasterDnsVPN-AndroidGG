@@ -96,6 +96,7 @@ type ClientConfig struct {
 	SessionInitRetryLinearAfter           int               `toml:"SESSION_INIT_RETRY_LINEAR_AFTER"`
 	SessionInitRetryMaxSeconds            float64           `toml:"SESSION_INIT_RETRY_MAX_SECONDS"`
 	SessionInitBusyRetryIntervalSeconds   float64           `toml:"SESSION_INIT_BUSY_RETRY_INTERVAL_SECONDS"`
+	SessionInitRacingCount                int               `toml:"SESSION_INIT_RACING_COUNT"`
 	SaveMTUServersToFile                  bool              `toml:"SAVE_MTU_SERVERS_TO_FILE"`
 	MTUServersFileName                    string            `toml:"MTU_SERVERS_FILE_NAME"`
 	MTUServersFileFormat                  string            `toml:"MTU_SERVERS_FILE_FORMAT"`
@@ -202,6 +203,7 @@ func defaultClientConfig() ClientConfig {
 		SessionInitRetryLinearAfter:           5,
 		SessionInitRetryMaxSeconds:            60.0,
 		SessionInitBusyRetryIntervalSeconds:   60.0,
+		SessionInitRacingCount:                3,
 		SaveMTUServersToFile:                  false,
 		MTUServersFileName:                    "masterdnsvpn_success_test_{time}.log",
 		MTUServersFileFormat:                  "{IP} - UP: {UP_MTU} DOWN: {DOWN-MTU}",
@@ -412,6 +414,7 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 	cfg.SessionInitRetryLinearAfter = clampInt(defaultIntBelow(cfg.SessionInitRetryLinearAfter, 0, 5), 0, 1000)
 	cfg.SessionInitRetryMaxSeconds = clampFloat(defaultFloatAtMostZero(cfg.SessionInitRetryMaxSeconds, 60.0), cfg.SessionInitRetryBaseSeconds, 3600.0)
 	cfg.SessionInitBusyRetryIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.SessionInitBusyRetryIntervalSeconds, 60.0), 1.0, 3600.0)
+	cfg.SessionInitRacingCount = clampInt(defaultIntBelow(cfg.SessionInitRacingCount, 1, 3), 1, 5)
 	cfg.MTUServersFileName = strings.TrimSpace(cfg.MTUServersFileName)
 	cfg.MTUServersFileFormat = strings.TrimSpace(cfg.MTUServersFileFormat)
 	cfg.MTUUsingSeparatorText = strings.TrimSpace(cfg.MTUUsingSeparatorText)

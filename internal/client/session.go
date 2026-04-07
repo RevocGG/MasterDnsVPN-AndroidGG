@@ -11,6 +11,7 @@ package client
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"sync"
@@ -44,7 +45,7 @@ func (c *Client) InitializeSession(maxAttempts int) error {
 	}
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		if err := c.initializeSessionOnce(); err == nil {
+		if err := c.initializeSessionRequest(); err == nil {
 			return nil
 		} else if errors.Is(err, ErrNoValidConnections) || errors.Is(err, ErrSessionInitBusy) {
 			return err
@@ -54,7 +55,7 @@ func (c *Client) InitializeSession(maxAttempts int) error {
 	return ErrSessionInitFailed
 }
 
-func (c *Client) initializeSessionOnce() error {
+func (c *Client) initializeSessionRequest() error {
 	conn, initPayload, verifyCode, err := c.nextSessionInitAttempt()
 	if err != nil {
 		return err
@@ -65,9 +66,74 @@ func (c *Client) initializeSessionOnce() error {
 		return ErrSessionInitFailed
 	}
 
-	packet, err := c.exchangeDNSOverConnection(conn, query, c.mtuTestTimeout*3)
-	if err != nil {
-		return ErrSessionInitFailed
+	// Intra-Resolver Racing: Send 3 parallel requests to the same selected resolver.
+	// We staggered each attempt by 100ms.
+	const racingCount = 3
+	const staggerDelay = 100 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	type result struct {
+		err    error
+		packet VpnProto.Packet
+	}
+
+	resChan := make(chan result, racingCount)
+
+	for i := range racingCount {
+		if i > 0 {
+			select {
+			case <-time.After(staggerDelay):
+			case <-ctx.Done():
+				goto waitPhase
+			}
+		}
+
+		go func() {
+			packet, err := c.exchangeDNSOverConnection(conn, query, c.mtuTestTimeout*3)
+			select {
+			case resChan <- result{err: err, packet: packet}:
+			case <-ctx.Done():
+			}
+		}()
+	}
+
+waitPhase:
+	var lastErr error
+	responsesReceived := 0
+	for {
+		select {
+		case res := <-resChan:
+			responsesReceived++
+			if res.err == nil {
+				if err := c.applySessionInitPacket(res.packet, initPayload, verifyCode); err == nil {
+					cancel()
+					return nil
+				} else if errors.Is(err, ErrSessionInitBusy) {
+					cancel()
+					return err
+				}
+				lastErr = res.err
+			} else {
+				lastErr = res.err
+			}
+
+			if responsesReceived >= racingCount {
+				if lastErr == nil {
+					return ErrSessionInitFailed
+				}
+				return lastErr
+			}
+		case <-time.After(30 * time.Second): // Hard safety timeout
+			return ErrSessionInitFailed
+		}
+	}
+}
+
+func (c *Client) applySessionInitPacket(packet VpnProto.Packet, initPayload []byte, verifyCode [4]byte) error {
+	if c.SessionReady() {
+		return nil
 	}
 
 	switch packet.PacketType {
@@ -82,6 +148,13 @@ func (c *Client) initializeSessionOnce() error {
 			return ErrSessionInitFailed
 		}
 
+		c.initStateMu.Lock()
+		defer c.initStateMu.Unlock()
+
+		if c.sessionReady {
+			return nil
+		}
+
 		c.sessionID = packet.Payload[0]
 		c.sessionCookie = packet.Payload[1]
 		c.responseMode = initPayload[0]
@@ -89,7 +162,7 @@ func (c *Client) initializeSessionOnce() error {
 		c.sessionReady = true
 		c.applySessionCompressionPolicy()
 		c.clearSessionInitBusyUntil()
-		c.resetSessionInitState()
+		c.resetSessionInitStateLocked()
 		c.clearSessionResetPending()
 		return nil
 	default:
@@ -165,12 +238,16 @@ func (c *Client) resetSessionInitState() {
 		return
 	}
 	c.initStateMu.Lock()
+	c.resetSessionInitStateLocked()
+	c.initStateMu.Unlock()
+}
+
+func (c *Client) resetSessionInitStateLocked() {
 	c.sessionInitPayload = nil
 	c.sessionInitVerify = [4]byte{}
 	c.sessionInitBase64 = false
 	c.sessionInitReady = false
 	c.sessionInitCursor = 0
-	c.initStateMu.Unlock()
 }
 
 func (c *Client) setSessionInitBusyUntil(deadline time.Time) {
