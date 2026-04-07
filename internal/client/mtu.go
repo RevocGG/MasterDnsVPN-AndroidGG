@@ -71,6 +71,16 @@ type mtuScanCounters struct {
 	rejectDownload atomic.Int32
 }
 
+type mtuDecision struct {
+	active        bool
+	reason        mtuRejectReason
+	rejectValue   int
+	uploadBytes   int
+	uploadChars   int
+	downloadBytes int
+	resolveTime   time.Duration
+}
+
 func (c *Client) RunInitialMTUTests(ctx context.Context) error {
 	if c.balancer == nil {
 		return ErrNoValidConnections
@@ -146,7 +156,7 @@ func (c *Client) runConnectionMTUTest(ctx context.Context, conn Connection, serv
 	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			_ = c.balancer.ApplyMTUProbeResult(conn.Key, 0, 0, 0, 0, false)
+			c.applyMTUDecision(conn.Key, mtuDecision{})
 			if c.log != nil {
 				c.log.Errorf(
 					"💥 <red>MTU Probe Worker Panic: <cyan>%v</cyan> (Resolver: <cyan>%s</cyan>)</red>",
@@ -186,10 +196,11 @@ func (c *Client) runConnectionMTUTest(ctx context.Context, conn Connection, serv
 	if counters == nil {
 		return
 	}
+	decision := buildMTUDecision(result, reason)
+	c.applyMTUDecision(conn.Key, decision)
 
 	switch reason {
 	case mtuRejectUpload:
-		_ = c.balancer.ApplyMTUProbeResult(conn.Key, 0, 0, 0, 0, false)
 		completed := counters.completed.Add(1)
 		rejectedNow := counters.rejectUpload.Add(1) + counters.rejectDownload.Load()
 		if c.log != nil && c.log.Enabled(logger.LevelWarn) {
@@ -199,14 +210,13 @@ func (c *Client) runConnectionMTUTest(ctx context.Context, conn Connection, serv
 				total,
 				conn.Domain,
 				conn.ResolverLabel,
-				result.UploadBytes,
+				decision.rejectValue,
 				counters.valid.Load(),
 				rejectedNow,
 			)
 		}
 		return
 	case mtuRejectDownload:
-		_ = c.balancer.ApplyMTUProbeResult(conn.Key, result.UploadBytes, result.UploadChars, 0, 0, false)
 		completed := counters.completed.Add(1)
 		rejectedNow := counters.rejectUpload.Load() + counters.rejectDownload.Add(1)
 		if c.log != nil && c.log.Enabled(logger.LevelWarn) {
@@ -216,15 +226,13 @@ func (c *Client) runConnectionMTUTest(ctx context.Context, conn Connection, serv
 				total,
 				conn.Domain,
 				conn.ResolverLabel,
-				result.DownloadBytes,
+				decision.rejectValue,
 				counters.valid.Load(),
 				rejectedNow,
 			)
 		}
 		return
 	}
-
-	_ = c.balancer.ApplyMTUProbeResult(conn.Key, result.UploadBytes, result.UploadChars, result.DownloadBytes, result.ResolveTime, true)
 
 	completed := counters.completed.Add(1)
 	validNow := counters.valid.Add(1)
@@ -236,8 +244,8 @@ func (c *Client) runConnectionMTUTest(ctx context.Context, conn Connection, serv
 			total,
 			conn.Domain,
 			conn.ResolverLabel,
-			result.UploadBytes,
-			result.DownloadBytes,
+			decision.uploadBytes,
+			decision.downloadBytes,
 			validNow,
 			rejectedNow,
 		)
@@ -273,6 +281,44 @@ func (c *Client) probeConnectionMTU(ctx context.Context, conn Connection, maxUpl
 	result.DownloadBytes = downBytes
 	result.ResolveTime = averageMTUProbeRTT(upRTT, downRTT)
 	return result, mtuRejectNone
+}
+
+func buildMTUDecision(result mtuConnectionProbeResult, reason mtuRejectReason) mtuDecision {
+	decision := mtuDecision{
+		active:        reason == mtuRejectNone,
+		reason:        reason,
+		uploadBytes:   result.UploadBytes,
+		uploadChars:   result.UploadChars,
+		downloadBytes: result.DownloadBytes,
+		resolveTime:   result.ResolveTime,
+	}
+	switch reason {
+	case mtuRejectUpload:
+		decision.uploadBytes = 0
+		decision.uploadChars = 0
+		decision.downloadBytes = 0
+		decision.resolveTime = 0
+		decision.rejectValue = result.UploadBytes
+	case mtuRejectDownload:
+		decision.downloadBytes = 0
+		decision.resolveTime = 0
+		decision.rejectValue = result.DownloadBytes
+	}
+	return decision
+}
+
+func (c *Client) applyMTUDecision(key string, decision mtuDecision) {
+	if c == nil || c.balancer == nil || key == "" {
+		return
+	}
+	_ = c.balancer.ApplyMTUProbeResult(
+		key,
+		decision.uploadBytes,
+		decision.uploadChars,
+		decision.downloadBytes,
+		decision.resolveTime,
+		decision.active,
+	)
 }
 
 func (c *Client) precomputeUploadCaps() map[string]int {
@@ -778,17 +824,21 @@ func summarizeValidMTUConnections(connections []Connection) (validConns []Connec
 		}
 		validConns = append(validConns, conn)
 
-		if conn.UploadMTUBytes > 0 && (minUpload == 0 || conn.UploadMTUBytes < minUpload) {
-			minUpload = conn.UploadMTUBytes
-		}
-		if conn.DownloadMTUBytes > 0 && (minDownload == 0 || conn.DownloadMTUBytes < minDownload) {
-			minDownload = conn.DownloadMTUBytes
-		}
-		if conn.UploadMTUChars > 0 && (minUploadChars == 0 || conn.UploadMTUChars < minUploadChars) {
-			minUploadChars = conn.UploadMTUChars
-		}
+		minUpload = minPositive(minUpload, conn.UploadMTUBytes)
+		minDownload = minPositive(minDownload, conn.DownloadMTUBytes)
+		minUploadChars = minPositive(minUploadChars, conn.UploadMTUChars)
 	}
 	return validConns, minUpload, minDownload, minUploadChars
+}
+
+func minPositive(current, candidate int) int {
+	if candidate <= 0 {
+		return current
+	}
+	if current == 0 || candidate < current {
+		return candidate
+	}
+	return current
 }
 
 func (c *Client) encodedCharsForPacketPayload(packetType uint8, payloadLen int) int {
