@@ -20,8 +20,8 @@ import com.masterdnsvpn.ui.theme.*
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    onNavigateToPerAppVpn: () -> Unit,
     onNavigateToUpdate: () -> Unit,
+    onNavigateToPerAppVpn: () -> Unit = {},
 ) {
     GlassBackground {
         Scaffold(
@@ -46,7 +46,7 @@ fun SettingsScreen(
                 SettingsMenuItem(
                     icon = Icons.Default.PhoneAndroid,
                     title = "Per-App VPN",
-                    subtitle = "Choose which apps use the VPN tunnel",
+                    subtitle = "Choose which apps are routed through the VPN tunnel",
                     onClick = onNavigateToPerAppVpn,
                 )
 

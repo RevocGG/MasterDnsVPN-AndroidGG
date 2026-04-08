@@ -3,6 +3,9 @@
 import android.app.NotificationManager
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkRequest
 import android.net.TrafficStats
 import android.net.VpnService
 import android.os.Build
@@ -38,6 +41,13 @@ class DnsTunnelVpnService : VpnService() {
         const val EXTRA_BALANCER_STRATEGY = "balancer_strategy"
         const val EXTRA_SOCKS_PORT = "socks_port"
         const val ACTION_STOP = "com.masterdnsvpn.action.STOP_VPN"
+
+        // TUN_INTERFACE_MTU is the IP packet MTU of the Android virtual NIC created by
+        // VpnService.Builder.  This is NOT related to DNS payload MTU (min/maxUploadMTU,
+        // min/maxDownloadMTU) — those are engine-internal values the Go core discovers
+        // dynamically by probing resolvers.  The Go layer itself defaults to 1500 when
+        // the caller passes 0.  1500 = standard Ethernet and is safe on all Android paths.
+        private const val TUN_INTERFACE_MTU = 1500
     }
 
     @Inject lateinit var bridge: GoMobileBridge
@@ -54,6 +64,20 @@ class DnsTunnelVpnService : VpnService() {
     private var activeMetaId: String? = null
     private var activeSubProfileIds: List<String> = emptyList()
     private var activeProfileName: String = "VPN"
+
+    // ── Network change detection ───────────────────────────────────────────────
+    // When the underlying network switches (e.g. WiFi → cellular) the SOCKS5
+    // connections inside the gVisor bridge stall.  We detect the transition and
+    // bounce the TUN bridge so it reconnects on the new interface.
+    private val connectivityManager by lazy { getSystemService(ConnectivityManager::class.java) }
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            if (!intentionalStop && bridge.isTunBridgeRunning()) {
+                logManager.appendSystem(LogLevel.INFO, "Network changed — bouncing TUN bridge for new interface")
+                scope.launch { bridge.stopTunBridge() }
+            }
+        }
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // Handle stop request from TunnelController or notification button
@@ -87,6 +111,10 @@ class DnsTunnelVpnService : VpnService() {
         activeProfileName = profileName
         bridge.registerProtectCallback(SocketProtector(this))
         startSpeedMonitor()
+        // Start listening for network transitions so we can bounce the bridge.
+        try {
+            connectivityManager.registerDefaultNetworkCallback(networkCallback)
+        } catch (_: Exception) {}
 
         if (metaId != null && metaProfileIds != null) {
             // ── Meta profile mode: start all sub-profiles with balancer ──
@@ -168,22 +196,28 @@ class DnsTunnelVpnService : VpnService() {
                     upstreamAddrs.first()
                 }
 
-                // Attach TUN bridge to the balancer (or single upstream)
+                // Attach TUN bridge to the balancer (or single upstream) with auto-reconnect.
                 if (!isActive) return@launch  // Service was stopped while starting sub-profiles
-                try {
-                    logManager.append(LogEntry(level = LogLevel.INFO, timestamp = "system", message = "TUN bridge started → $balancerAddr (meta, ${profiles.size} profiles)"))
-                    bridge.startTunBridge(tunFd.fd, 1500, balancerAddr)
-                    // startTunBridge is now blocking — returns when the bridge exits.
-                    // If the stop was not intentional (no performStop called), it's a crash.
-                    if (isActive && !intentionalStop) {
-                        logManager.appendSystem(LogLevel.ERROR, "TUN bridge (meta) exited unexpectedly — stopping tunnel")
-                        activeMetaId?.let { tunnelStateManager.onMetaStopped(it) }
-                        performStop()
+                var bridgeAttempt = 0
+                while (isActive && !intentionalStop) {
+                    bridgeAttempt++
+                    try {
+                        if (bridgeAttempt == 1) {
+                            logManager.append(LogEntry(level = LogLevel.INFO, timestamp = "system", message = "TUN bridge started → $balancerAddr (meta, ${profiles.size} profiles)"))
+                        }
+                        bridge.startTunBridge(tunFd.fd, TUN_INTERFACE_MTU, balancerAddr)
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        logManager.appendSystem(LogLevel.ERROR, "TUN bridge error: ${e.message}")
                     }
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    logManager.appendSystem(LogLevel.ERROR, "TUN bridge error: ${e.message}")
+                    if (intentionalStop || !isActive) break
+                    // Unexpected exit — back-off and retry
+                    val backoff = (2000L * bridgeAttempt).coerceAtMost(15_000L)
+                    logManager.appendSystem(LogLevel.WARN, "TUN bridge (meta) exited — retry #$bridgeAttempt in ${backoff}ms")
+                    delay(backoff)
+                }
+                if (!intentionalStop) {
                     activeMetaId?.let { tunnelStateManager.onMetaStopped(it) }
                     performStop()
                 }
@@ -240,11 +274,23 @@ class DnsTunnelVpnService : VpnService() {
                         logManager.appendSystem(LogLevel.WARN, "SOCKS proxy not ready after 10s, starting TUN anyway")
                     }
                     logManager.appendSystem(LogLevel.INFO, "TUN bridge started → $socksAddr")
-                    bridge.startTunBridge(tunFd.fd, 1500, socksAddr)
-                    // startTunBridge is now blocking — returns when the bridge exits.
-                    // If the stop was not intentional (no performStop called), it's a crash.
-                    if (isActive && !intentionalStop) {
-                        logManager.appendSystem(LogLevel.ERROR, "TUN bridge exited unexpectedly — stopping tunnel")
+                    // Auto-reconnect loop: restart bridge after unexpected exits.
+                    var bridgeAttempt = 0
+                    while (isActive && !intentionalStop) {
+                        bridgeAttempt++
+                        try {
+                            bridge.startTunBridge(tunFd.fd, TUN_INTERFACE_MTU, socksAddr)
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            logManager.appendSystem(LogLevel.ERROR, "TUN bridge error: ${e.message}")
+                        }
+                        if (intentionalStop || !isActive) break
+                        val backoff = (2000L * bridgeAttempt).coerceAtMost(15_000L)
+                        logManager.appendSystem(LogLevel.WARN, "TUN bridge exited — retry #$bridgeAttempt in ${backoff}ms")
+                        delay(backoff)
+                    }
+                    if (!intentionalStop) {
                         tunnelStateManager.onTunnelStopped(singleProfileId)
                         performStop()
                     }                } catch (e: kotlinx.coroutines.CancellationException) {
@@ -310,7 +356,7 @@ class DnsTunnelVpnService : VpnService() {
             var prevTx = baseTx
             val nm = getSystemService(NotificationManager::class.java)
             while (isActive) {
-                delay(1_000)
+                delay(2_000)
                 if (!isActive) break
                 val rx = TrafficStats.getUidRxBytes(uid)
                 val tx = TrafficStats.getUidTxBytes(uid)
@@ -339,6 +385,7 @@ class DnsTunnelVpnService : VpnService() {
     override fun onDestroy() {
         // Go cleanup is done in performStop() before onDestroy() is reached.
         // vpnInterface is already closed in performStop() — guard against double-close.
+        try { connectivityManager.unregisterNetworkCallback(networkCallback) } catch (_: Exception) {}
         bridge.registerProtectCallback(null)
         if (vpnInterface != null) {
             vpnInterface?.close()
@@ -364,45 +411,47 @@ class DnsTunnelVpnService : VpnService() {
                 .setSession("MasterDnsVPN")
                 .addAddress("10.89.0.1", 32)
                 .addDnsServer(dnsServer)
-                .setMtu(1500)
+                .setMtu(TUN_INTERFACE_MTU)
                 .addRoute("0.0.0.0", 0)
                 .addRoute("::", 0)
                 .setBlocking(true)  // gVisor fdbased requires blocking fd
 
-            // Always exclude ourselves to avoid routing loop
-            builder.addDisallowedApplication(packageName)
+            // Per-app VPN filtering — reads from the profile's own settings so each
+            // profile can have an independent filter.
+            //
+            // CRITICAL: addAllowedApplication and addDisallowedApplication are
+            // MUTUALLY EXCLUSIVE on Android 10-11 (API 29-30) — calling both on the
+            // same Builder causes IllegalStateException on establish(). To avoid this:
+            //  - INCLUDE mode: only use addAllowedApplication; own package is simply
+            //    absent from the allowed list, which already prevents routing loops.
+            //  - EXCLUDE/ALL modes: only use addDisallowedApplication; own package is
+            //    always added to prevent routing loops.
+            val perAppMode = appSelectionPrefs.mode
+            val perAppPackages = appSelectionPrefs.selectedPackages
+                .filter { it.isNotBlank() && it != packageName }
+                .toSet()
 
-            // Per-app VPN filtering
-            val mode = appSelectionPrefs.mode
-            val selected = appSelectionPrefs.selectedPackages
-
-            when (mode) {
+            when (perAppMode) {
                 AppSelectionPrefs.Mode.INCLUDE -> {
-                    // Only selected apps go through VPN.
-                    // Always include ourselves implicitly via disallow (above).
-                    for (pkg in selected) {
-                        if (pkg != packageName) {
+                    // Only selected apps use VPN. Own package is NOT in the allowed list
+                    // which prevents routing loops without mixing call types.
+                    if (perAppPackages.isNotEmpty()) {
+                        for (pkg in perAppPackages) {
                             try { builder.addAllowedApplication(pkg) } catch (_: Exception) {}
                         }
                     }
-                    // In INCLUDE mode Android ignores addDisallowedApplication,
-                    // so re-add ourselves with addAllowedApplication only if the
-                    // list is non-empty — otherwise no apps get the VPN at all.
-                    // We need to NOT include packageName in the allowed list so
-                    // our own SOCKS proxy traffic never loops back through VPN.
-                    // Note: addAllowedApplication implicitly excludes everything
-                    // else already — no extra work needed.
+                    // If list is empty: no addAllowedApplication call → Android default = all apps.
                 }
                 AppSelectionPrefs.Mode.EXCLUDE -> {
-                    // All apps EXCEPT selected go through VPN
-                    for (pkg in selected) {
-                        if (pkg != packageName) {
-                            try { builder.addDisallowedApplication(pkg) } catch (_: Exception) {}
-                        }
+                    // All apps EXCEPT listed ones use VPN. Own package always excluded.
+                    builder.addDisallowedApplication(packageName)
+                    for (pkg in perAppPackages) {
+                        try { builder.addDisallowedApplication(pkg) } catch (_: Exception) {}
                     }
                 }
-                AppSelectionPrefs.Mode.ALL -> {
-                    // No per-app filter — all traffic goes through VPN
+                else -> {
+                    // ALL — no per-app filter. Only exclude own package to prevent loops.
+                    builder.addDisallowedApplication(packageName)
                 }
             }
 

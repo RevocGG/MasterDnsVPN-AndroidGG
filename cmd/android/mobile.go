@@ -103,6 +103,7 @@ SessionInitRetryStepSec         float64
 SessionInitRetryLinearAfter     int
 SessionInitRetryMaxSec          float64
 SessionInitBusyRetryIntervalSec float64
+SessionInitRacingCount          int
 // MTU file
 SaveMTUServersToFile      bool
 MTUServersFileName        string
@@ -392,6 +393,7 @@ SessionInitRetryStepSeconds:         c.SessionInitRetryStepSec,
 SessionInitRetryLinearAfter:         c.SessionInitRetryLinearAfter,
 SessionInitRetryMaxSeconds:          c.SessionInitRetryMaxSec,
 SessionInitBusyRetryIntervalSeconds: c.SessionInitBusyRetryIntervalSec,
+SessionInitRacingCount:              c.SessionInitRacingCount,
 SaveMTUServersToFile:      c.SaveMTUServersToFile,
 MTUServersFileName:        c.MTUServersFileName,
 MTUServersFileFormat:      c.MTUServersFileFormat,
@@ -486,6 +488,7 @@ c.SessionInitRetryStepSec         = d.SessionInitRetryStepSeconds
 c.SessionInitRetryLinearAfter     = d.SessionInitRetryLinearAfter
 c.SessionInitRetryMaxSec          = d.SessionInitRetryMaxSeconds
 c.SessionInitBusyRetryIntervalSec = d.SessionInitBusyRetryIntervalSeconds
+c.SessionInitRacingCount          = d.SessionInitRacingCount
 c.SaveMTUServersToFile      = d.SaveMTUServersToFile
 c.MTUServersFileName        = d.MTUServersFileName
 c.MTUServersFileFormat      = d.MTUServersFileFormat

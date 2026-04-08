@@ -11,7 +11,7 @@ if ($ndkDir) {
 }
 
 Write-Host "=== Step 1: gomobile bind ==="
-& gomobile bind -v -target android -androidapi 26 -o "android\app\libs\masterdnsvpn.aar" masterdnsvpn-go/cmd/android *>&1 | ForEach-Object { Write-Host $_ }
+& gomobile bind -v -target android -androidapi 26 -javapkg com.masterdnsvpn.gomobile -o "android\app\libs\masterdnsvpn.aar" masterdnsvpn-go/cmd/android *>&1 | ForEach-Object { Write-Host $_ }
 if ($LASTEXITCODE -ne 0) {
     Write-Host "ERROR: gomobile bind failed with exit code $LASTEXITCODE"
     Write-Host "Full output above"

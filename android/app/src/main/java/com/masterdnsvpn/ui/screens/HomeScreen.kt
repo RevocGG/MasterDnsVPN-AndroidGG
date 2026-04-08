@@ -19,7 +19,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -28,7 +34,11 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -37,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.masterdnsvpn.BuildConfig
+import com.masterdnsvpn.hardware.ProfileWarning
 import com.masterdnsvpn.profile.MetaProfileEntity
 import com.masterdnsvpn.profile.ProfileEntity
 import com.masterdnsvpn.ui.theme.*
@@ -61,6 +72,8 @@ fun HomeScreen(
     val ctx = LocalContext.current
     val uiState by vm.uiState.collectAsState()
     val monitorState by monitorVm.state.collectAsState()
+    val pendingWarnings by vm.pendingWarnings.collectAsState()
+    val warningForProfileId by vm.warningForProfileId.collectAsState()
     val hotspotState by hotspotVm.state.collectAsState()
 
     var showHotspotDialog by remember { mutableStateOf(false) }
@@ -397,6 +410,174 @@ fun HomeScreen(
                         onDashboard = { onOpenDashboard(profile.id) },
                         onDelete = { vm.deleteProfile(profile.id) },
                     )
+                    // ── Hardware warning panel (slides down below the card) ─────────
+                    AnimatedVisibility(
+                        visible = warningForProfileId == profile.id && pendingWarnings != null,
+                        enter = expandVertically(
+                            animationSpec = tween(durationMillis = 1000, easing = FastOutSlowInEasing),
+                        ) + fadeIn(animationSpec = tween(800, delayMillis = 150)),
+                        exit = shrinkVertically(
+                            animationSpec = tween(durationMillis = 400, easing = LinearOutSlowInEasing),
+                        ) + fadeOut(animationSpec = tween(300)),
+                    ) {
+                        pendingWarnings?.let { warnings ->
+                            HardwareWarningPanel(
+                                warnings = warnings,
+                                onSkip = { vm.skipWarnings(ctx) },
+                                onApply = { vm.applyRecommendations() },
+                                onDismiss = { vm.dismissWarnings() },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HardwareWarningPanel(
+    warnings: List<ProfileWarning>,
+    onSkip: () -> Unit,
+    onApply: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val amber = Color(0xFFFFAB40)
+    val amberBg = amber.copy(alpha = 0.08f)
+    val amberBorder = amber.copy(alpha = 0.35f)
+
+    Surface(
+        color = amberBg,
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 4.dp)
+            .drawBehind {
+                val strokePx = 1.dp.toPx()
+                val half = strokePx / 2f
+                val r = 16.dp.toPx()
+                val path = Path().apply {
+                    // Start at top-left, after the top-left corner arc
+                    moveTo(r, half)
+                    // Top edge
+                    lineTo(size.width - r, half)
+                    // Top-right corner
+                    quadraticBezierTo(size.width - half, half, size.width - half, r)
+                    // Right edge
+                    lineTo(size.width - half, size.height - r)
+                    // Bottom-right corner
+                    quadraticBezierTo(size.width - half, size.height - half, size.width - r, size.height - half)
+                    // Bottom edge
+                    lineTo(r, size.height - half)
+                    // Bottom-left corner
+                    quadraticBezierTo(half, size.height - half, half, size.height - r)
+                    // Left edge
+                    lineTo(half, r)
+                    // Top-left corner
+                    quadraticBezierTo(half, half, r, half)
+                }
+                drawPath(path, color = amberBorder, style = Stroke(width = strokePx, cap = StrokeCap.Square))
+            },
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+
+            // ── Title row ────────────────────────────────────────────────
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = amber,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Hardware Compatibility Warning",
+                    color = amber,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                    Icon(Icons.Default.Close, contentDescription = "Close", tint = TextSecondary, modifier = Modifier.size(18.dp))
+                }
+            }
+
+            // ── Warning items ─────────────────────────────────────────────
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                warnings.forEach { w ->
+                    Column {
+                        Text(
+                            "• ${w.fieldLabel}",
+                            color = TextPrimary,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 13.sp,
+                        )
+                        Row(modifier = Modifier.padding(start = 10.dp, top = 2.dp)) {
+                            Surface(
+                                color = Color(0xFFFF5252).copy(alpha = 0.12f),
+                                shape = RoundedCornerShape(4.dp),
+                            ) {
+                                Text(
+                                    "Current: ${w.currentValue}",
+                                    color = Color(0xFFFF5252),
+                                    fontSize = 11.sp,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                )
+                            }
+                            Spacer(Modifier.width(6.dp))
+                            Text("→", color = TextSecondary, fontSize = 11.sp)
+                            Spacer(Modifier.width(6.dp))
+                            Surface(
+                                color = GreenOnline.copy(alpha = 0.12f),
+                                shape = RoundedCornerShape(4.dp),
+                            ) {
+                                Text(
+                                    "Recommended: ${w.recommendedValue}",
+                                    color = GreenOnline,
+                                    fontSize = 11.sp,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                )
+                            }
+                        }
+                        Text(
+                            w.reason,
+                            color = TextSecondary,
+                            fontSize = 11.sp,
+                            modifier = Modifier.padding(start = 10.dp, top = 3.dp),
+                        )
+                    }
+                }
+            }
+
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = 12.dp),
+                color = amberBorder,
+            )
+
+            // ── Action buttons ─────────────────────────────────────────────
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                OutlinedButton(
+                    onClick = onSkip,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, TextSecondary.copy(alpha = 0.4f)),
+                ) {
+                    Text("Skip", fontSize = 13.sp)
+                }
+                Button(
+                    onClick = onApply,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = amber,
+                        contentColor = Color.Black,
+                    ),
+                ) {
+                    Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(15.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Apply", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -639,17 +820,19 @@ private fun ProfileCard(
                         color = TextPrimary,
                     )
                     // Animated dots: Scanning. → Scanning.. → Scanning... → Scanning.
-                    var scanDots by remember { mutableIntStateOf(1) }
-                    LaunchedEffect(isScanning) {
-                        if (isScanning) {
-                            while (true) {
-                                kotlinx.coroutines.delay(400)
-                                scanDots = if (scanDots >= 3) 1 else scanDots + 1
-                            }
-                        } else {
-                            scanDots = 1
-                        }
-                    }
+                    // Use InfiniteTransition instead of a while-loop coroutine to avoid
+                    // allocating a suspended coroutine per profile card.
+                    val scanDotsTransition = rememberInfiniteTransition(label = "scan_dots")
+                    val scanDotsRaw by scanDotsTransition.animateFloat(
+                        initialValue = 0f,
+                        targetValue = 3f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(1200, easing = LinearEasing),
+                            repeatMode = RepeatMode.Restart,
+                        ),
+                        label = "scan_dots_idx",
+                    )
+                    val scanDots = if (isScanning) (scanDotsRaw.toInt() % 3) + 1 else 1
                     Text(
                         buildString {
                             append(profile.tunnelMode)
@@ -658,7 +841,7 @@ private fun ProfileCard(
                                 isScanning -> append(" - Scanning" + ".".repeat(scanDots))
                                 isReady -> append(" - Connected")
                                 profile.identityLocked -> append(" - \uD83D\uDD12 Locked")
-                                else -> append(" - ${profile.domains.take(40).ifEmpty { "no domains" }}")
+                                else -> { /* no extra info */ }
                             }
                         },
                         style = MaterialTheme.typography.bodySmall,

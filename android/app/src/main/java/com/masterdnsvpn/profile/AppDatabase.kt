@@ -194,10 +194,21 @@ val MIGRATION_8_9 = object : Migration(8, 9) {
         db.execSQL("UPDATE `profiles` SET `localDnsPort` = 5353 WHERE `localDnsPort` = 53")
     }
 }
+val MIGRATION_10_11 = object : Migration(10, 11) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE profiles ADD COLUMN sessionInitRacingCount INTEGER NOT NULL DEFAULT 3")
+    }
+}
+val MIGRATION_9_10 = object : Migration(9, 10) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE profiles ADD COLUMN perAppVpnMode TEXT NOT NULL DEFAULT 'ALL'")
+        db.execSQL("ALTER TABLE profiles ADD COLUMN perAppVpnPackages TEXT NOT NULL DEFAULT ''")
+    }
+}
 
 @Database(
     entities = [ProfileEntity::class, MetaProfileEntity::class],
-    version = 9,
+    version = 11,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {

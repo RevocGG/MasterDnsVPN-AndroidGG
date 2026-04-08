@@ -4,6 +4,7 @@ import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.core.view.WindowCompat
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
@@ -23,6 +24,10 @@ import dagger.hilt.android.AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Disable window-level inset handling so Compose can manage IME insets
+        // independently from the bottom nav bar. Without this, the keyboard pushes
+        // the nav bar up on adjustResize instead of only growing scroll content.
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         // Request notification permission (required at runtime on Android 13+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 0)
@@ -71,12 +76,12 @@ private fun MainNavHost() {
             // Settings — menu
             composable(Screen.Settings.route) {
                 SettingsScreen(
-                    onNavigateToPerAppVpn = { navController.navigate(Screen.PerAppVpn.route) },
                     onNavigateToUpdate = { navController.navigate(Screen.Update.route) },
+                    onNavigateToPerAppVpn = { navController.navigate(Screen.PerAppVpn.route) },
                 )
             }
 
-            // Per-app VPN selection
+            // Per-app VPN selection (global)
             composable(Screen.PerAppVpn.route) {
                 PerAppVpnScreen(onNavigateUp = { navController.popBackStack() })
             }

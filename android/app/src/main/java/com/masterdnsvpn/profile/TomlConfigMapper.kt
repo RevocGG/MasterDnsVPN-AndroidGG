@@ -130,6 +130,7 @@ object TomlConfigMapper {
             sessionInitRetryLinearAfter = int("SESSION_INIT_RETRY_LINEAR_AFTER") ?: base.sessionInitRetryLinearAfter,
             sessionInitRetryMaxSeconds = dbl("SESSION_INIT_RETRY_MAX_SECONDS") ?: base.sessionInitRetryMaxSeconds,
             sessionInitBusyRetryIntervalSeconds = dbl("SESSION_INIT_BUSY_RETRY_INTERVAL_SECONDS") ?: base.sessionInitBusyRetryIntervalSeconds,
+            sessionInitRacingCount = int("SESSION_INIT_RACING_COUNT") ?: base.sessionInitRacingCount,
             // Section 8 Ping
             pingAggressiveIntervalSeconds = dbl("PING_AGGRESSIVE_INTERVAL_SECONDS") ?: base.pingAggressiveIntervalSeconds,
             pingLazyIntervalSeconds = dbl("PING_LAZY_INTERVAL_SECONDS") ?: base.pingLazyIntervalSeconds,
@@ -344,6 +345,8 @@ object TomlConfigMapper {
             appendLine("SESSION_INIT_RETRY_MAX_SECONDS = ${d(p.sessionInitRetryMaxSeconds)}")
             appendLine()
             appendLine("SESSION_INIT_BUSY_RETRY_INTERVAL_SECONDS = ${d(p.sessionInitBusyRetryIntervalSeconds)}")
+            appendLine()
+            appendLine("SESSION_INIT_RACING_COUNT = ${p.sessionInitRacingCount}")
             appendLine()
             appendLine("PING_AGGRESSIVE_INTERVAL_SECONDS = ${d(p.pingAggressiveIntervalSeconds)}")
             appendLine("PING_LAZY_INTERVAL_SECONDS = ${d(p.pingLazyIntervalSeconds)}")

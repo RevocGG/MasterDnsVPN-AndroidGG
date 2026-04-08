@@ -86,8 +86,8 @@ data class ProfileEntity(
     val mtuTestParallelism: Int = 32,
 
     // Section 8: Workers & Timeouts
-    val rxTxWorkers: Int = 6,
-    val tunnelProcessWorkers: Int = 2,
+    val rxTxWorkers: Int = 4,
+    val tunnelProcessWorkers: Int = 6,
     val tunnelPacketTimeoutSec: Double = 10.0,
     val dispatcherIdlePollIntervalSeconds: Double = 0.020,
 
@@ -102,7 +102,7 @@ data class ProfileEntity(
 
     // Section 10: Advanced
     val txChannelSize: Int = 8192,
-    val rxChannelSize: Int = 12288,
+    val rxChannelSize: Int = 4096,
     val resolverUdpConnectionPoolSize: Int = 128,
     val streamQueueInitialCapacity: Int = 256,
     val orphanQueueInitialCapacity: Int = 64,
@@ -115,6 +115,7 @@ data class ProfileEntity(
     val sessionInitRetryLinearAfter: Int = 5,
     val sessionInitRetryMaxSeconds: Double = 60.0,
     val sessionInitBusyRetryIntervalSeconds: Double = 60.0,
+    val sessionInitRacingCount: Int = 3,
 
     // Section 11: MTU files
     val saveMtuServersToFile: Boolean = false,
@@ -140,7 +141,7 @@ data class ProfileEntity(
     val arqDataPacketTtlSeconds: Double = 2400.0,
     val arqControlPacketTtlSeconds: Double = 1200.0,
     val arqMaxDataRetries: Int = 1200,
-    val arqDataNackMaxGap: Int = 64,
+    val arqDataNackMaxGap: Int = 16,
     val arqDataNackInitialDelaySeconds: Double = 0.4,
     val arqDataNackRepeatSeconds: Double = 1.0,
     val arqTerminalDrainTimeoutSec: Double = 120.0,
@@ -152,4 +153,10 @@ data class ProfileEntity(
     // When true, domains and encryptionKey are hidden in the UI ("Locked")
     // Set during import when the exporter chose to hide identity fields.
     val identityLocked: Boolean = false,
+
+    // Per-App VPN Filter (TUN mode only)
+    // mode: "ALL" = no filter, "INCLUDE" = only listed apps use VPN, "EXCLUDE" = all except listed
+    val perAppVpnMode: String = "ALL",
+    // Comma-separated package names for the INCLUDE/EXCLUDE list
+    val perAppVpnPackages: String = "",
 )

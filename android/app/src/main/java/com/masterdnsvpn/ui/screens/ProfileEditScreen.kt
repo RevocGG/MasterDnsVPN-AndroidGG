@@ -75,8 +75,9 @@ fun ProfileEditScreen(
     }
 
     // Export: open SAF file-save dialog → write toml content
+    // Use application/octet-stream so the OS preserves the .toml extension we pass
     val exportLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("text/plain")
+        ActivityResultContracts.CreateDocument("application/octet-stream")
     ) { uri ->
         uri ?: return@rememberLauncherForActivityResult
         try {
@@ -228,6 +229,7 @@ fun ProfileEditScreen(
         Column(
             modifier = Modifier
                 .padding(padding)
+                .imePadding()
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -257,34 +259,27 @@ fun ProfileEditScreen(
 
             Divider()
 
-            // Section 1: Identity
-            ExpandableSection("Tunnel Identity", expanded = true) {
+            // ── Section 1: Tunnel Identity & Security ─────────────────────────
+            ExpandableSection("1. Tunnel Identity & Security", expanded = true) {
                 if (profile.identityLocked) {
                     LockedField("DOMAINS")
                 } else {
                     DomainsTextField(profile.domains) { vm.update { copy(domains = it) } }
                 }
-            }
-
-            // Section: Data Encryption
-            ExpandableSection("Data Encryption", expanded = true) {
+                EncryptionMethodSelector(profile.dataEncryptionMethod) {
+                    vm.update { copy(dataEncryptionMethod = it) }
+                }
                 if (profile.identityLocked) {
-                    EncryptionMethodSelector(profile.dataEncryptionMethod) {
-                        vm.update { copy(dataEncryptionMethod = it) }
-                    }
                     LockedField("ENCRYPTION_KEY")
                 } else {
-                    EncryptionMethodSelector(profile.dataEncryptionMethod) {
-                        vm.update { copy(dataEncryptionMethod = it) }
-                    }
                     PasswordField("ENCRYPTION_KEY", profile.encryptionKey) {
                         vm.update { copy(encryptionKey = it) }
                     }
                 }
             }
 
-            // Section 2: Proxy Listener
-            ExpandableSection("Proxy / Listener") {
+            // ── Section 2: Local Proxy Listener ────────────────────────────────
+            ExpandableSection("2. Local Proxy Listener") {
                 ProtocolTypeSelector(profile.protocolType) { vm.update { copy(protocolType = it) } }
                 ProfileTextField("LISTEN_IP", profile.listenIP, hint = "LISTEN_IP") {
                     vm.update { copy(listenIP = it) }
@@ -303,8 +298,8 @@ fun ProfileEditScreen(
                 }
             }
 
-            // Section 3: Local DNS
-            ExpandableSection("Local DNS") {
+            // ── Section 3: Local DNS Service ───────────────────────────────────
+            ExpandableSection("3. Local DNS Service") {
                 SwitchRow("LOCAL_DNS_ENABLED", profile.localDnsEnabled) { vm.update { copy(localDnsEnabled = it) } }
                 if (profile.localDnsEnabled) {
                     ProfileTextField("LOCAL_DNS_IP", profile.localDnsIP, hint = "LOCAL_DNS_IP") {
@@ -325,7 +320,7 @@ fun ProfileEditScreen(
                     ProfileDoubleField("DNS_RESPONSE_FRAGMENT_TIMEOUT_SECONDS", profile.dnsResponseFragmentTimeoutSeconds) {
                         vm.update { copy(dnsResponseFragmentTimeoutSeconds = it) }
                     }
-                    SwitchRow("LOCAL_DNS_CACHE_PERSIST", profile.localDnsCachePersist) {
+                    SwitchRow("LOCAL_DNS_CACHE_PERSIST_TO_FILE", profile.localDnsCachePersist) {
                         vm.update { copy(localDnsCachePersist = it) }
                     }
                     ProfileDoubleField("LOCAL_DNS_CACHE_FLUSH_INTERVAL_SECONDS", profile.localDnsCacheFlushSec) {
@@ -334,8 +329,8 @@ fun ProfileEditScreen(
                 }
             }
 
-            // Section 4: Balancing
-            ExpandableSection("Balancing & Duplication") {
+            // ── Section 4: Resolver Selection, Duplication & Health ────────────
+            ExpandableSection("4. Resolver Selection, Duplication & Health") {
                 BalancingStrategySelector(profile.resolverBalancingStrategy) {
                     vm.update { copy(resolverBalancingStrategy = it) }
                 }
@@ -351,21 +346,8 @@ fun ProfileEditScreen(
                 ProfileDoubleField("STREAM_RESOLVER_FAILOVER_COOLDOWN", profile.streamResolverFailoverCooldownSec) {
                     vm.update { copy(streamResolverFailoverCooldownSec = it) }
                 }
-            }
-
-            // Section 5: Resolver Health
-            ExpandableSection("Resolver Health") {
                 SwitchRow("RECHECK_INACTIVE_SERVERS_ENABLED", profile.recheckInactiveServersEnabled) {
                     vm.update { copy(recheckInactiveServersEnabled = it) }
-                }
-                ProfileDoubleField("RECHECK_INACTIVE_INTERVAL_SECONDS", profile.recheckInactiveIntervalSeconds) {
-                    vm.update { copy(recheckInactiveIntervalSeconds = it) }
-                }
-                ProfileDoubleField("RECHECK_SERVER_INTERVAL_SECONDS", profile.recheckServerIntervalSeconds) {
-                    vm.update { copy(recheckServerIntervalSeconds = it) }
-                }
-                ProfileIntField("RECHECK_BATCH_SIZE", profile.recheckBatchSize) {
-                    vm.update { copy(recheckBatchSize = it) }
                 }
                 SwitchRow("AUTO_DISABLE_TIMEOUT_SERVERS", profile.autoDisableTimeoutServers) {
                     vm.update { copy(autoDisableTimeoutServers = it) }
@@ -373,19 +355,13 @@ fun ProfileEditScreen(
                 ProfileDoubleField("AUTO_DISABLE_TIMEOUT_WINDOW_SECONDS", profile.autoDisableTimeoutWindowSeconds) {
                     vm.update { copy(autoDisableTimeoutWindowSeconds = it) }
                 }
-                ProfileIntField("AUTO_DISABLE_MIN_OBSERVATIONS", profile.autoDisableMinObservations) {
-                    vm.update { copy(autoDisableMinObservations = it) }
-                }
-                ProfileDoubleField("AUTO_DISABLE_CHECK_INTERVAL_SECONDS", profile.autoDisableCheckIntervalSeconds) {
-                    vm.update { copy(autoDisableCheckIntervalSeconds = it) }
-                }
-            }
-
-            // Section 6: Encoding/Compression
-            ExpandableSection("Encoding & Compression") {
                 SwitchRow("BASE_ENCODE_DATA", profile.baseEncodeData) {
                     vm.update { copy(baseEncodeData = it) }
                 }
+            }
+
+            // ── Section 5: Compression ─────────────────────────────────────────
+            ExpandableSection("5. Compression") {
                 CompressionTypeSelector("UPLOAD_COMPRESSION_TYPE", profile.uploadCompressionType) {
                     vm.update { copy(uploadCompressionType = it) }
                 }
@@ -397,73 +373,73 @@ fun ProfileEditScreen(
                 }
             }
 
-            // Section 7: MTU
-            ExpandableSection("MTU") {
+            // ── Section 6: MTU Discovery ───────────────────────────────────────
+            ExpandableSection("6. MTU Discovery") {
                 ProfileIntField("MIN_UPLOAD_MTU", profile.minUploadMTU) { vm.update { copy(minUploadMTU = it) } }
-                ProfileIntField("MAX_UPLOAD_MTU", profile.maxUploadMTU) { vm.update { copy(maxUploadMTU = it) } }
                 ProfileIntField("MIN_DOWNLOAD_MTU", profile.minDownloadMTU) { vm.update { copy(minDownloadMTU = it) } }
+                ProfileIntField("MAX_UPLOAD_MTU", profile.maxUploadMTU) { vm.update { copy(maxUploadMTU = it) } }
                 ProfileIntField("MAX_DOWNLOAD_MTU", profile.maxDownloadMTU) { vm.update { copy(maxDownloadMTU = it) } }
                 ProfileIntField("MTU_TEST_RETRIES", profile.mtuTestRetries) { vm.update { copy(mtuTestRetries = it) } }
                 ProfileDoubleField("MTU_TEST_TIMEOUT", profile.mtuTestTimeout) { vm.update { copy(mtuTestTimeout = it) } }
                 ProfileIntField("MTU_TEST_PARALLELISM", profile.mtuTestParallelism) { vm.update { copy(mtuTestParallelism = it) } }
+                SwitchRow("SAVE_MTU_SERVERS_TO_FILE", profile.saveMtuServersToFile) {
+                    vm.update { copy(saveMtuServersToFile = it) }
+                }
+                if (profile.saveMtuServersToFile) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        OutlinedTextField(
+                            value = profile.mtuServersFileDir.ifBlank { "(internal app folder)" },
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("OUTPUT_DIRECTORY") },
+                            modifier = Modifier.weight(1f),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = com.masterdnsvpn.ui.theme.CyanAccent,
+                                unfocusedBorderColor = com.masterdnsvpn.ui.theme.TextSecondary.copy(alpha = 0.4f),
+                                focusedLabelColor = com.masterdnsvpn.ui.theme.CyanAccent,
+                                unfocusedLabelColor = com.masterdnsvpn.ui.theme.TextSecondary,
+                                focusedTextColor = com.masterdnsvpn.ui.theme.TextPrimary,
+                                unfocusedTextColor = com.masterdnsvpn.ui.theme.TextPrimary,
+                                cursorColor = com.masterdnsvpn.ui.theme.CyanAccent,
+                            ),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        IconButton(onClick = { mtuDirLauncher.launch(null) }) {
+                            Icon(
+                                Icons.Default.Folder,
+                                contentDescription = "Choose directory",
+                                tint = com.masterdnsvpn.ui.theme.CyanAccent,
+                            )
+                        }
+                    }
+                    ProfileTextField("MTU_SERVERS_FILE_NAME", profile.mtuServersFileName) {
+                        vm.update { copy(mtuServersFileName = it) }
+                    }
+                    ProfileTextField("MTU_SERVERS_FILE_FORMAT", profile.mtuServersFileFormat) {
+                        vm.update { copy(mtuServersFileFormat = it) }
+                    }
+                    ProfileTextField("MTU_USING_SECTION_SEPARATOR_TEXT", profile.mtuUsingSeparatorText) {
+                        vm.update { copy(mtuUsingSeparatorText = it) }
+                    }
+                    ProfileTextField("MTU_REMOVED_SERVER_LOG_FORMAT", profile.mtuRemovedServerLogFormat) {
+                        vm.update { copy(mtuRemovedServerLogFormat = it) }
+                    }
+                    ProfileTextField("MTU_ADDED_SERVER_LOG_FORMAT", profile.mtuAddedServerLogFormat) {
+                        vm.update { copy(mtuAddedServerLogFormat = it) }
+                    }
+                }
             }
 
-            // Section 8: Workers & Timeouts
-            ExpandableSection("Workers & Timeouts") {
+            // ── Section 7: Runtime Workers, Queues & Timers ────────────────────
+            ExpandableSection("7. Runtime Workers, Queues & Timers") {
                 ProfileIntField("RX_TX_WORKERS", profile.rxTxWorkers) { vm.update { copy(rxTxWorkers = it) } }
                 ProfileIntField("TUNNEL_PROCESS_WORKERS", profile.tunnelProcessWorkers) { vm.update { copy(tunnelProcessWorkers = it) } }
                 ProfileDoubleField("TUNNEL_PACKET_TIMEOUT_SECONDS", profile.tunnelPacketTimeoutSec) { vm.update { copy(tunnelPacketTimeoutSec = it) } }
                 ProfileDoubleField("DISPATCHER_IDLE_POLL_INTERVAL_SECONDS", profile.dispatcherIdlePollIntervalSeconds) { vm.update { copy(dispatcherIdlePollIntervalSeconds = it) } }
-            }
-
-            // Section 9: Ping Manager
-            ExpandableSection("Ping Manager") {
-                ProfileDoubleField("PING_AGGRESSIVE_INTERVAL_SECONDS", profile.pingAggressiveIntervalSeconds) { vm.update { copy(pingAggressiveIntervalSeconds = it) } }
-                ProfileDoubleField("PING_LAZY_INTERVAL_SECONDS", profile.pingLazyIntervalSeconds) { vm.update { copy(pingLazyIntervalSeconds = it) } }
-                ProfileDoubleField("PING_COOLDOWN_INTERVAL_SECONDS", profile.pingCooldownIntervalSeconds) { vm.update { copy(pingCooldownIntervalSeconds = it) } }
-                ProfileDoubleField("PING_COLD_INTERVAL_SECONDS", profile.pingColdIntervalSeconds) { vm.update { copy(pingColdIntervalSeconds = it) } }
-                ProfileDoubleField("PING_WARM_THRESHOLD_SECONDS", profile.pingWarmThresholdSeconds) { vm.update { copy(pingWarmThresholdSeconds = it) } }
-                ProfileDoubleField("PING_COOL_THRESHOLD_SECONDS", profile.pingCoolThresholdSeconds) { vm.update { copy(pingCoolThresholdSeconds = it) } }
-                ProfileDoubleField("PING_COLD_THRESHOLD_SECONDS", profile.pingColdThresholdSeconds) { vm.update { copy(pingColdThresholdSeconds = it) } }
-            }
-
-            // Section 10: ARQ
-            ExpandableSection("ARQ") {
-                ProfileIntField("MAX_PACKETS_PER_BATCH", profile.maxPacketsPerBatch) { vm.update { copy(maxPacketsPerBatch = it) } }
-                ProfileIntField("ARQ_WINDOW_SIZE", profile.arqWindowSize) { vm.update { copy(arqWindowSize = it) } }
-                ProfileDoubleField("ARQ_INITIAL_RTO_SECONDS", profile.arqInitialRtoSeconds) { vm.update { copy(arqInitialRtoSeconds = it) } }
-                ProfileDoubleField("ARQ_MAX_RTO_SECONDS", profile.arqMaxRtoSeconds) { vm.update { copy(arqMaxRtoSeconds = it) } }
-                ProfileDoubleField("ARQ_CONTROL_INITIAL_RTO_SECONDS", profile.arqControlInitialRtoSeconds) { vm.update { copy(arqControlInitialRtoSeconds = it) } }
-                ProfileDoubleField("ARQ_CONTROL_MAX_RTO_SECONDS", profile.arqControlMaxRtoSeconds) { vm.update { copy(arqControlMaxRtoSeconds = it) } }
-                ProfileIntField("ARQ_MAX_CONTROL_RETRIES", profile.arqMaxControlRetries) { vm.update { copy(arqMaxControlRetries = it) } }
-                ProfileIntField("ARQ_MAX_DATA_RETRIES", profile.arqMaxDataRetries) { vm.update { copy(arqMaxDataRetries = it) } }
-                ProfileDoubleField("ARQ_INACTIVITY_TIMEOUT_SECONDS", profile.arqInactivityTimeoutSeconds) { vm.update { copy(arqInactivityTimeoutSeconds = it) } }
-                ProfileDoubleField("ARQ_DATA_PACKET_TTL_SECONDS", profile.arqDataPacketTtlSeconds) { vm.update { copy(arqDataPacketTtlSeconds = it) } }
-                ProfileDoubleField("ARQ_CONTROL_PACKET_TTL_SECONDS", profile.arqControlPacketTtlSeconds) { vm.update { copy(arqControlPacketTtlSeconds = it) } }
-                ProfileIntField("ARQ_DATA_NACK_MAX_GAP", profile.arqDataNackMaxGap) { vm.update { copy(arqDataNackMaxGap = it) } }
-                ProfileDoubleField("ARQ_DATA_NACK_INITIAL_DELAY_SECONDS", profile.arqDataNackInitialDelaySeconds) { vm.update { copy(arqDataNackInitialDelaySeconds = it) } }
-                ProfileDoubleField("ARQ_DATA_NACK_REPEAT_SECONDS", profile.arqDataNackRepeatSeconds) { vm.update { copy(arqDataNackRepeatSeconds = it) } }
-                ProfileDoubleField("ARQ_TERMINAL_DRAIN_TIMEOUT_SECONDS", profile.arqTerminalDrainTimeoutSec) { vm.update { copy(arqTerminalDrainTimeoutSec = it) } }
-                ProfileDoubleField("ARQ_TERMINAL_ACK_WAIT_TIMEOUT_SECONDS", profile.arqTerminalAckWaitTimeoutSec) { vm.update { copy(arqTerminalAckWaitTimeoutSec = it) } }
-            }
-
-            // Section 11: Advanced
-            ExpandableSection("Advanced") {
-                LogLevelSelector(profile.logLevel) { vm.update { copy(logLevel = it) } }
-                ProfileIntField("TX_CHANNEL_SIZE", profile.txChannelSize) { vm.update { copy(txChannelSize = it) } }
                 ProfileIntField("RX_CHANNEL_SIZE", profile.rxChannelSize) { vm.update { copy(rxChannelSize = it) } }
-                ProfileIntField("RESOLVER_UDP_CONNECTION_POOL_SIZE", profile.resolverUdpConnectionPoolSize) {
-                    vm.update { copy(resolverUdpConnectionPoolSize = it) }
-                }
-                ProfileIntField("STREAM_QUEUE_INITIAL_CAPACITY", profile.streamQueueInitialCapacity) {
-                    vm.update { copy(streamQueueInitialCapacity = it) }
-                }
-                ProfileIntField("ORPHAN_QUEUE_INITIAL_CAPACITY", profile.orphanQueueInitialCapacity) {
-                    vm.update { copy(orphanQueueInitialCapacity = it) }
-                }
-                ProfileIntField("DNS_RESPONSE_FRAGMENT_STORE_CAPACITY", profile.dnsResponseFragmentStoreCap) {
-                    vm.update { copy(dnsResponseFragmentStoreCap = it) }
-                }
                 ProfileDoubleField("SOCKS_UDP_ASSOCIATE_READ_TIMEOUT_SECONDS", profile.socksUdpAssociateReadTimeoutSeconds) {
                     vm.update { copy(socksUdpAssociateReadTimeoutSeconds = it) }
                 }
@@ -488,63 +464,74 @@ fun ProfileEditScreen(
                 ProfileDoubleField("SESSION_INIT_BUSY_RETRY_INTERVAL_SECONDS", profile.sessionInitBusyRetryIntervalSeconds) {
                     vm.update { copy(sessionInitBusyRetryIntervalSeconds = it) }
                 }
+                ProfileIntField("SESSION_INIT_RACING_COUNT", profile.sessionInitRacingCount) {
+                    vm.update { copy(sessionInitRacingCount = it) }
+                }
+                ProfileDoubleField("PING_AGGRESSIVE_INTERVAL_SECONDS", profile.pingAggressiveIntervalSeconds) { vm.update { copy(pingAggressiveIntervalSeconds = it) } }
+                ProfileDoubleField("PING_LAZY_INTERVAL_SECONDS", profile.pingLazyIntervalSeconds) { vm.update { copy(pingLazyIntervalSeconds = it) } }
+                ProfileDoubleField("PING_COOLDOWN_INTERVAL_SECONDS", profile.pingCooldownIntervalSeconds) { vm.update { copy(pingCooldownIntervalSeconds = it) } }
+                ProfileDoubleField("PING_COLD_INTERVAL_SECONDS", profile.pingColdIntervalSeconds) { vm.update { copy(pingColdIntervalSeconds = it) } }
+                ProfileDoubleField("PING_WARM_THRESHOLD_SECONDS", profile.pingWarmThresholdSeconds) { vm.update { copy(pingWarmThresholdSeconds = it) } }
+                ProfileDoubleField("PING_COOL_THRESHOLD_SECONDS", profile.pingCoolThresholdSeconds) { vm.update { copy(pingCoolThresholdSeconds = it) } }
+                ProfileDoubleField("PING_COLD_THRESHOLD_SECONDS", profile.pingColdThresholdSeconds) { vm.update { copy(pingColdThresholdSeconds = it) } }
             }
 
-            // Section 12: MTU Files
-            ExpandableSection("MTU Result Files") {
-                SwitchRow("SAVE_MTU_SERVERS_TO_FILE", profile.saveMtuServersToFile) {
-                    vm.update { copy(saveMtuServersToFile = it) }
-                }
-                if (profile.saveMtuServersToFile) {
-                    // Directory picker row
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        OutlinedTextField(
-                            value = profile.mtuServersFileDir.ifBlank { "(internal app folder)" },
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("OUTPUT_DIRECTORY") },
-                            modifier = Modifier.weight(1f),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = com.masterdnsvpn.ui.theme.CyanAccent,
-                                unfocusedBorderColor = com.masterdnsvpn.ui.theme.TextSecondary.copy(alpha = 0.4f),
-                                focusedLabelColor = com.masterdnsvpn.ui.theme.CyanAccent,
-                                unfocusedLabelColor = com.masterdnsvpn.ui.theme.TextSecondary,
-                                focusedTextColor = com.masterdnsvpn.ui.theme.TextPrimary,
-                                unfocusedTextColor = com.masterdnsvpn.ui.theme.TextPrimary,
-                                cursorColor = com.masterdnsvpn.ui.theme.CyanAccent,
-                            ),
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        IconButton(onClick = { mtuDirLauncher.launch(null) }) {
-                            Icon(
-                                Icons.Default.FileOpen,
-                                contentDescription = "Choose directory",
-                                tint = com.masterdnsvpn.ui.theme.CyanAccent,
-                            )
-                        }
-                    }
-                    ProfileTextField("MTU_SERVERS_FILE_NAME", profile.mtuServersFileName) {
-                        vm.update { copy(mtuServersFileName = it) }
-                    }
-                    ProfileTextField("MTU_SERVERS_FILE_FORMAT", profile.mtuServersFileFormat) {
-                        vm.update { copy(mtuServersFileFormat = it) }
-                    }
-                    ProfileTextField("MTU_USING_SECTION_SEPARATOR_TEXT", profile.mtuUsingSeparatorText) {
-                        vm.update { copy(mtuUsingSeparatorText = it) }
-                    }
-                    ProfileTextField("MTU_REMOVED_SERVER_LOG_FORMAT", profile.mtuRemovedServerLogFormat) {
-                        vm.update { copy(mtuRemovedServerLogFormat = it) }
-                    }
-                    ProfileTextField("MTU_ADDED_SERVER_LOG_FORMAT", profile.mtuAddedServerLogFormat) {
-                        vm.update { copy(mtuAddedServerLogFormat = it) }
-                    }
-                }
+            // ── Section 8: ARQ Reliability & Packing ──────────────────────────
+            ExpandableSection("8. ARQ Reliability & Packing") {
+                ProfileIntField("MAX_PACKETS_PER_BATCH", profile.maxPacketsPerBatch) { vm.update { copy(maxPacketsPerBatch = it) } }
+                ProfileIntField("ARQ_WINDOW_SIZE", profile.arqWindowSize) { vm.update { copy(arqWindowSize = it) } }
+                ProfileDoubleField("ARQ_INITIAL_RTO_SECONDS", profile.arqInitialRtoSeconds) { vm.update { copy(arqInitialRtoSeconds = it) } }
+                ProfileDoubleField("ARQ_MAX_RTO_SECONDS", profile.arqMaxRtoSeconds) { vm.update { copy(arqMaxRtoSeconds = it) } }
+                ProfileDoubleField("ARQ_CONTROL_INITIAL_RTO_SECONDS", profile.arqControlInitialRtoSeconds) { vm.update { copy(arqControlInitialRtoSeconds = it) } }
+                ProfileDoubleField("ARQ_CONTROL_MAX_RTO_SECONDS", profile.arqControlMaxRtoSeconds) { vm.update { copy(arqControlMaxRtoSeconds = it) } }
+                ProfileIntField("ARQ_MAX_CONTROL_RETRIES", profile.arqMaxControlRetries) { vm.update { copy(arqMaxControlRetries = it) } }
+                ProfileDoubleField("ARQ_INACTIVITY_TIMEOUT_SECONDS", profile.arqInactivityTimeoutSeconds) { vm.update { copy(arqInactivityTimeoutSeconds = it) } }
+                ProfileDoubleField("ARQ_DATA_PACKET_TTL_SECONDS", profile.arqDataPacketTtlSeconds) { vm.update { copy(arqDataPacketTtlSeconds = it) } }
+                ProfileDoubleField("ARQ_CONTROL_PACKET_TTL_SECONDS", profile.arqControlPacketTtlSeconds) { vm.update { copy(arqControlPacketTtlSeconds = it) } }
+                ProfileIntField("ARQ_MAX_DATA_RETRIES", profile.arqMaxDataRetries) { vm.update { copy(arqMaxDataRetries = it) } }
+                ProfileIntField("ARQ_DATA_NACK_MAX_GAP", profile.arqDataNackMaxGap) { vm.update { copy(arqDataNackMaxGap = it) } }
+                ProfileDoubleField("ARQ_DATA_NACK_INITIAL_DELAY_SECONDS", profile.arqDataNackInitialDelaySeconds) { vm.update { copy(arqDataNackInitialDelaySeconds = it) } }
+                ProfileDoubleField("ARQ_DATA_NACK_REPEAT_SECONDS", profile.arqDataNackRepeatSeconds) { vm.update { copy(arqDataNackRepeatSeconds = it) } }
+                ProfileDoubleField("ARQ_TERMINAL_DRAIN_TIMEOUT_SECONDS", profile.arqTerminalDrainTimeoutSec) { vm.update { copy(arqTerminalDrainTimeoutSec = it) } }
+                ProfileDoubleField("ARQ_TERMINAL_ACK_WAIT_TIMEOUT_SECONDS", profile.arqTerminalAckWaitTimeoutSec) { vm.update { copy(arqTerminalAckWaitTimeoutSec = it) } }
             }
 
+            // ── Section 9: Logging ─────────────────────────────────────────────
+            ExpandableSection("9. Logging") {
+                LogLevelSelector(profile.logLevel) { vm.update { copy(logLevel = it) } }
+            }
 
+            // ── Advanced (extra fields not in the simple config sample) ────────
+            ExpandableSection("Advanced") {
+                ProfileIntField("TX_CHANNEL_SIZE", profile.txChannelSize) { vm.update { copy(txChannelSize = it) } }
+                ProfileIntField("RESOLVER_UDP_CONNECTION_POOL_SIZE", profile.resolverUdpConnectionPoolSize) {
+                    vm.update { copy(resolverUdpConnectionPoolSize = it) }
+                }
+                ProfileIntField("STREAM_QUEUE_INITIAL_CAPACITY", profile.streamQueueInitialCapacity) {
+                    vm.update { copy(streamQueueInitialCapacity = it) }
+                }
+                ProfileIntField("ORPHAN_QUEUE_INITIAL_CAPACITY", profile.orphanQueueInitialCapacity) {
+                    vm.update { copy(orphanQueueInitialCapacity = it) }
+                }
+                ProfileIntField("DNS_RESPONSE_FRAGMENT_STORE_CAPACITY", profile.dnsResponseFragmentStoreCap) {
+                    vm.update { copy(dnsResponseFragmentStoreCap = it) }
+                }
+                ProfileDoubleField("RECHECK_INACTIVE_INTERVAL_SECONDS", profile.recheckInactiveIntervalSeconds) {
+                    vm.update { copy(recheckInactiveIntervalSeconds = it) }
+                }
+                ProfileDoubleField("RECHECK_SERVER_INTERVAL_SECONDS", profile.recheckServerIntervalSeconds) {
+                    vm.update { copy(recheckServerIntervalSeconds = it) }
+                }
+                ProfileIntField("RECHECK_BATCH_SIZE", profile.recheckBatchSize) {
+                    vm.update { copy(recheckBatchSize = it) }
+                }
+                ProfileIntField("AUTO_DISABLE_MIN_OBSERVATIONS", profile.autoDisableMinObservations) {
+                    vm.update { copy(autoDisableMinObservations = it) }
+                }
+                ProfileDoubleField("AUTO_DISABLE_CHECK_INTERVAL_SECONDS", profile.autoDisableCheckIntervalSeconds) {
+                    vm.update { copy(autoDisableCheckIntervalSeconds = it) }
+                }
+            }
         }
     }
 }

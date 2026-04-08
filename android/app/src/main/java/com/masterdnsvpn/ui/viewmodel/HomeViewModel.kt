@@ -7,6 +7,8 @@ import android.net.VpnService
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.masterdnsvpn.bridge.GoMobileBridge
+import com.masterdnsvpn.hardware.HardwareAdvisor
+import com.masterdnsvpn.hardware.ProfileWarning
 import com.masterdnsvpn.profile.MetaProfileEntity
 import com.masterdnsvpn.profile.ProfileEntity
 import com.masterdnsvpn.profile.ProfileRepository
@@ -38,6 +40,16 @@ class HomeViewModel @Inject constructor(
 
     private val _vpnPermissionIntent = MutableStateFlow<Intent?>(null)
 
+    // ── Hardware warning state ────────────────────────────────────────────────────
+    private val _pendingWarnings = MutableStateFlow<List<ProfileWarning>?>(null)
+    val pendingWarnings: StateFlow<List<ProfileWarning>?> = _pendingWarnings.asStateFlow()
+
+    private val _warningForProfileId = MutableStateFlow<String?>(null)
+    val warningForProfileId: StateFlow<String?> = _warningForProfileId.asStateFlow()
+
+    /** The profile whose connect was intercepted by the warning check. Not a Context — safe to hold. */
+    private var pendingConnectProfile: ProfileEntity? = null
+
     val uiState: StateFlow<HomeUiState> = combine(
         repo.allProfiles(),
         repo.allMetaProfiles(),
@@ -61,6 +73,52 @@ class HomeViewModel @Inject constructor(
     fun connectProfile(ctx: Context, profile: ProfileEntity) {
         if (tunnelStateManager.busyProfileIds.value.contains(profile.id)) return
         if (tunnelStateManager.runningProfileIds.value.contains(profile.id)) return
+
+        // Hardware compatibility check — show warning panel if issues found.
+        // The profile still starts immediately; the user can apply recommendations later.
+        val warnings = HardwareAdvisor.check(ctx, profile)
+        if (warnings.isNotEmpty()) {
+            pendingConnectProfile = profile
+            _pendingWarnings.value = warnings
+            _warningForProfileId.value = profile.id
+        }
+
+        doConnect(ctx, profile)
+    }
+
+    /** User pressed Skip — dismiss warnings; profile is already running, nothing else to do. */
+    fun skipWarnings(ctx: Context) {
+        clearPendingWarnings()
+    }
+
+    /** User pressed dismiss (X or back) — close panel without connecting. */
+    fun dismissWarnings() {
+        clearPendingWarnings()
+    }
+
+    /**
+     * User pressed "Apply" — fold all recommended values into the profile
+     * and persist to the repository. Does NOT stop or restart the tunnel;
+     * the user must manually reconnect to pick up the new settings.
+     */
+    fun applyRecommendations() {
+        val profile = pendingConnectProfile ?: return
+        val warnings = _pendingWarnings.value ?: return
+        clearPendingWarnings()
+        viewModelScope.launch {
+            val fullProfile = repo.getProfileForTunnel(profile.id) ?: profile
+            val updated = warnings.fold(fullProfile) { p, w -> w.applyTo(p) }
+            repo.saveProfile(updated)
+        }
+    }
+
+    private fun clearPendingWarnings() {
+        pendingConnectProfile = null
+        _pendingWarnings.value = null
+        _warningForProfileId.value = null
+    }
+
+    private fun doConnect(ctx: Context, profile: ProfileEntity) {
         tunnelStateManager.markBusy(profile.id)
         viewModelScope.launch {
             when (profile.tunnelMode) {
@@ -97,12 +155,17 @@ class HomeViewModel @Inject constructor(
     }
 
     fun disconnectProfile(ctx: Context, profileId: String) {
+        // Guard against rapid double-tap: if already busy or not running, ignore.
+        if (tunnelStateManager.busyProfileIds.value.contains(profileId)) return
+        if (!tunnelStateManager.runningProfileIds.value.contains(profileId)) return
         tunnelStateManager.markBusy(profileId)
-        // Force-kill: stop Go instance immediately, then stop services
+        // Force-kill: stop Go instance on IO thread, then stop services
         viewModelScope.launch {
-            try { bridge.forceStopInstance(profileId) } catch (_: Exception) {}
-            controller.stopProxy(ctx)
-            controller.stopVpn(ctx)
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                try { bridge.forceStopInstance(profileId) } catch (_: Exception) {}
+            }
+            try { controller.stopProxy(ctx) } catch (_: Exception) {}
+            try { controller.stopVpn(ctx) } catch (_: Exception) {}
             tunnelStateManager.onTunnelStopped(profileId)
         }
     }

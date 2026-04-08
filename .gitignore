@@ -40,3 +40,4 @@ go.work.sum
 android/signing.properties
 .bench/
 .github/copilot-instructions.md
+client_config.toml.simple

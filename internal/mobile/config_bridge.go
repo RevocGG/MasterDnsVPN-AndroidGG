@@ -75,6 +75,7 @@ SessionInitRetryStepSeconds          float64
 SessionInitRetryLinearAfter          int
 SessionInitRetryMaxSeconds           float64
 SessionInitBusyRetryIntervalSeconds  float64
+SessionInitRacingCount               int
 SaveMTUServersToFile  bool
 MTUServersFileName    string
 MTUServersFileFormat  string
@@ -130,6 +131,7 @@ ClientTerminalStreamRetentionSeconds: 45.0, ClientCancelledSetupRetentionSeconds
 SessionInitRetryBaseSeconds: 1.0, SessionInitRetryStepSeconds: 1.0,
 SessionInitRetryLinearAfter: 5, SessionInitRetryMaxSeconds: 60.0,
 SessionInitBusyRetryIntervalSeconds: 60.0,
+SessionInitRacingCount: 3,
 SaveMTUServersToFile: false,
 MTUServersFileName: "masterdnsvpn_success_{time}.log",
 MTUServersFileFormat: "{IP}", MTUUsingSeparatorText: "",
@@ -210,6 +212,7 @@ tpl := "DOMAINS = %s\nDATA_ENCRYPTION_METHOD = %d\nENCRYPTION_KEY = %q\n" +
 "SESSION_INIT_RETRY_BASE_SECONDS = %g\nSESSION_INIT_RETRY_STEP_SECONDS = %g\n" +
 "SESSION_INIT_RETRY_LINEAR_AFTER = %d\nSESSION_INIT_RETRY_MAX_SECONDS = %g\n" +
 "SESSION_INIT_BUSY_RETRY_INTERVAL_SECONDS = %g\n" +
+"SESSION_INIT_RACING_COUNT = %d\n" +
 "SAVE_MTU_SERVERS_TO_FILE = %t\nMTU_SERVERS_FILE_NAME = %q\nMTU_SERVERS_FILE_FORMAT = %q\n" +
 "MTU_USING_SECTION_SEPARATOR_TEXT = %q\nMTU_REMOVED_SERVER_LOG_FORMAT = %q\nMTU_ADDED_SERVER_LOG_FORMAT = %q\n" +
 "LOG_LEVEL = %q\n" +
@@ -246,6 +249,7 @@ cfg.SOCKSUDPAssociateReadTimeoutSeconds, cfg.ClientTerminalStreamRetentionSecond
 cfg.ClientCancelledSetupRetentionSeconds,
 cfg.SessionInitRetryBaseSeconds, cfg.SessionInitRetryStepSeconds,
 cfg.SessionInitRetryLinearAfter, cfg.SessionInitRetryMaxSeconds, cfg.SessionInitBusyRetryIntervalSeconds,
+cfg.SessionInitRacingCount,
 cfg.SaveMTUServersToFile, cfg.MTUServersFileName, cfg.MTUServersFileFormat,
 cfg.MTUUsingSeparatorText, cfg.MTURemovedServerLogFormat, cfg.MTUAddedServerLogFormat,
 cfg.LogLevel, cfg.MaxPacketsPerBatch, cfg.ARQWindowSize,

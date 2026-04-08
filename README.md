@@ -164,3 +164,16 @@ See [LICENSE](LICENSE).
 ## Related
 
 - **Server & main project**: [github.com/masterking32/MasterDnsVPN](https://github.com/masterking32/MasterDnsVPN)
+
+---
+
+## Support the Project
+
+If you find this project useful, consider supporting its development:
+
+| Network | Address |
+|---------|---------|
+| TON | `UQBW_LoEhcYPIzZL_dzp-OMsqI5uAwv8p6dXy8wzzkPU-CQQ` |
+| BNB / USDT (BEP-20) | `0x951acaf8d4b61a000d3b5c697abcabf52973d0cf` |
+| TRX | `TL4Kej6DjJmT9gQ5ghmQcvsEUHPdnNNPyj` |
+| SOL | `45kAfGyh13bcyYTdbNLkVfBGtMgq4WMijLgdBK9G9ugN` |

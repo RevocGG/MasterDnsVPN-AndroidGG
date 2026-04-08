@@ -3,6 +3,8 @@ package com.masterdnsvpn.ui.viewmodel
 import android.app.Application
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.masterdnsvpn.settings.AppSelectionPrefs
@@ -10,8 +12,10 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 
 data class AppItem(
@@ -27,25 +31,26 @@ data class SettingsUiState(
     val searchQuery: String = "",
     val showSystemApps: Boolean = false,
     val loading: Boolean = true,
+    val savedToPrefs: Boolean = true,
 )
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     application: Application,
-    private val prefs: AppSelectionPrefs,
+    private val appSelectionPrefs: AppSelectionPrefs,
 ) : AndroidViewModel(application) {
 
     private val _state = MutableStateFlow(SettingsUiState())
     val state: StateFlow<SettingsUiState> = _state
 
-    // All installed apps (loaded once)
     private var allApps: List<Pair<String, String>> = emptyList()
     private var systemPackages: Set<String> = emptySet()
     private var selectedSet: MutableSet<String> = mutableSetOf()
 
+    /** Cached app icons keyed by package name. Null value = load attempted but failed. */
+    val iconCache = ConcurrentHashMap<String, Bitmap?>()
+
     init {
-        // Load on IO, then mutate shared state back on Main to avoid race conditions.
-        // If toggleApp/selectAll is called before loading finishes it won't overwrite prefs.
         viewModelScope.launch {
             val pm = application.packageManager
             val (apps, system) = withContext(Dispatchers.IO) {
@@ -59,17 +64,32 @@ class SettingsViewModel @Inject constructor(
                     .toSet()
                 a to s
             }
-            // Back on Main — safe to mutate allApps / systemPackages / selectedSet
             allApps = apps
             systemPackages = system
-            selectedSet = prefs.selectedPackages.toMutableSet()
+
+            // Load per-app settings from global AppSelectionPrefs (what the VPN service reads).
+            withContext(Dispatchers.IO) {
+                selectedSet = appSelectionPrefs.selectedPackages.toMutableSet()
+                _state.update { it.copy(mode = appSelectionPrefs.mode) }
+            }
+
             rebuildList()
+
+            viewModelScope.launch(Dispatchers.IO) {
+                apps.forEach { (pkg, _) ->
+                    if (!iconCache.containsKey(pkg)) {
+                        val bmp = try {
+                            pm.getApplicationIcon(pkg).toBitmap(40, 40)
+                        } catch (_: Exception) { null }
+                        iconCache[pkg] = bmp
+                    }
+                }
+            }
         }
     }
 
     fun setMode(mode: AppSelectionPrefs.Mode) {
-        prefs.mode = mode
-        _state.value = _state.value.copy(mode = mode)
+        _state.update { it.copy(mode = mode, savedToPrefs = false) }
     }
 
     fun setSearchQuery(query: String) {
@@ -88,22 +108,32 @@ class SettingsViewModel @Inject constructor(
         } else {
             selectedSet.add(packageName)
         }
-        prefs.selectedPackages = selectedSet.toSet()
+        _state.update { it.copy(savedToPrefs = false) }
         rebuildList()
     }
 
     fun selectAll() {
         val visible = getVisiblePackages()
         selectedSet.addAll(visible)
-        prefs.selectedPackages = selectedSet.toSet()
+        _state.update { it.copy(savedToPrefs = false) }
         rebuildList()
     }
 
     fun deselectAll() {
         val visible = getVisiblePackages()
         selectedSet.removeAll(visible)
-        prefs.selectedPackages = selectedSet.toSet()
+        _state.update { it.copy(savedToPrefs = false) }
         rebuildList()
+    }
+
+    /** Save per-app VPN settings to global AppSelectionPrefs (read by the VPN service). */
+    fun save() {
+        val mode = _state.value.mode
+        val packages = selectedSet.toSet()
+        viewModelScope.launch(Dispatchers.IO) {
+            appSelectionPrefs.saveAll(mode, packages)
+            _state.update { it.copy(savedToPrefs = true) }
+        }
     }
 
     private fun getVisiblePackages(): Set<String> {
@@ -134,10 +164,6 @@ class SettingsViewModel @Inject constructor(
                     selected = pkg in selectedSet,
                 )
             }
-        _state.value = s.copy(
-            mode = prefs.mode,
-            apps = filtered,
-            loading = false,
-        )
+        _state.value = s.copy(apps = filtered, loading = false)
     }
 }

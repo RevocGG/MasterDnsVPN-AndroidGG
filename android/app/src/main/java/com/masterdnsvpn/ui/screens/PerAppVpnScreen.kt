@@ -1,6 +1,5 @@
 package com.masterdnsvpn.ui.screens
 
-import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -8,9 +7,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.CheckBox
-import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material3.*
@@ -19,18 +18,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.graphics.drawable.toBitmap
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.masterdnsvpn.settings.AppSelectionPrefs
 import com.masterdnsvpn.ui.theme.*
 import com.masterdnsvpn.ui.viewmodel.AppItem
 import com.masterdnsvpn.ui.viewmodel.SettingsViewModel
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -39,7 +34,6 @@ fun PerAppVpnScreen(
     vm: SettingsViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsState()
-    val ctx = LocalContext.current
 
     GlassBackground {
         Scaffold(
@@ -55,14 +49,6 @@ fun PerAppVpnScreen(
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = TextSecondary)
                         }
                     },
-                    actions = {
-                        IconButton(onClick = { vm.selectAll() }) {
-                            Icon(Icons.Default.SelectAll, "Select All", tint = CyanAccent)
-                        }
-                        IconButton(onClick = { vm.deselectAll() }) {
-                            Icon(Icons.Default.Clear, "Deselect All", tint = TextSecondary)
-                        }
-                    },
                 )
             },
         ) { padding ->
@@ -71,7 +57,29 @@ fun PerAppVpnScreen(
                     .padding(padding)
                     .padding(horizontal = 16.dp),
             ) {
-                // Mode selector
+                // ── TUN-only info banner ────────────────────────────────────────
+                Surface(
+                    color = TealPrimary.copy(alpha = 0.15f),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Default.Info, null, tint = TealLight, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "These settings only apply in TUN mode. They have no effect in SOCKS5 mode.",
+                            color = TealLight,
+                            fontSize = 12.sp,
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+
+                // ── Mode selector ───────────────────────────────────────────────
                 GlassCard {
                     Column {
                         Text("Per-App VPN Mode", color = TealLight, fontWeight = FontWeight.SemiBold)
@@ -101,12 +109,32 @@ fun PerAppVpnScreen(
                                 )
                             }
                         }
+
+                        Spacer(Modifier.height(8.dp))
+
+                        // ── Save button ─────────────────────────────────────────
+                        Button(
+                            onClick = { vm.save() },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (state.savedToPrefs) TealPrimary.copy(alpha = 0.5f) else TealPrimary,
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                        ) {
+                            Icon(Icons.Default.Save, null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                if (state.savedToPrefs) "Saved \u2713" else "Save Settings",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
                     }
                 }
 
                 Spacer(Modifier.height(8.dp))
 
-                // Search bar
+                // ── Search bar ──────────────────────────────────────────────────
                 OutlinedTextField(
                     value = state.searchQuery,
                     onValueChange = { vm.setSearchQuery(it) },
@@ -133,7 +161,7 @@ fun PerAppVpnScreen(
 
                 Spacer(Modifier.height(4.dp))
 
-                // Show system apps toggle
+                // ── Show system apps + selected count ───────────────────────────
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth(),
@@ -152,8 +180,47 @@ fun PerAppVpnScreen(
                     Text("${state.apps.count { it.selected }} selected", color = TealLight, fontSize = 13.sp)
                 }
 
+                // ── Select All / Clear row ──────────────────────────────────────
+                val enabled = state.mode != AppSelectionPrefs.Mode.ALL
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedButton(
+                        onClick = { vm.selectAll() },
+                        enabled = enabled,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = CyanAccent),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            if (enabled) CyanAccent else TextSecondary.copy(alpha = 0.3f),
+                        ),
+                    ) {
+                        Icon(Icons.Default.SelectAll, null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Select All", fontSize = 13.sp)
+                    }
+                    OutlinedButton(
+                        onClick = { vm.deselectAll() },
+                        enabled = enabled,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            if (enabled) TextSecondary else TextSecondary.copy(alpha = 0.3f),
+                        ),
+                    ) {
+                        Icon(Icons.Default.Clear, null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Clear All", fontSize = 13.sp)
+                    }
+                }
+
                 Spacer(Modifier.height(4.dp))
 
+                // ── App list ────────────────────────────────────────────────────
                 if (state.loading) {
                     Box(
                         modifier = Modifier.fillMaxSize(),
@@ -162,14 +229,13 @@ fun PerAppVpnScreen(
                         CircularProgressIndicator(color = TealPrimary)
                     }
                 } else {
-                    val enabled = state.mode != AppSelectionPrefs.Mode.ALL
-
                     LazyColumn(
                         verticalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
                         items(state.apps, key = { it.packageName }) { app ->
                             AppRowItem(
                                 app = app,
+                                iconCache = vm.iconCache,
                                 enabled = enabled,
                                 onToggle = { vm.toggleApp(app.packageName) },
                             )
@@ -184,17 +250,12 @@ fun PerAppVpnScreen(
 @Composable
 private fun AppRowItem(
     app: AppItem,
+    iconCache: java.util.concurrent.ConcurrentHashMap<String, android.graphics.Bitmap?>,
     enabled: Boolean,
     onToggle: () -> Unit,
 ) {
-    val ctx = LocalContext.current
-    val icon by produceState<Bitmap?>(initialValue = null, app.packageName) {
-        value = withContext(Dispatchers.IO) {
-            try {
-                ctx.packageManager.getApplicationIcon(app.packageName).toBitmap(40, 40)
-            } catch (_: Exception) { null }
-        }
-    }
+    // Read from pre-warmed cache — no per-item coroutine or allocation.
+    val icon: android.graphics.Bitmap? = iconCache[app.packageName]
 
     Surface(
         onClick = { if (enabled) onToggle() },

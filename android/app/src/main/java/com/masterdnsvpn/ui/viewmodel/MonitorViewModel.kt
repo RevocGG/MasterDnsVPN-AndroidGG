@@ -13,6 +13,7 @@ import com.masterdnsvpn.profile.ProfileRepository
 import com.masterdnsvpn.service.TunnelStateManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.isActive
@@ -69,7 +70,7 @@ class MonitorViewModel @Inject constructor(
         prevWireRx = TrafficStats.getUidRxBytes(uid).coerceAtLeast(0)
         prevWireTx = TrafficStats.getUidTxBytes(uid).coerceAtLeast(0)
 
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             while (isActive) {
                 updateStats()
                 delay(1_000)

@@ -133,7 +133,7 @@ instancesMu.Unlock()
 if !exists {
 return MobileStats{IsRunning: false}
 }
-conns := h.cl.Connections()
+conns := h.cl.Balancer().AllConnections()
 valid := 0
 for _, conn := range conns {
 if conn.IsValid {

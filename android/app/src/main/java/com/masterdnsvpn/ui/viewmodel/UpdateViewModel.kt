@@ -8,6 +8,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.masterdnsvpn.BuildConfig
 import com.masterdnsvpn.profile.ProfileRepository
+import com.masterdnsvpn.security.ApkSignatureVerifier
 import com.masterdnsvpn.service.TunnelStateManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
@@ -129,6 +130,22 @@ class UpdateViewModel @Inject constructor(
                         downloadWithProgress(asset, outFile, null)
                     } catch (_: Exception) {
                         downloadWithProgress(asset, outFile, activeSocksProxy())
+                    }
+
+                    // ── Signature verification (SECURITY) ──────────────────────────
+                    // Verify the downloaded APK is signed with the same developer key
+                    // as this app. This blocks:
+                    //  · Compromised GitHub account pushing a malicious release
+                    //  · MITM attacks that swap the CDN payload
+                    // The developer's private key never leaves their machine, so an
+                    // attacker that controls the distribution channel still cannot
+                    // produce a validly signed APK.
+                    if (!ApkSignatureVerifier.verify(app, outFile)) {
+                        outFile.delete() // don't leave unverified file on disk
+                        throw SecurityException(
+                            "APK signature mismatch — the downloaded file was not signed " +
+                                "by the expected developer key. Installation blocked."
+                        )
                     }
                 }
                 _state.value = UpdateUiState.ReadyToInstall(outFile)

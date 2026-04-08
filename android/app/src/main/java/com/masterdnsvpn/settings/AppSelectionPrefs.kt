@@ -38,4 +38,16 @@ class AppSelectionPrefs @Inject constructor(
     var selectedPackages: Set<String>
         get() = prefs.getStringSet(KEY_PACKAGES, emptySet()) ?: emptySet()
         set(value) = prefs.edit().putStringSet(KEY_PACKAGES, value).apply()
+
+    /**
+     * Atomically saves both mode and packages using a synchronous commit so the
+     * service always reads a consistent state even if it starts right after saving.
+     * Must be called from a background thread.
+     */
+    fun saveAll(mode: Mode, packages: Set<String>) {
+        prefs.edit()
+            .putString(KEY_MODE, mode.name)
+            .putStringSet(KEY_PACKAGES, packages.toHashSet()) // defensive copy avoids Android SP cache bug
+            .commit()
+    }
 }

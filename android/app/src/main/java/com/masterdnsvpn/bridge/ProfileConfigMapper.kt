@@ -101,6 +101,7 @@ object ProfileConfigMapper {
         c.sessionInitRetryLinearAfter = p.sessionInitRetryLinearAfter.toLong()
         c.sessionInitRetryMaxSec = p.sessionInitRetryMaxSeconds
         c.sessionInitBusyRetryIntervalSec = p.sessionInitBusyRetryIntervalSeconds
+        c.sessionInitRacingCount = p.sessionInitRacingCount.toLong()
 
         // Section 11: MTU files
         c.saveMTUServersToFile = p.saveMtuServersToFile
