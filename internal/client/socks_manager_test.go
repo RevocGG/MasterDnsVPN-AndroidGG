@@ -106,5 +106,3 @@ func TestLateSocksResultDoesNotReactivateCancelledStream(t *testing.T) {
 		t.Fatal("expected cancelled stream to remain terminal after late SOCKS result")
 	}
 }
-
-

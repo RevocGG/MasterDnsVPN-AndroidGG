@@ -451,6 +451,18 @@ func TestARQ_New(t *testing.T) {
 	}
 }
 
+func TestARQ_DefaultBackpressureFloorRemainsConservative(t *testing.T) {
+	enqueuer := NewMockPacketEnqueuer()
+	a := NewARQ(1, 2, enqueuer, nil, 1000, &testLogger{t}, Config{})
+
+	if a.windowSize != 300 {
+		t.Fatalf("expected default window size floor 300, got %d", a.windowSize)
+	}
+	if a.limit != 240 {
+		t.Fatalf("expected default send-buffer limit 240, got %d", a.limit)
+	}
+}
+
 func TestARQ_SendData(t *testing.T) {
 	enqueuer := NewMockPacketEnqueuer()
 	cfg := Config{
@@ -1394,163 +1406,6 @@ func TestARQ_ClientEOFQueuesRSTInsteadOfFIN(t *testing.T) {
 	}
 }
 
-func TestARQ_ClientEOFEventuallyQueuesCloseWriteAfterGrace(t *testing.T) {
-	enqueuer := NewMockPacketEnqueuer()
-	cfg := Config{
-		WindowSize:               100,
-		RTO:                      0.1,
-		MaxRTO:                   0.5,
-		EnableControlReliability: true,
-		IsClient:                 true,
-	}
-
-	localApp, arqConn := net.Pipe()
-	defer localApp.Close()
-	defer arqConn.Close()
-
-	a := NewARQ(1, 1, enqueuer, arqConn, 1000, &testLogger{t}, cfg)
-	a.Start()
-	defer a.Close("test end", CloseOptions{Force: true})
-
-	time.Sleep(50 * time.Millisecond)
-	_ = localApp.Close()
-
-	select {
-	case p := <-enqueuer.Packets:
-		if p.packetType != Enums.PACKET_STREAM_CLOSE_READ {
-			t.Fatalf("expected PACKET_STREAM_CLOSE_READ for client EOF, got %s", Enums.PacketTypeName(p.packetType))
-		}
-	case <-time.After(1 * time.Second):
-		t.Fatal("timed out waiting for client-side CLOSE_READ")
-	}
-
-	a.HandleAckPacket(Enums.PACKET_STREAM_CLOSE_READ_ACK, 0, 0)
-
-	a.mu.Lock()
-	a.clientEOFAt = time.Now().Add(-3 * time.Second)
-	a.mu.Unlock()
-
-	a.checkRetransmits()
-
-	timeout := time.After(1 * time.Second)
-	for {
-		select {
-		case p := <-enqueuer.Packets:
-			if p.packetType == Enums.PACKET_STREAM_CLOSE_WRITE {
-				return
-			}
-		case <-timeout:
-			t.Fatal("timed out waiting for client-side CLOSE_WRITE after EOF grace")
-		}
-	}
-}
-
-func TestARQ_ClientCloseReadAckEventuallyQueuesCloseWriteAfterGrace(t *testing.T) {
-	enqueuer := NewMockPacketEnqueuer()
-	cfg := Config{
-		WindowSize:               100,
-		RTO:                      0.1,
-		MaxRTO:                   0.5,
-		EnableControlReliability: true,
-		IsClient:                 true,
-	}
-
-	localApp, arqConn := net.Pipe()
-	defer localApp.Close()
-	defer arqConn.Close()
-
-	a := NewARQ(1, 1, enqueuer, arqConn, 1000, &testLogger{t}, cfg)
-	a.Start()
-	defer a.Close("test end", CloseOptions{Force: true})
-
-	a.Close("test close-read", CloseOptions{SendCloseRead: true})
-
-	timeout := time.After(1 * time.Second)
-	for {
-		select {
-		case p := <-enqueuer.Packets:
-			if p.packetType == Enums.PACKET_STREAM_CLOSE_READ {
-				goto gotCloseRead
-			}
-		case <-timeout:
-			t.Fatal("timed out waiting for initial CLOSE_READ")
-		}
-	}
-
-gotCloseRead:
-	a.HandleAckPacket(Enums.PACKET_STREAM_CLOSE_READ_ACK, 0, 0)
-
-	a.mu.Lock()
-	a.closeReadAckedAt = time.Now().Add(-3 * time.Second)
-	a.mu.Unlock()
-
-	a.checkRetransmits()
-
-	timeout = time.After(1 * time.Second)
-	for {
-		select {
-		case p := <-enqueuer.Packets:
-			if p.packetType == Enums.PACKET_STREAM_CLOSE_WRITE {
-				return
-			}
-		case <-timeout:
-			t.Fatal("timed out waiting for CLOSE_WRITE after CLOSE_READ ACK grace")
-		}
-	}
-}
-
-func TestARQ_OverlappingCloseAcksStillFinalizeClientDisconnect(t *testing.T) {
-	enqueuer := NewMockPacketEnqueuer()
-	cfg := Config{
-		WindowSize:               100,
-		RTO:                      0.1,
-		MaxRTO:                   0.5,
-		EnableControlReliability: true,
-		IsClient:                 true,
-	}
-
-	localApp, arqConn := net.Pipe()
-	defer localApp.Close()
-	defer arqConn.Close()
-
-	a := NewARQ(1, 1, enqueuer, arqConn, 1000, &testLogger{t}, cfg)
-	a.Start()
-	defer a.Close("test end", CloseOptions{Force: true})
-
-	a.Close("test close-read", CloseOptions{SendCloseRead: true})
-	a.Close("test close-write", CloseOptions{SendCloseWrite: true})
-
-	timeout := time.After(1 * time.Second)
-	seenRead := false
-	seenWrite := false
-	for !(seenRead && seenWrite) {
-		select {
-		case p := <-enqueuer.Packets:
-			if p.packetType == Enums.PACKET_STREAM_CLOSE_READ {
-				seenRead = true
-			}
-			if p.packetType == Enums.PACKET_STREAM_CLOSE_WRITE {
-				seenWrite = true
-			}
-		case <-timeout:
-			t.Fatal("timed out waiting for close packets")
-		}
-	}
-
-	a.HandleAckPacket(Enums.PACKET_STREAM_CLOSE_WRITE_ACK, 0, 0)
-	a.HandleAckPacket(Enums.PACKET_STREAM_CLOSE_READ_ACK, 0, 0)
-
-	deadline := time.Now().Add(1 * time.Second)
-	for time.Now().Before(deadline) {
-		if a.IsClosed() {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	t.Fatal("expected ARQ to finalize after overlapping close ACKs")
-}
-
 func TestARQ_IOReadDataWithEOFStillQueuesFinalChunk(t *testing.T) {
 	enqueuer := NewMockPacketEnqueuer()
 	cfg := Config{
@@ -2173,7 +2028,7 @@ func TestARQ_ClientCloseWriteAckInitiatesCloseReadWhenWriterBroken(t *testing.T)
 		IsClient:                 true,
 	})
 
-	a.markLocalWriterBroken()
+	a.markLocalWriterBroken("test setup")
 	a.Close("Local App Closed Connection (writer closed)", CloseOptions{SendCloseWrite: true})
 
 	select {
@@ -2207,7 +2062,7 @@ func TestARQ_ClientCloseWriteAndCloseReadAckFinalizeWithoutPeerCloseRead(t *test
 		IsClient:                 true,
 	})
 
-	a.markLocalWriterBroken()
+	a.markLocalWriterBroken("test setup")
 	a.Close("Local App Closed Connection (writer closed)", CloseOptions{SendCloseWrite: true})
 
 	select {
@@ -2237,6 +2092,152 @@ func TestARQ_ClientCloseWriteAndCloseReadAckFinalizeWithoutPeerCloseRead(t *test
 
 	if state := a.State(); state != StateTimeWait {
 		t.Fatalf("expected TIME_WAIT after client-local disconnect finalization, got %v", state)
+	}
+}
+
+func TestARQ_ClientLocalDisconnectWaitsForPendingInboundQueueToDrain(t *testing.T) {
+	enqueuer := NewMockPacketEnqueuer()
+	a := NewARQ(1, 1, enqueuer, nil, 1000, &testLogger{t}, Config{
+		WindowSize:               100,
+		RTO:                      0.1,
+		MaxRTO:                   0.5,
+		EnableControlReliability: true,
+		IsClient:                 true,
+	})
+
+	a.markLocalWriterBroken("test setup")
+	a.mu.Lock()
+	a.pendingInbound = 1
+	a.mu.Unlock()
+
+	a.Close("Local App Closed Connection (writer closed)", CloseOptions{SendCloseWrite: true})
+
+	select {
+	case <-enqueuer.Packets:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for initial STREAM_CLOSE_WRITE")
+	}
+
+	a.HandleAckPacket(Enums.PACKET_STREAM_CLOSE_WRITE_ACK, 0, 0)
+
+	select {
+	case packet := <-enqueuer.Packets:
+		if packet.packetType != Enums.PACKET_STREAM_CLOSE_READ {
+			t.Fatalf("expected STREAM_CLOSE_READ after CLOSE_WRITE_ACK, got %s", Enums.PacketTypeName(packet.packetType))
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for follow-up STREAM_CLOSE_READ")
+	}
+
+	a.HandleAckPacket(Enums.PACKET_STREAM_CLOSE_READ_ACK, 0, 0)
+
+	select {
+	case <-a.Done():
+		t.Fatal("stream finalized before pending inbound queue drained")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	a.mu.Lock()
+	a.pendingInbound = 0
+	a.mu.Unlock()
+	a.tryFinalizeClientLocalDisconnect()
+
+	select {
+	case <-a.Done():
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected client-local disconnect to finalize after pending inbound queue drained")
+	}
+}
+
+func TestARQ_RemoteEOFDoesNotFinalizeWhileCloseWriteOnlySentForBrokenWriter(t *testing.T) {
+	enqueuer := NewMockPacketEnqueuer()
+	a := NewARQ(1, 1, enqueuer, nil, 1000, &testLogger{t}, Config{
+		WindowSize:               100,
+		RTO:                      0.1,
+		MaxRTO:                   0.5,
+		EnableControlReliability: true,
+	})
+
+	a.mu.Lock()
+	a.closeReadReceived = true
+	a.closeReadSent = true
+	a.closeReadAcked = true
+	a.localWriterBroken = true
+	a.localWriteClosed = true
+	a.closeWriteSent = true
+	a.waitingAck = true
+	a.waitingAckFor = Enums.PACKET_STREAM_CLOSE_WRITE
+	a.mu.Unlock()
+
+	a.tryFinalizeRemoteEOF()
+	if a.IsClosed() {
+		t.Fatal("stream should not finalize while CLOSE_WRITE is only sent and still awaiting settlement")
+	}
+
+	a.markCloseWriteAcked()
+	a.clearWaitingAck(Enums.PACKET_STREAM_CLOSE_WRITE)
+	a.tryFinalizeRemoteEOF()
+	if !a.IsClosed() {
+		t.Fatal("expected stream to finalize once CLOSE_WRITE is actually settled")
+	}
+}
+
+func TestARQ_RxLoopShutdownDrainsPendingInboundQueueAccounting(t *testing.T) {
+	enqueuer := NewMockPacketEnqueuer()
+	a := NewARQ(1, 1, enqueuer, nil, 1000, &testLogger{t}, Config{
+		WindowSize: 100,
+		RTO:        0.1,
+		MaxRTO:     0.5,
+	})
+
+	a.mu.Lock()
+	a.pendingInbound = 3
+	a.mu.Unlock()
+
+	a.rxChan <- rxPayload{sn: 10, data: []byte("a")}
+	a.rxChan <- rxPayload{sn: 20, data: []byte("b")}
+	a.rxChan <- rxPayload{sn: 30, data: []byte("c")}
+
+	a.wg.Add(1)
+	go a.rxLoop()
+
+	a.cancel()
+	a.wg.Wait()
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.pendingInbound != 0 {
+		t.Fatalf("expected pendingInbound to drain to zero on rxLoop shutdown, got %d", a.pendingInbound)
+	}
+}
+
+func TestARQ_ReceiveWindowAllowsTwiceSendWindowOutOfOrder(t *testing.T) {
+	enqueuer := NewMockPacketEnqueuer()
+	a := NewARQ(1, 1, enqueuer, nil, 1000, &testLogger{t}, Config{
+		WindowSize: 100,
+		RTO:        0.1,
+		MaxRTO:     0.5,
+	})
+
+	a.windowSize = 100
+	a.receiveWindowSize = 200
+
+	a.processReceivedDataBatch([]rxPayload{{sn: 150, data: []byte("in-window")}})
+
+	a.mu.RLock()
+	_, accepted := a.rcvBuf[150]
+	a.mu.RUnlock()
+	if !accepted {
+		t.Fatal("expected out-of-order packet inside receive window to be buffered")
+	}
+
+	a.processReceivedDataBatch([]rxPayload{{sn: 250, data: []byte("too-far")}})
+
+	a.mu.RLock()
+	_, dropped := a.rcvBuf[250]
+	a.mu.RUnlock()
+	if dropped {
+		t.Fatal("expected packet beyond receive window to be dropped")
 	}
 }
 

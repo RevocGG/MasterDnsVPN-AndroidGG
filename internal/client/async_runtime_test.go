@@ -19,7 +19,9 @@ import (
 	DnsParser "masterdnsvpn-go/internal/dnsparser"
 	Enums "masterdnsvpn-go/internal/enums"
 	"masterdnsvpn-go/internal/logger"
+	"masterdnsvpn-go/internal/mlq"
 	"masterdnsvpn-go/internal/security"
+	VpnProto "masterdnsvpn-go/internal/vpnproto"
 )
 
 func createTestClient(t *testing.T) *Client {
@@ -29,7 +31,6 @@ func createTestClient(t *testing.T) *Client {
 		Resolvers: []config.ResolverAddress{
 			{IP: "8.8.8.8", Port: 53},
 		},
-		TXChannelSize:        10,
 		RXChannelSize:        10,
 		RX_TX_Workers:        1,
 		TunnelProcessWorkers: 1,
@@ -80,32 +81,32 @@ func TestResetRuntimeBindings(t *testing.T) {
 	}
 }
 
-func TestClearTxSignal(t *testing.T) {
+func TestClearDispatchSignal(t *testing.T) {
 	c := createTestClient(t)
-	c.txSignal = make(chan struct{}, 5)
-	c.txSignal <- struct{}{}
-	c.txSignal <- struct{}{}
+	c.dispatchSignal = make(chan struct{}, 5)
+	c.dispatchSignal <- struct{}{}
+	c.dispatchSignal <- struct{}{}
 
-	c.clearTxSignal()
+	c.clearDispatchSignal()
 
 	select {
-	case <-c.txSignal:
-		t.Fatal("txSignal should be empty")
+	case <-c.dispatchSignal:
+		t.Fatal("dispatchSignal should be empty")
 	default:
 	}
 }
 
-func TestClearTxSpaceSignal(t *testing.T) {
+func TestClearPlannerQueueSpaceSignal(t *testing.T) {
 	c := createTestClient(t)
-	c.txSpaceSignal = make(chan struct{}, 5)
-	c.txSpaceSignal <- struct{}{}
-	c.txSpaceSignal <- struct{}{}
+	c.plannerQueueSpaceSignal = make(chan struct{}, 5)
+	c.plannerQueueSpaceSignal <- struct{}{}
+	c.plannerQueueSpaceSignal <- struct{}{}
 
-	c.clearTxSpaceSignal()
+	c.clearPlannerQueueSpaceSignal()
 
 	select {
-	case <-c.txSpaceSignal:
-		t.Fatal("txSpaceSignal should be empty")
+	case <-c.plannerQueueSpaceSignal:
+		t.Fatal("plannerQueueSpaceSignal should be empty")
 	default:
 	}
 }
@@ -121,26 +122,128 @@ func TestOnRXDropIncrementsCounter(t *testing.T) {
 	}
 }
 
+func TestTrackResolverSendBoundsResolverPendingGrowth(t *testing.T) {
+	c := createTestClient(t)
+	base := time.Now()
+
+	for i := 0; i < resolverPendingHardCap+32; i++ {
+		c.balancer.pendingStoreForTest(balancerResolverSampleKey{
+			resolverAddr: "127.0.0.1:5300",
+			dnsID:        uint16(i),
+		}, balancerResolverSample{
+			serverKey: "resolver-a",
+			sentAt:    base.Add(-time.Minute),
+		})
+	}
+
+	packet := []byte{0x12, 0x34}
+	c.balancer.TrackResolverSend(packet, "127.0.0.1:5300", "", "resolver-a", base, c.tunnelPacketTimeout)
+
+	pendingCount := c.balancer.pendingCount()
+	_, inserted := c.balancer.pendingLookupForTest(balancerResolverSampleKey{
+		resolverAddr: "127.0.0.1:5300",
+		dnsID:        binary.BigEndian.Uint16(packet),
+	})
+
+	if pendingCount > resolverPendingHardCap {
+		t.Fatalf("expected resolverPending to stay bounded, got=%d hardCap=%d", pendingCount, resolverPendingHardCap)
+	}
+	if !inserted {
+		t.Fatal("expected latest resolver sample to remain tracked")
+	}
+}
+
 func TestDrainQueues(t *testing.T) {
 	c := createTestClient(t)
-	c.txChannel = make(chan rawOutboundTask, 5)
-	c.encodedTXChannel = make(chan encodedOutboundTask, 5)
+	c.plannerQueue = make(chan plannerTask, 5)
+	c.encodedTXChannel = make(chan writerTask, 5)
 	c.rxChannel = make(chan asyncReadPacket, 5)
 
-	c.txChannel <- rawOutboundTask{}
-	c.encodedTXChannel <- encodedOutboundTask{}
+	c.plannerQueue <- plannerTask{}
+	c.encodedTXChannel <- writerTask{}
 	c.rxChannel <- asyncReadPacket{data: make([]byte, 10)}
 
 	c.drainQueues()
 
-	if len(c.txChannel) != 0 {
-		t.Errorf("expected txChannel empty, got %d", len(c.txChannel))
+	if len(c.plannerQueue) != 0 {
+		t.Errorf("expected plannerQueue empty, got %d", len(c.plannerQueue))
 	}
 	if len(c.encodedTXChannel) != 0 {
 		t.Errorf("expected encodedTXChannel empty, got %d", len(c.encodedTXChannel))
 	}
 	if len(c.rxChannel) != 0 {
 		t.Errorf("expected rxChannel empty, got %d", len(c.rxChannel))
+	}
+}
+
+func TestApplyPlannerNoConnectionPolicyDropsControlTask(t *testing.T) {
+	c := createTestClient(t)
+	stream := &Stream_client{client: c, StreamID: 9}
+	item := &clientStreamTXPacket{
+		PacketType: Enums.PACKET_STREAM_SYN,
+		Payload:    []byte("syn"),
+	}
+
+	c.applyPlannerNoConnectionPolicy(plannerTask{
+		opts:     VpnProto.BuildOptions{PacketType: Enums.PACKET_STREAM_SYN, StreamID: stream.StreamID},
+		item:     item,
+		selected: stream,
+	})
+
+	if item.Payload != nil {
+		t.Fatal("expected control task to be released when no connection is available")
+	}
+}
+
+func TestApplyPlannerNoConnectionPolicyRequeuesDataTask(t *testing.T) {
+	c := createTestClient(t)
+	stream := &Stream_client{
+		client:   c,
+		StreamID: 10,
+		txQueue:  mlq.New[*clientStreamTXPacket](8),
+	}
+	item := &clientStreamTXPacket{
+		PacketType:  Enums.PACKET_STREAM_DATA,
+		SequenceNum: 7,
+		Payload:     []byte("data"),
+	}
+
+	c.applyPlannerNoConnectionPolicy(plannerTask{
+		opts:     VpnProto.BuildOptions{PacketType: Enums.PACKET_STREAM_DATA, StreamID: stream.StreamID},
+		item:     item,
+		selected: stream,
+	})
+
+	if item.Payload != nil {
+		t.Fatal("expected original dequeued data task to be released after requeue")
+	}
+	if stream.txQueue == nil || stream.txQueue.FastSize() != 1 {
+		t.Fatalf("expected data task to be requeued, got queue size %d", stream.txQueue.FastSize())
+	}
+	queued, _, ok := stream.txQueue.Peek()
+	if !ok || queued == nil {
+		t.Fatal("expected requeued packet to be present")
+	}
+	if queued.PacketType != Enums.PACKET_STREAM_DATA || queued.SequenceNum != 7 {
+		t.Fatalf("unexpected requeued packet: type=%d seq=%d", queued.PacketType, queued.SequenceNum)
+	}
+}
+
+func TestRequiredWriterSlotsForFramesUsesSingleBatchSlot(t *testing.T) {
+	c := createTestClient(t)
+
+	frames := []encodedOutboundDatagram{
+		{serverKey: "a", packet: []byte("one")},
+		{serverKey: "b", packet: []byte("two")},
+		{serverKey: "c", packet: []byte("three")},
+	}
+
+	if got := c.requiredWriterSlotsForFrames(frames); got != 1 {
+		t.Fatalf("expected one writer queue slot for a multi-frame batch, got=%d", got)
+	}
+
+	if got := c.requiredWriterSlotsForFrames(nil); got != 0 {
+		t.Fatalf("expected zero writer queue slots for empty frames, got=%d", got)
 	}
 }
 
@@ -227,6 +330,7 @@ func TestStartAsyncRuntime(t *testing.T) {
 	if len(c.tunnelConns) != c.tunnelRX_TX_Workers {
 		t.Fatalf("expected %d tunnel sockets, got %d", c.tunnelRX_TX_Workers, len(c.tunnelConns))
 	}
+
 	if c.asyncCancel == nil {
 		t.Error("expected asyncCancel not nil")
 	}
@@ -254,13 +358,10 @@ func TestStartAsyncRuntimeCleansUpOnListenerStartFailure(t *testing.T) {
 	}
 }
 
-func TestStartAsyncRuntimeCollectsResolverTimeoutsEvenWhenHealthFeaturesDisabled(t *testing.T) {
+func TestResolverHealthLoopCollectsResolverTimeoutsWhenAutoDisableEnabled(t *testing.T) {
 	c := createTestClient(t)
-	c.cfg.ListenIP = "127.0.0.1"
-	c.cfg.ListenPort = 0
-	c.cfg.AutoDisableTimeoutServers = false
+	c.cfg.AutoDisableTimeoutServers = true
 	c.cfg.RecheckInactiveServersEnabled = false
-	c.initResolverRecheckMeta()
 
 	now := time.Now()
 	c.nowFn = func() time.Time {
@@ -268,41 +369,35 @@ func TestStartAsyncRuntimeCollectsResolverTimeoutsEvenWhenHealthFeaturesDisabled
 	}
 
 	addr := &net.UDPAddr{IP: net.ParseIP("8.8.8.8"), Port: 53}
-	serverKey := ""
-	if len(c.connections) > 0 {
-		serverKey = c.connections[0].Key
-	}
-	key := resolverSampleKey{
+	serverKey := "resolver-a"
+	key := balancerResolverSampleKey{
 		resolverAddr: addr.String(),
 		dnsID:        0x1337,
 	}
 
-	c.resolverStatsMu.Lock()
-	c.resolverPending[key] = resolverSample{
+	c.balancer.SetAutoDisableConfig(
+		true,
+		180*time.Second,
+	)
+
+	c.balancer.pendingStoreForTest(key, balancerResolverSample{
 		serverKey: serverKey,
 		sentAt:    now.Add(-10 * time.Second),
-	}
-	c.resolverStatsMu.Unlock()
+	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	if err := c.StartAsyncRuntime(ctx); err != nil {
-		t.Fatalf("StartAsyncRuntime returned error: %v", err)
-	}
-	defer c.StopAsyncRuntime()
+	go c.runResolverHealthLoop(ctx)
 
 	waitForResolverHealthCondition(t, 3*time.Second, func() bool {
-		c.resolverStatsMu.RLock()
-		sample, ok := c.resolverPending[key]
-		c.resolverStatsMu.RUnlock()
+		sample, ok := c.balancer.pendingLookupForTest(key)
 		return ok && sample.timedOut
-	}, "expected resolver timeout sample to be collected even without auto-disable/recheck enabled")
+	}, "expected resolver timeout sample to be collected when auto-disable is enabled")
 }
 
 func TestHandleInboundPacketTreatsMissingTXTAsResolverSuccess(t *testing.T) {
 	c := buildTestClientWithResolvers(config.ClientConfig{}, "a", "b", "c", "d")
-	c.initResolverRecheckMeta()
 	addr := &net.UDPAddr{IP: net.ParseIP("8.8.8.8"), Port: 53}
 
 	query, err := DnsParser.BuildTXTQuestionPacket("x.v.example.com", 16, 4096)
@@ -315,24 +410,26 @@ func TestHandleInboundPacketTreatsMissingTXTAsResolverSuccess(t *testing.T) {
 	}
 
 	dnsID := binary.BigEndian.Uint16(response[:2])
-	c.resolverPending[resolverSampleKey{
+	c.balancer.pendingStoreForTest(balancerResolverSampleKey{
 		resolverAddr: addr.String(),
 		dnsID:        dnsID,
-	}] = resolverSample{
+	}, balancerResolverSample{
 		serverKey: "a",
 		sentAt:    time.Now().Add(-200 * time.Millisecond),
-	}
+	})
 
 	c.handleInboundPacket(response, addr, "")
 
-	if len(c.resolverPending) != 0 {
-		t.Fatalf("expected resolverPending to be cleared after empty DNS success, got=%d", len(c.resolverPending))
+	if got := c.balancer.pendingCount(); got != 0 {
+		t.Fatalf("expected resolverPending to be cleared after empty DNS success, got=%d", got)
 	}
 }
 
 func TestHandleInboundPacketTreatsServerFailureWithoutTXTAsResolverFailure(t *testing.T) {
-	c := buildTestClientWithResolvers(config.ClientConfig{}, "a", "b", "c", "d")
-	c.initResolverRecheckMeta()
+	c := buildTestClientWithResolvers(config.ClientConfig{
+		AutoDisableTimeoutServers:       true,
+		AutoDisableTimeoutWindowSeconds: 10,
+	}, "a", "b", "c", "d")
 	addr := &net.UDPAddr{IP: net.ParseIP("8.8.8.8"), Port: 53}
 
 	query, err := DnsParser.BuildTXTQuestionPacket("x.v.example.com", Enums.DNS_RECORD_TYPE_TXT, 4096)
@@ -345,27 +442,24 @@ func TestHandleInboundPacketTreatsServerFailureWithoutTXTAsResolverFailure(t *te
 	}
 
 	dnsID := binary.BigEndian.Uint16(response[:2])
-	c.resolverPending[resolverSampleKey{
+	c.balancer.pendingStoreForTest(balancerResolverSampleKey{
 		resolverAddr: addr.String(),
 		dnsID:        dnsID,
-	}] = resolverSample{
+	}, balancerResolverSample{
 		serverKey: "a",
 		sentAt:    time.Now().Add(-200 * time.Millisecond),
-	}
+	})
 
 	c.handleInboundPacket(response, addr, "")
 
-	if len(c.resolverPending) != 0 {
-		t.Fatalf("expected resolverPending to be cleared after SERVFAIL response, got=%d", len(c.resolverPending))
+	if got := c.balancer.pendingCount(); got != 0 {
+		t.Fatalf("expected resolverPending to be cleared after SERVFAIL response, got=%d", got)
 	}
-
-	c.resolverHealthMu.Lock()
-	state := c.resolverHealth["a"]
-	c.resolverHealthMu.Unlock()
-	if state == nil {
-		t.Fatal("expected resolver health state to exist")
+	stats := c.balancer.statsForKey("a")
+	if stats == nil {
+		t.Fatal("expected stats for resolver a to exist")
 	}
-	if len(state.Events) != 1 {
-		t.Fatalf("expected one failure health event after SERVFAIL response, got=%d", len(state.Events))
+	if stats.windowLost.Load() != 1 {
+		t.Fatalf("expected one timeout-window failure after SERVFAIL response, got=%d", stats.windowLost.Load())
 	}
 }

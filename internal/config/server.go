@@ -35,10 +35,6 @@ type ServerConfig struct {
 	DNSRequestWorkers                 int      `toml:"DNS_REQUEST_WORKERS"`
 	DeferredSessionWorkers            int      `toml:"DEFERRED_SESSION_WORKERS"`
 	DeferredSessionQueueLimit         int      `toml:"DEFERRED_SESSION_QUEUE_LIMIT"`
-	SessionOrphanQueueInitialCap      int      `toml:"SESSION_ORPHAN_QUEUE_INITIAL_CAPACITY"`
-	StreamQueueInitialCapacity        int      `toml:"STREAM_QUEUE_INITIAL_CAPACITY"`
-	DNSFragmentStoreCapacity          int      `toml:"DNS_FRAGMENT_STORE_CAPACITY"`
-	SOCKS5FragmentStoreCapacity       int      `toml:"SOCKS5_FRAGMENT_STORE_CAPACITY"`
 	MaxPacketSize                     int      `toml:"MAX_PACKET_SIZE"`
 	DropLogIntervalSecs               float64  `toml:"DROP_LOG_INTERVAL_SECONDS"`
 	InvalidCookieWindowSecs           float64  `toml:"INVALID_COOKIE_WINDOW_SECONDS"`
@@ -117,10 +113,6 @@ func defaultServerConfig() ServerConfig {
 		DNSRequestWorkers:                 workers,
 		DeferredSessionWorkers:            8,
 		DeferredSessionQueueLimit:         4096,
-		SessionOrphanQueueInitialCap:      64,
-		StreamQueueInitialCapacity:        128,
-		DNSFragmentStoreCapacity:          256,
-		SOCKS5FragmentStoreCapacity:       512,
 		MaxPacketSize:                     65535,
 		DropLogIntervalSecs:               2.0,
 		InvalidCookieWindowSecs:           2.0,
@@ -264,10 +256,6 @@ func finalizeServerConfig(cfg ServerConfig) (ServerConfig, error) {
 		cfg.DeferredSessionQueueLimit = 14336
 	}
 
-	cfg.SessionOrphanQueueInitialCap = clampInt(defaultIntBelow(cfg.SessionOrphanQueueInitialCap, 1, 64), 4, 4096)
-	cfg.StreamQueueInitialCapacity = clampInt(defaultIntBelow(cfg.StreamQueueInitialCapacity, 1, 128), 8, 65536)
-	cfg.DNSFragmentStoreCapacity = clampInt(defaultIntBelow(cfg.DNSFragmentStoreCapacity, 1, 256), 16, 16384)
-	cfg.SOCKS5FragmentStoreCapacity = clampInt(defaultIntBelow(cfg.SOCKS5FragmentStoreCapacity, 1, 512), 16, 16384)
 	if cfg.MaxPacketSize <= 0 {
 		cfg.MaxPacketSize = 65535
 	}
@@ -465,6 +453,96 @@ func (c ServerConfig) StreamResultPacketTTL() time.Duration {
 
 func (c ServerConfig) StreamFailurePacketTTL() time.Duration {
 	return time.Duration(c.StreamFailurePacketTTLSeconds * float64(time.Second))
+}
+
+func (c ServerConfig) EffectiveUDPReaders() int {
+	recommended := min(max(runtime.NumCPU()/2, 1), 8)
+	if c.ProtocolType == "SOCKS5" && runtime.NumCPU() >= 4 && recommended < 2 {
+		recommended = 2
+	}
+
+	if c.MaxConcurrentRequests >= 32768 && runtime.NumCPU() >= 4 && recommended < 4 {
+		recommended = 4
+	}
+
+	return clampInt(max(c.UDPReaders, recommended), 1, 32)
+}
+
+func (c ServerConfig) EffectiveDNSRequestWorkers() int {
+	recommended := min(max(runtime.NumCPU(), 2), 24)
+	if c.ProtocolType == "SOCKS5" && runtime.NumCPU() >= 4 && recommended < 4 {
+		recommended = 4
+	}
+
+	readerTarget := c.EffectiveUDPReaders() + 1
+	if runtime.NumCPU() >= 4 {
+		readerTarget = c.EffectiveUDPReaders() * 2
+	}
+
+	if recommended < readerTarget {
+		recommended = readerTarget
+	}
+
+	return clampInt(max(c.DNSRequestWorkers, recommended), 1, 64)
+}
+
+func (c ServerConfig) EffectiveDeferredSessionWorkers() int {
+	recommended := min(max(runtime.NumCPU()/2, 2), 16)
+	if c.ProtocolType == "SOCKS5" && recommended < 4 {
+		recommended = 4
+	}
+	return clampInt(max(c.DeferredSessionWorkers, recommended), 0, 64)
+}
+
+func (c ServerConfig) EffectiveDeferredSessionQueueLimit() int {
+	recommended := clampInt(max(c.EffectiveDeferredSessionWorkers()*512, c.EffectiveMaxPacketsPerBatch()*128), 256, 16384)
+	return clampInt(max(c.DeferredSessionQueueLimit, recommended), 256, 32768)
+}
+
+func (c ServerConfig) EffectiveMaxConcurrentRequests() int {
+	recommended := max(c.EffectiveUDPReaders()*c.EffectiveDNSRequestWorkers()*512, 4096)
+	return clampInt(max(c.MaxConcurrentRequests, recommended), 1024, 131072)
+}
+
+func (c ServerConfig) EffectiveMaxPacketsPerBatch() int {
+	recommended := 8
+	switch {
+	case c.ARQWindowSize > 3000:
+		recommended = 14
+	case c.ARQWindowSize > 1500:
+		recommended = 12
+	case c.ARQWindowSize > 512:
+		recommended = 10
+	}
+	return clampInt(max(c.MaxPacketsPerBatch, recommended), 1, 64)
+}
+
+func (c ServerConfig) EffectiveDNSCacheMaxRecords() int {
+	recommended := clampInt(max(c.EffectiveMaxConcurrentRequests()*2, 2000), 2000, 200000)
+	return clampInt(max(c.DNSCacheMaxRecords, recommended), 1, 500000)
+}
+
+func (c ServerConfig) EffectiveSessionOrphanQueueInitialCap() int {
+	recommended := c.EffectiveMaxPacketsPerBatch()*4 + c.EffectiveDeferredSessionWorkers()*16 + c.PacketBlockControlDuplication*16
+	return clampInt(recommended, 32, 2048)
+}
+
+func (c ServerConfig) EffectiveStreamQueueInitialCapacity() int {
+	recommended := max(c.ARQWindowSize/8, c.EffectiveMaxPacketsPerBatch()*8)
+	if c.PacketBlockControlDuplication > 1 {
+		recommended += c.PacketBlockControlDuplication * 4
+	}
+	return clampInt(recommended, 32, 2048)
+}
+
+func (c ServerConfig) EffectiveDNSFragmentStoreCapacity() int {
+	recommended := c.EffectiveMaxConcurrentRequests()/32 + c.EffectiveDNSRequestWorkers()*16
+	return clampInt(recommended, 64, 8192)
+}
+
+func (c ServerConfig) EffectiveSOCKS5FragmentStoreCapacity() int {
+	recommended := c.EffectiveMaxConcurrentRequests()/16 + c.EffectiveDeferredSessionWorkers()*32
+	return clampInt(recommended, 64, 8192)
 }
 
 func (c ServerConfig) EncryptionKeyPath() string {

@@ -262,31 +262,130 @@ func (s *Server) resolveDNSUpstream(rawQuery []byte) ([]byte, error) {
 		timeout = 4 * time.Second
 	}
 
-	for _, upstream := range s.dnsUpstreamServers {
-		conn, err := newUDPUpstreamConn(upstream)
-		if err != nil {
-			continue
+	// Fast path: single upstream, no need for hedged requests.
+	if len(s.dnsUpstreamServers) == 1 {
+		resp, err := s.queryOneUpstream(s.dnsUpstreamServers[0], rawQuery, timeout)
+		if err != nil || len(resp) == 0 {
+			return nil, ErrInvalidDNSUpstream
 		}
+		return resp, nil
+	}
 
-		_ = conn.SetDeadline(time.Now().Add(timeout))
-		_, writeErr := conn.Write(rawQuery)
-		if writeErr != nil {
-			_ = conn.Close()
-			continue
-		}
+	resultCh := make(chan []byte, len(s.dnsUpstreamServers))
+	launch := func(upstream string) {
+		go func(addr string) {
+			resp, err := s.queryOneUpstream(addr, rawQuery, timeout)
+			if err == nil && len(resp) > 0 {
+				resultCh <- resp
+				return
+			}
+			resultCh <- nil
+		}(upstream)
+	}
 
-		buffer := s.dnsUpstreamBufferPool.Get().([]byte)
-		n, readErr := conn.Read(buffer)
-		_ = conn.Close()
-		if readErr == nil && n > 0 {
-			response := append([]byte(nil), buffer[:n]...)
-			s.dnsUpstreamBufferPool.Put(buffer)
-			return response, nil
+	launch(s.dnsUpstreamServers[0])
+
+	hedgeDelay := dnsUpstreamHedgeDelay(timeout)
+	hedgeTimer := time.NewTimer(hedgeDelay)
+	defer hedgeTimer.Stop()
+
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+
+	launched := 1
+	received := 0
+	hedged := false
+
+	launchRemaining := func() {
+		if hedged {
+			return
 		}
-		s.dnsUpstreamBufferPool.Put(buffer)
+		hedged = true
+		for _, upstream := range s.dnsUpstreamServers[1:] {
+			launch(upstream)
+			launched++
+		}
+	}
+
+	for received < launched {
+		select {
+		case resp := <-resultCh:
+			received++
+			if len(resp) > 0 {
+				return resp, nil
+			}
+			// Primary failed early: don't wait for the hedge timer to expire.
+			if !hedged {
+				if !hedgeTimer.Stop() {
+					select {
+					case <-hedgeTimer.C:
+					default:
+					}
+				}
+				launchRemaining()
+			}
+		case <-hedgeTimer.C:
+			launchRemaining()
+		case <-deadline.C:
+			return nil, ErrInvalidDNSUpstream
+		}
 	}
 
 	return nil, ErrInvalidDNSUpstream
+}
+
+func dnsUpstreamHedgeDelay(timeout time.Duration) time.Duration {
+	delay := timeout / 5
+	if delay < 100*time.Millisecond {
+		delay = 100 * time.Millisecond
+	}
+	if delay > 350*time.Millisecond {
+		delay = 350 * time.Millisecond
+	}
+	if delay >= timeout {
+		return timeout / 2
+	}
+	return delay
+}
+
+// queryOneUpstream sends rawQuery to a single upstream DNS server and returns
+// the response. It is safe to call concurrently from multiple goroutines.
+func (s *Server) queryOneUpstream(upstream string, rawQuery []byte, timeout time.Duration) ([]byte, error) {
+	conn, err := newUDPUpstreamConn(upstream)
+	if err != nil {
+		return nil, err
+	}
+
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+
+	if _, err := conn.Write(rawQuery); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+
+	buffer := s.dnsUpstreamBufferPool.Get().([]byte)
+	n, readErr := conn.Read(buffer)
+	_ = conn.Close()
+
+	if readErr != nil || n == 0 {
+		s.dnsUpstreamBufferPool.Put(buffer)
+		if readErr == nil {
+			return nil, ErrInvalidDNSUpstream
+		}
+		return nil, readErr
+	}
+
+	if len(rawQuery) >= 2 && n >= 2 {
+		if buffer[0] != rawQuery[0] || buffer[1] != rawQuery[1] {
+			s.dnsUpstreamBufferPool.Put(buffer)
+			return nil, ErrInvalidDNSUpstream
+		}
+	}
+
+	response := make([]byte, n)
+	copy(response, buffer[:n])
+	s.dnsUpstreamBufferPool.Put(buffer)
+	return response, nil
 }
 
 func newUDPUpstreamConn(endpoint string) (*net.UDPConn, error) {

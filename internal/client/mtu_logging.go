@@ -23,6 +23,14 @@ const (
 	defaultMTUServersFileFormat = "{IP} - UP: {UP_MTU} DOWN: {DOWN-MTU}"
 )
 
+type mtuLogFields struct {
+	resolverLabel string
+	domain        string
+	uploadMTU     int
+	downloadMTU   int
+	uploadChars   int
+}
+
 func (c *Client) mtuDebugEnabled() bool {
 	return c != nil && c.log != nil && c.log.Enabled(logger.LevelDebug)
 }
@@ -57,6 +65,9 @@ func (c *Client) logMTUCompletion(validConns []Connection) {
 	if !c.mtuInfoEnabled() {
 		return
 	}
+
+	totalResolvers := c.mtuTotalResolverCount(validConns)
+
 	maxFoundUpload := 0
 	maxFoundDownload := 0
 	for _, conn := range validConns {
@@ -80,14 +91,20 @@ func (c *Client) logMTUCompletion(validConns []Connection) {
 		"Resolve Time",
 		"Domain",
 	)
+
 	c.log.Infof("%s", strings.Repeat("-", 80))
 	for _, conn := range validConns {
+		resolveTime := "n/a"
+		if conn.MTUResolveTime > 0 {
+			resolveTime = formatResolverRTT(conn.MTUResolveTime)
+		}
+
 		c.log.Infof(
 			"<cyan>%-20s</cyan> <green>%-15d</green> <green>%-15d</green> <yellow>%-14s</yellow> <blue>%-30s</blue>",
 			conn.ResolverLabel,
 			conn.UploadMTUBytes,
 			conn.DownloadMTUBytes,
-			formatResolverRTT(conn.MTUResolveTime),
+			resolveTime,
 			conn.Domain,
 		)
 	}
@@ -95,7 +112,7 @@ func (c *Client) logMTUCompletion(validConns []Connection) {
 	c.log.Infof(
 		"<blue>Total valid resolvers after MTU testing: <cyan>%d</cyan> of <cyan>%d</cyan></blue>",
 		len(validConns),
-		len(c.connections),
+		totalResolvers,
 	)
 	c.log.Infof(
 		"<blue>Note:</blue> Each packet will be sent <yellow>%d</yellow> times to improve reliability.",
@@ -121,13 +138,22 @@ func (c *Client) logMTUCompletion(validConns []Connection) {
 	)
 }
 
+func (c *Client) mtuTotalResolverCount(validConns []Connection) int {
+	if c != nil && c.balancer != nil {
+		return c.balancer.TotalCount()
+	}
+	return len(validConns)
+}
+
 func formatResolverRTT(rtt time.Duration) string {
 	if rtt <= 0 {
 		return "n/a"
 	}
+
 	if rtt < time.Millisecond {
 		return "<1ms"
 	}
+
 	return rtt.Round(time.Millisecond).String()
 }
 
@@ -183,24 +209,8 @@ func (c *Client) prepareMTUSuccessOutputFile() string {
 		return ""
 	}
 
-	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
-		if c.mtuWarnEnabled() {
-			c.log.Warnf(
-				"<yellow>[MTU]</yellow> Failed to initialize output file <cyan>%s</cyan>: %v",
-				outputPath,
-				err,
-			)
-		}
-		return ""
-	}
-	if err := os.WriteFile(outputPath, []byte{}, 0o644); err != nil {
-		if c.mtuWarnEnabled() {
-			c.log.Warnf(
-				"<yellow>[MTU]</yellow> Failed to initialize output file <cyan>%s</cyan>: %v",
-				outputPath,
-				err,
-			)
-		}
+	if err := c.initializeMTUSuccessOutputFile(outputPath); err != nil {
+		c.warnMTUOutputError(outputPath, err)
 		return ""
 	}
 
@@ -217,6 +227,40 @@ func (c *Client) prepareMTUSuccessOutputFile() string {
 	return outputPath
 }
 
+func (c *Client) initializeMTUSuccessOutputFile(outputPath string) error {
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+		return err
+	}
+
+	return os.WriteFile(outputPath, []byte{}, 0o644)
+}
+
+func (c *Client) warnMTUOutputError(outputPath string, err error) {
+	if !c.mtuWarnEnabled() {
+		return
+	}
+
+	c.log.Warnf(
+		"<yellow>[MTU]</yellow> Failed to initialize output file <cyan>%s</cyan>: %v",
+		outputPath,
+		err,
+	)
+}
+
+func mtuFieldsFromConnection(conn *Connection) mtuLogFields {
+	if conn == nil {
+		return mtuLogFields{}
+	}
+
+	return mtuLogFields{
+		resolverLabel: conn.ResolverLabel,
+		domain:        conn.Domain,
+		uploadMTU:     conn.UploadMTUBytes,
+		downloadMTU:   conn.DownloadMTUBytes,
+		uploadChars:   conn.UploadMTUChars,
+	}
+}
+
 func (c *Client) formatMTULogLine(template string, conn *Connection, cause string) string {
 	if c == nil {
 		return ""
@@ -226,20 +270,7 @@ func (c *Client) formatMTULogLine(template string, conn *Connection, cause strin
 		return ""
 	}
 
-	var (
-		resolverLabel string
-		domain        string
-		uploadMTU     int
-		downloadMTU   int
-		uploadChars   int
-	)
-	if conn != nil {
-		resolverLabel = conn.ResolverLabel
-		domain = conn.Domain
-		uploadMTU = conn.UploadMTUBytes
-		downloadMTU = conn.DownloadMTUBytes
-		uploadChars = conn.UploadMTUChars
-	}
+	fields := mtuFieldsFromConnection(conn)
 
 	nowText := c.now().Format("2006-01-02 15:04:05")
 	line := template
@@ -247,20 +278,20 @@ func (c *Client) formatMTULogLine(template string, conn *Connection, cause strin
 		token string
 		value string
 	}{
-		{token: "{IP}", value: resolverLabel},
-		{token: "{ip}", value: resolverLabel},
-		{token: "{RESOLVER}", value: resolverLabel},
-		{token: "{resolver}", value: resolverLabel},
-		{token: "{DOMAIN}", value: domain},
-		{token: "{domain}", value: domain},
-		{token: "{UP_MTU}", value: strconv.Itoa(uploadMTU)},
-		{token: "{up_mtu}", value: strconv.Itoa(uploadMTU)},
-		{token: "{DOWN_MTU}", value: strconv.Itoa(downloadMTU)},
-		{token: "{down_mtu}", value: strconv.Itoa(downloadMTU)},
-		{token: "{DOWN-MTU}", value: strconv.Itoa(downloadMTU)},
-		{token: "{down-mtu}", value: strconv.Itoa(downloadMTU)},
-		{token: "{UP_MTU_CHARS}", value: strconv.Itoa(uploadChars)},
-		{token: "{up_mtu_chars}", value: strconv.Itoa(uploadChars)},
+		{token: "{IP}", value: fields.resolverLabel},
+		{token: "{ip}", value: fields.resolverLabel},
+		{token: "{RESOLVER}", value: fields.resolverLabel},
+		{token: "{resolver}", value: fields.resolverLabel},
+		{token: "{DOMAIN}", value: fields.domain},
+		{token: "{domain}", value: fields.domain},
+		{token: "{UP_MTU}", value: strconv.Itoa(fields.uploadMTU)},
+		{token: "{up_mtu}", value: strconv.Itoa(fields.uploadMTU)},
+		{token: "{DOWN_MTU}", value: strconv.Itoa(fields.downloadMTU)},
+		{token: "{down_mtu}", value: strconv.Itoa(fields.downloadMTU)},
+		{token: "{DOWN-MTU}", value: strconv.Itoa(fields.downloadMTU)},
+		{token: "{down-mtu}", value: strconv.Itoa(fields.downloadMTU)},
+		{token: "{UP_MTU_CHARS}", value: strconv.Itoa(fields.uploadChars)},
+		{token: "{up_mtu_chars}", value: strconv.Itoa(fields.uploadChars)},
 		{token: "{CAUSE}", value: cause},
 		{token: "{cause}", value: cause},
 		{token: "{TIME}", value: nowText},
@@ -294,21 +325,23 @@ func (c *Client) appendMTULogLine(template string, conn *Connection, cause strin
 
 	file, err := os.OpenFile(outputPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		if c.mtuWarnEnabled() {
-			c.log.Warnf(
-				"<yellow>[MTU]</yellow> Failed to append custom runtime line: %v",
-				err,
-			)
-		}
+		c.warnMTUAppendError(err)
 		return
 	}
 	defer file.Close()
-	if _, err := file.WriteString(line + "\n"); err != nil && c.mtuWarnEnabled() {
-		c.log.Warnf(
-			"<yellow>[MTU]</yellow> Failed to append custom runtime line: %v",
-			err,
-		)
+	if _, err := file.WriteString(line + "\n"); err != nil {
+		c.warnMTUAppendError(err)
 	}
+}
+
+func (c *Client) warnMTUAppendError(err error) {
+	if !c.mtuWarnEnabled() {
+		return
+	}
+	c.log.Warnf(
+		"<yellow>[MTU]</yellow> Failed to append custom runtime line: %v",
+		err,
+	)
 }
 
 func (c *Client) appendMTUSuccessLine(conn *Connection) {

@@ -34,14 +34,19 @@ func (s *Server) handlePacket(packet []byte) []byte {
 
 	decision := s.domainMatcher.Match(parsed)
 	if decision.Action == domainMatcher.ActionProcess {
-		return s.handleTunnelCandidate(packet, parsed, decision)
+		response := s.handleTunnelCandidate(packet, parsed, decision)
+		if response != nil {
+			return response
+		}
+
+		return s.buildNoDataResponseLiteLogged(packet, parsed, "domain-match-process-failed")
 	}
 
 	if decision.Action == domainMatcher.ActionFormatError || decision.Action == domainMatcher.ActionNoData {
 		return s.buildNoDataResponseLiteLogged(packet, parsed, "domain-match-no-data")
 	}
 
-	return nil
+	return s.buildNoDataResponseLiteLogged(packet, parsed, "domain-match-no-data")
 }
 
 func (s *Server) handleTunnelCandidate(packet []byte, parsed DnsParser.LitePacket, decision domainMatcher.Decision) []byte {
@@ -52,7 +57,7 @@ func (s *Server) handleTunnelCandidate(packet []byte, parsed DnsParser.LitePacke
 
 	if vpnPacket.PacketType == Enums.PACKET_SESSION_CLOSE {
 		s.handleSessionCloseNotice(vpnPacket, time.Now())
-		return nil
+		return s.buildNoDataResponseLiteLogged(packet, parsed, "session-close-notice")
 	}
 
 	if !isPreSessionRequestType(vpnPacket.PacketType) {

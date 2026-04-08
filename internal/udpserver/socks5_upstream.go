@@ -190,11 +190,11 @@ func (s *Server) dialExternalSOCKS5TargetContext(ctx context.Context, targetPayl
 		return nil, err
 	}
 
+	stopCancelWatch := func() bool { return true }
 	if ctx != nil {
-		go func(c net.Conn) {
-			<-ctx.Done()
-			_ = c.Close()
-		}(conn)
+		stopCancelWatch = context.AfterFunc(ctx, func() {
+			_ = conn.Close()
+		})
 	}
 
 	timeout := s.socksConnectTimeout
@@ -262,6 +262,16 @@ func (s *Server) dialExternalSOCKS5TargetContext(ctx context.Context, targetPayl
 	if err := discardSOCKS5BoundAddress(conn, header[3]); err != nil {
 		_ = conn.Close()
 		return nil, &upstreamSOCKS5Error{packetType: Enums.PACKET_SOCKS5_UPSTREAM_UNAVAILABLE, err: err}
+	}
+	if !stopCancelWatch() {
+		_ = conn.Close()
+		if ctx != nil && ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, &upstreamSOCKS5Error{
+			packetType: Enums.PACKET_SOCKS5_UPSTREAM_UNAVAILABLE,
+			err:        errors.New("external SOCKS5 handshake cancelled"),
+		}
 	}
 	_ = conn.SetDeadline(time.Time{})
 	return conn, nil

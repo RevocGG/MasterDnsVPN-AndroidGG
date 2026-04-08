@@ -128,9 +128,7 @@ func (s *Stream_server) PushTXPacket(priority int, packetType uint8, sequenceNum
 	}
 
 	if packetType == Enums.PACKET_STREAM_RESEND {
-		if stale, removed := s.TXQueue.RemoveByKey(dataKey, func(p *serverStreamTXPacket) uint64 {
-			return Enums.PacketIdentityKey(s.ID, p.PacketType, p.SequenceNum, p.FragmentID)
-		}); removed {
+		if stale, removed := s.TXQueue.RemoveByKey(dataKey); removed {
 			putTXPacketToPool(stale)
 		}
 	}
@@ -158,9 +156,7 @@ func (s *Stream_server) RemoveQueuedData(sequenceNum uint16) bool {
 	removedAny := false
 	for _, packetType := range []uint8{Enums.PACKET_STREAM_DATA, Enums.PACKET_STREAM_RESEND} {
 		key := Enums.PacketIdentityKey(s.ID, packetType, sequenceNum, 0)
-		pkt, ok := s.TXQueue.RemoveByKey(key, func(p *serverStreamTXPacket) uint64 {
-			return Enums.PacketIdentityKey(s.ID, p.PacketType, p.SequenceNum, p.FragmentID)
-		})
+		pkt, ok := s.TXQueue.RemoveByKey(key)
 		if ok {
 			putTXPacketToPool(pkt)
 			removedAny = true
@@ -179,9 +175,7 @@ func (s *Stream_server) RemoveQueuedDataNack(sequenceNum uint16) bool {
 
 	s.txQueueMu.Lock()
 	key := Enums.PacketIdentityKey(s.ID, Enums.PACKET_STREAM_DATA_NACK, sequenceNum, 0)
-	pkt, ok := s.TXQueue.RemoveByKey(key, func(p *serverStreamTXPacket) uint64 {
-		return Enums.PacketIdentityKey(s.ID, p.PacketType, p.SequenceNum, p.FragmentID)
-	})
+	pkt, ok := s.TXQueue.RemoveByKey(key)
 
 	if !ok {
 		s.txQueueMu.Unlock()
@@ -221,9 +215,7 @@ func (s *Stream_server) PopNextTXPacket() (*serverStreamTXPacket, int, bool) {
 	}
 
 	s.txQueueMu.Lock()
-	packet, priority, ok := s.TXQueue.Pop(func(p *serverStreamTXPacket) uint64 {
-		return Enums.PacketIdentityKey(s.ID, p.PacketType, p.SequenceNum, p.FragmentID)
-	})
+	packet, priority, ok := s.TXQueue.Pop()
 	s.txQueueMu.Unlock()
 
 	return packet, priority, ok

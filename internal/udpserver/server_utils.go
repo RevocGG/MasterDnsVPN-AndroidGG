@@ -29,7 +29,7 @@ func summarizeQName(name string) string {
 }
 
 func buildNoDataResponse(packet []byte) []byte {
-	response, err := DnsParser.BuildEmptyNoErrorResponse(packet)
+	response, err := DnsParser.BuildNoDataResponse(packet)
 	if err != nil {
 		return nil
 	}
@@ -37,7 +37,7 @@ func buildNoDataResponse(packet []byte) []byte {
 }
 
 func buildNoDataResponseLite(packet []byte, parsed DnsParser.LitePacket) []byte {
-	response, err := DnsParser.BuildEmptyNoErrorResponseFromLite(packet, parsed)
+	response, err := DnsParser.BuildNoDataResponseFromLite(packet, parsed)
 	if err != nil {
 		return nil
 	}

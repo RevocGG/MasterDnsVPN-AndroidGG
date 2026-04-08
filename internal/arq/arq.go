@@ -176,10 +176,11 @@ type ARQ struct {
 	IsClient bool
 
 	// Backpressure
-	windowSize    int
-	limit         int
-	windowNotFull chan struct{} // Acts as asyncio.Event
-	writeLock     sync.Mutex    // equivalent to asyncio.Lock for writer
+	windowSize        int
+	receiveWindowSize int
+	limit             int
+	windowNotFull     chan struct{} // Acts as asyncio.Event
+	writeLock         sync.Mutex    // equivalent to asyncio.Lock for writer
 
 	// Tuning Configuration
 	rto                  time.Duration
@@ -330,6 +331,7 @@ func NewARQ(streamID uint16, sessionID uint8, enqueuer PacketEnqueuer, localConn
 	}
 
 	windowSize := max(cfg.WindowSize, 300)
+	receiveWindowSize := max(windowSize, windowSize*2)
 
 	limit := max(int(float64(windowSize)*0.8), 50)
 
@@ -349,11 +351,12 @@ func NewARQ(streamID uint16, sessionID uint8, enqueuer PacketEnqueuer, localConn
 		state:        StateOpen,
 		lastActivity: time.Now(),
 
-		windowSize:    windowSize,
-		limit:         limit,
-		windowNotFull: make(chan struct{}, 1),
-		writeLock:     sync.Mutex{},
-		flushSignal:   make(chan struct{}, 1),
+		windowSize:        windowSize,
+		receiveWindowSize: receiveWindowSize,
+		limit:             limit,
+		windowNotFull:     make(chan struct{}, 1),
+		writeLock:         sync.Mutex{},
+		flushSignal:       make(chan struct{}, 1),
 
 		inactivityTimeout:    time.Duration(maxF(120.0, cfg.InactivityTimeout) * float64(time.Second)),
 		dataPacketTTL:        time.Duration(maxF(120.0, cfg.DataPacketTTL) * float64(time.Second)),
@@ -1437,14 +1440,14 @@ func (a *ARQ) processReceivedDataBatch(batch []rxPayload) {
 			continue
 		}
 
-		if int(diff) > a.windowSize {
+		if int(diff) > a.receiveWindowSize {
 			// Beyond receive window — silently drop
 			results[i] = rxResult{sn: sn}
 			continue
 		}
 
 		_, exists := a.rcvBuf[sn]
-		if !exists && len(a.rcvBuf) >= a.windowSize && sn != a.rcvNxt {
+		if !exists && len(a.rcvBuf) >= a.receiveWindowSize && sn != a.rcvNxt {
 			// Window full and not the expected next — drop
 			results[i] = rxResult{sn: sn}
 			continue

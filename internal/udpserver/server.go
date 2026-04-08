@@ -112,25 +112,25 @@ func New(cfg config.ServerConfig, log *logger.Logger, codec *security.Codec) *Se
 	if socksConnectTimeout <= 0 {
 		socksConnectTimeout = 8 * time.Second
 	}
-	dnsDeferredWorkers, connectDeferredWorkers, dnsDeferredQueue, connectDeferredQueue := splitDeferredSessionPools(cfg.DeferredSessionWorkers, cfg.DeferredSessionQueueLimit)
+	dnsDeferredWorkers, connectDeferredWorkers, dnsDeferredQueue, connectDeferredQueue := splitDeferredSessionPools(cfg.EffectiveDeferredSessionWorkers(), cfg.EffectiveDeferredSessionQueueLimit())
 	return &Server{
 		cfg:                    cfg,
 		log:                    log,
 		codec:                  codec,
 		domainMatcher:          domainMatcher.New(cfg.Domain, cfg.MinVPNLabelLength),
-		sessions:               newSessionStore(cfg.SessionOrphanQueueInitialCap, cfg.StreamQueueInitialCapacity, cfg.SessionInitReuseTTL(), cfg.RecentlyClosedStreamTTL(), cfg.RecentlyClosedStreamCap),
+		sessions:               newSessionStore(cfg.EffectiveSessionOrphanQueueInitialCap(), cfg.EffectiveStreamQueueInitialCapacity(), cfg.SessionInitReuseTTL(), cfg.RecentlyClosedStreamTTL(), cfg.RecentlyClosedStreamCap),
 		deferredDNSSession:     newDeferredSessionProcessor(dnsDeferredWorkers, dnsDeferredQueue, log),
 		deferredConnectSession: newDeferredSessionProcessor(connectDeferredWorkers, connectDeferredQueue, log),
 		invalidCookieTracker:   newInvalidCookieTracker(),
 		dnsCache: dnsCache.New(
-			cfg.DNSCacheMaxRecords,
+			cfg.EffectiveDNSCacheMaxRecords(),
 			time.Duration(cfg.DNSCacheTTLSeconds*float64(time.Second)),
 			dnsFragmentTimeout,
 		),
 		dnsResolveInflight: newDNSResolveInflightManager(dnsFragmentTimeout),
 		dnsUpstreamServers: append([]string(nil), cfg.DNSUpstreamServers...),
-		dnsFragments:       fragmentStore.New[dnsFragmentKey](cfg.DNSFragmentStoreCapacity),
-		socks5Fragments:    fragmentStore.New[socks5FragmentKey](cfg.SOCKS5FragmentStoreCapacity),
+		dnsFragments:       fragmentStore.New[dnsFragmentKey](cfg.EffectiveDNSFragmentStoreCapacity()),
+		socks5Fragments:    fragmentStore.New[socks5FragmentKey](cfg.EffectiveSOCKS5FragmentStoreCapacity()),
 		dnsFragmentTimeout: dnsFragmentTimeout,
 		dnsUpstreamBufferPool: sync.Pool{
 			New: func() any {
@@ -278,12 +278,12 @@ func (s *Server) Run(ctx context.Context) error {
 	s.log.Infof(
 		"\U0001F4E1 <green>UDP Listener Ready, Addr: <cyan>%s</cyan>, Readers: <cyan>%d</cyan>, Workers: <cyan>%d</cyan>, Queue: <cyan>%d</cyan></green>",
 		s.cfg.Address(),
-		s.cfg.UDPReaders,
-		s.cfg.DNSRequestWorkers,
-		s.cfg.MaxConcurrentRequests,
+		s.cfg.EffectiveUDPReaders(),
+		s.cfg.EffectiveDNSRequestWorkers(),
+		s.cfg.EffectiveMaxConcurrentRequests(),
 	)
 
-	reqCh := make(chan request, s.cfg.MaxConcurrentRequests)
+	reqCh := make(chan request, s.cfg.EffectiveMaxConcurrentRequests())
 	var workerWG sync.WaitGroup
 	cleanupDone := make(chan struct{})
 
@@ -301,7 +301,7 @@ func (s *Server) Run(ctx context.Context) error {
 		_ = conn.Close()
 	}()
 
-	readErrCh := make(chan error, s.cfg.UDPReaders)
+	readErrCh := make(chan error, s.cfg.EffectiveUDPReaders())
 	var readerWG sync.WaitGroup
 	s.startReaders(runCtx, conn, reqCh, readErrCh, &readerWG)
 

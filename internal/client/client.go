@@ -38,23 +38,13 @@ type Client struct {
 	codec    *security.Codec
 	balancer *Balancer
 
-	connections         []Connection
-	connectionsByKey    map[string]int
-	successMTUChecks    bool
-	udpBufferPool       sync.Pool
-	resolverConnsMu     sync.Mutex
-	resolverConns       map[string]chan pooledUDPConn
-	resolverAddrMu      sync.RWMutex
-	resolverAddrCache   map[string]*net.UDPAddr
-	resolverStatsMu     sync.RWMutex
-	resolverPending     map[resolverSampleKey]resolverSample
-	resolverHealthMu    sync.RWMutex
-	resolverHealth      map[string]*resolverHealthState
-	resolverRecheck     map[string]resolverRecheckState
-	runtimeDisabled     map[string]resolverDisabledState
-	resolverRecheckSem  chan struct{}
-	nowFn               func() time.Time
-	recheckConnectionFn func(conn *Connection) bool
+	successMTUChecks  bool
+	udpBufferPool     sync.Pool
+	resolverConnsMu   sync.Mutex
+	resolverConns     map[string]chan pooledUDPConn
+	resolverAddrMu    sync.RWMutex
+	resolverAddrCache map[string]*net.UDPAddr
+	nowFn             func() time.Time
 
 	// MTU States
 	syncedUploadMTU                       int
@@ -81,29 +71,30 @@ type Client struct {
 	streamResolverFailoverCooldown        time.Duration
 
 	// Session States
-	sessionID           uint8
-	sessionCookie       uint8
-	responseMode        uint8
-	sessionReady        bool
-	initStateMu         sync.Mutex
-	sessionInitReady    bool
-	sessionInitBase64   bool
-	sessionInitPayload  []byte
-	sessionInitVerify   [4]byte
-	sessionInitCursor   int
-	sessionInitBusyUnix atomic.Int64
-	sessionResetPending atomic.Bool
-	runtimeResetPending atomic.Bool
-	sessionResetSignal  chan struct{}
-	rxDroppedPackets    atomic.Uint64
-	lastRXDropLogUnix   atomic.Int64
+	sessionID             uint8
+	sessionCookie         uint8
+	responseMode          uint8
+	sessionReady          bool
+	initStateMu           sync.Mutex
+	sessionInitReady      bool
+	sessionInitBase64     bool
+	sessionInitPayload    []byte
+	sessionInitVerify     [4]byte
+	sessionInitCursor     int
+	sessionInitBusyUnix   atomic.Int64
+	sessionResetPending   atomic.Bool
+	runtimeResetPending   atomic.Bool
+	resolverHealthStarted atomic.Bool
+	sessionResetSignal    chan struct{}
+	rxDroppedPackets      atomic.Uint64
+	lastRXDropLogUnix     atomic.Int64
 
 	// Async Runtime Workers & Channels
 	asyncWG              sync.WaitGroup
 	asyncCancel          context.CancelFunc
 	tunnelConns          []*net.UDPConn
-	txChannel            chan rawOutboundTask
-	encodedTXChannel     chan encodedOutboundTask
+	plannerQueue         chan plannerTask
+	encodedTXChannel     chan writerTask
 	rxChannel            chan asyncReadPacket
 	tunnelRX_TX_Workers  int
 	tunnelProcessWorkers int
@@ -122,9 +113,10 @@ type Client struct {
 	recentlyClosedMu      sync.Mutex
 	recentlyClosedStreams map[uint16]time.Time
 
-	// Signals to wake up dispatcher.
-	txSignal      chan struct{}
-	txSpaceSignal chan struct{}
+	// Signals to wake up dispatcher and downstream stages.
+	dispatchSignal          chan struct{}
+	plannerQueueSpaceSignal chan struct{}
+	writerQueueSpaceSignal  chan struct{}
 
 	// Autonomous Ping Manager
 	pingManager *PingManager
@@ -144,30 +136,31 @@ type Client struct {
 
 // clientStreamTXPacket represents a queued packet pending transmission or retransmission.
 type clientStreamTXPacket struct {
-	PacketType      uint8
-	SequenceNum     uint16
-	FragmentID      uint8
-	TotalFragments  uint8
-	CompressionType uint8
-	Payload         []byte
-	CreatedAt       time.Time
-	TTL             time.Duration
-	LastSentAt      time.Time
-	RetryDelay      time.Duration
-	RetryAt         time.Time
-	RetryCount      int
-	Scheduled       bool
+	PacketType       uint8
+	SequenceNum      uint16
+	FragmentID       uint8
+	TotalFragments   uint8
+	CompressionType  uint8
+	Payload          []byte
+	CreatedAt        time.Time
+	TTL              time.Duration
+	LastSentAt       time.Time
+	RetryDelay       time.Duration
+	RetryAt          time.Time
+	RetryCount       int
+	Scheduled        bool
+	isControlCounted atomic.Bool
 }
 
-// rawOutboundTask holds payload and stream information for parallel packet encoding.
-type rawOutboundTask struct {
-	packetType uint8
-	payload    []byte
-	opts       VpnProto.BuildOptions
-	wasPacked  bool
-	item       *clientStreamTXPacket
-	selected   *Stream_client
-	conns      []Connection
+// plannerTask is the handoff between dispatcher and the planner/encoder stage.
+// The dispatcher only decides fairness/dequeue/packing. Resolver selection and
+// fan-out happen later in the encode stage.
+type plannerTask struct {
+	opts      VpnProto.BuildOptions
+	dupCount  int
+	wasPacked bool
+	item      *clientStreamTXPacket
+	selected  *Stream_client
 }
 
 type encodedOutboundDatagram struct {
@@ -176,25 +169,11 @@ type encodedOutboundDatagram struct {
 	packet    []byte
 }
 
-type encodedOutboundTask struct {
+type writerTask struct {
 	wasPacked bool
 	item      *clientStreamTXPacket
 	selected  *Stream_client
 	frames    []encodedOutboundDatagram
-}
-
-// Connection represents a unique domain-resolver pair with its associated metadata and MTU states.
-type Connection struct {
-	Domain           string
-	Resolver         string
-	ResolverPort     int
-	ResolverLabel    string
-	Key              string
-	IsValid          bool
-	UploadMTUBytes   int
-	UploadMTUChars   int
-	DownloadMTUBytes int
-	MTUResolveTime   time.Duration
 }
 
 // Bootstrap initializes a new Client by loading configuration, setting up logging,
@@ -237,13 +216,12 @@ func New(cfg config.ClientConfig, log *logger.Logger, codec *security.Codec) *Cl
 		cfg:                 cfg,
 		log:                 log,
 		codec:               codec,
-		balancer:            NewBalancer(cfg.ResolverBalancingStrategy),
+		balancer:            NewBalancer(cfg.ResolverBalancingStrategy, log),
 		uploadCompression:   uint8(cfg.UploadCompressionType),
 		downloadCompression: uint8(cfg.DownloadCompressionType),
 		mtuCryptoOverhead:   mtuCryptoOverhead(cfg.DataEncryptionMethod),
 		maxPackedBlocks:     1,
 		responseMode:        responseMode,
-		connectionsByKey:    make(map[string]int, len(cfg.Domains)*len(cfg.Resolvers)),
 		udpBufferPool: sync.Pool{
 			New: func() any {
 				return make([]byte, RuntimeUDPReadBufferSize)
@@ -251,11 +229,6 @@ func New(cfg config.ClientConfig, log *logger.Logger, codec *security.Codec) *Cl
 		},
 		resolverConns:                         make(map[string]chan pooledUDPConn),
 		resolverAddrCache:                     make(map[string]*net.UDPAddr),
-		resolverPending:                       make(map[resolverSampleKey]resolverSample),
-		resolverHealth:                        make(map[string]*resolverHealthState),
-		resolverRecheck:                       make(map[string]resolverRecheckState),
-		runtimeDisabled:                       make(map[string]resolverDisabledState),
-		resolverRecheckSem:                    make(chan struct{}, max(1, cfg.RecheckBatchSize)),
 		mtuTestRetries:                        cfg.MTUTestRetries,
 		mtuTestTimeout:                        time.Duration(cfg.MTUTestTimeout * float64(time.Second)),
 		mtuSaveToFile:                         cfg.SaveMTUServersToFile,
@@ -268,16 +241,17 @@ func New(cfg config.ClientConfig, log *logger.Logger, codec *security.Codec) *Cl
 		streamResolverFailoverCooldown:        time.Duration(cfg.StreamResolverFailoverCooldownSec * float64(time.Second)),
 
 		// Workers config
-		tunnelRX_TX_Workers:   cfg.RX_TX_Workers,
-		tunnelProcessWorkers:  cfg.TunnelProcessWorkers,
-		tunnelPacketTimeout:   time.Duration(cfg.TunnelPacketTimeoutSec * float64(time.Second)),
-		txChannel:             make(chan rawOutboundTask, cfg.TXChannelSize),
-		encodedTXChannel:      make(chan encodedOutboundTask, max(24, cfg.RX_TX_Workers*24)),
-		rxChannel:             make(chan asyncReadPacket, cfg.RXChannelSize),
-		active_streams:        make(map[uint16]*Stream_client),
-		recentlyClosedStreams: make(map[uint16]time.Time),
-		txSignal:              make(chan struct{}, 1),
-		txSpaceSignal:         make(chan struct{}, 1),
+		tunnelRX_TX_Workers:     cfg.RX_TX_Workers,
+		tunnelProcessWorkers:    cfg.TunnelProcessWorkers,
+		tunnelPacketTimeout:     time.Duration(cfg.TunnelPacketTimeoutSec * float64(time.Second)),
+		plannerQueue:            make(chan plannerTask, max(24, cfg.RX_TX_Workers*24)),
+		encodedTXChannel:        make(chan writerTask, max(24, cfg.RX_TX_Workers*24)),
+		rxChannel:               make(chan asyncReadPacket, cfg.EffectiveRXChannelSize()),
+		active_streams:          make(map[uint16]*Stream_client),
+		recentlyClosedStreams:   make(map[uint16]time.Time),
+		dispatchSignal:          make(chan struct{}, 1),
+		plannerQueueSpaceSignal: make(chan struct{}, 1),
+		writerQueueSpaceSignal:  make(chan struct{}, 1),
 
 		// DNS Management
 		localDNSCache: dnsCache.New(
@@ -285,11 +259,11 @@ func New(cfg config.ClientConfig, log *logger.Logger, codec *security.Codec) *Cl
 			time.Duration(cfg.LocalDNSCacheTTLSeconds)*time.Second,
 			time.Duration(cfg.LocalDNSPendingTimeoutSec)*time.Second,
 		),
-		dnsResponses:           fragmentStore.New[dnsFragmentKey](cfg.DNSResponseFragmentStoreCap),
+		dnsResponses:           fragmentStore.New[dnsFragmentKey](cfg.EffectiveDNSResponseFragmentStoreCap()),
 		localDNSCachePersist:   cfg.LocalDNSCachePersist,
 		localDNSCachePath:      cfg.LocalDNSCachePath(),
 		localDNSCacheFlushTick: time.Duration(cfg.LocalDNSCacheFlushSec) * time.Second,
-		orphanQueue:            mlq.New[VpnProto.Packet](cfg.OrphanQueueInitialCapacity),
+		orphanQueue:            mlq.New[VpnProto.Packet](cfg.EffectiveOrphanQueueInitialCapacity()),
 		sessionResetSignal:     make(chan struct{}, 1),
 		socksRateLimit:         newSocksRateLimiter(),
 	}
@@ -302,6 +276,11 @@ func New(cfg config.ClientConfig, log *logger.Logger, codec *security.Codec) *Cl
 		c.streamResolverFailoverCooldown = time.Second
 	}
 
+	c.balancer.SetStreamFailoverConfig(c.streamResolverFailoverResendThreshold, c.streamResolverFailoverCooldown)
+	c.balancer.SetAutoDisableConfig(
+		cfg.AutoDisableTimeoutServers,
+		time.Duration(cfg.AutoDisableTimeoutWindowSeconds*float64(time.Second)),
+	)
 	c.pingManager = newPingManager(c)
 	return c
 }
@@ -369,6 +348,9 @@ func (c *Client) Run(ctx context.Context) error {
 				}
 
 				c.successMTUChecks = true
+				if c.resolverHealthStarted.CompareAndSwap(false, true) {
+					go c.runResolverHealthLoop(ctx)
+				}
 				c.ShortPrintBanner()
 			}
 
@@ -481,7 +463,7 @@ func (c *Client) HandleStreamPacket(packet VpnProto.Packet) error {
 		}
 
 		if arqObj.HandleDataNack(packet.SequenceNum) {
-			c.noteStreamProgress(packet.StreamID)
+			c.balancer.NoteStreamProgress(packet.StreamID)
 		}
 	case Enums.PACKET_STREAM_CONNECTED:
 		return c.handleStreamConnected(packet, s, arqObj)
@@ -501,7 +483,7 @@ func (c *Client) HandleStreamPacket(packet VpnProto.Packet) error {
 	default:
 		handledAck := arqObj.HandleAckPacket(packet.PacketType, packet.SequenceNum, packet.FragmentID)
 		if handledAck {
-			c.noteStreamProgress(packet.StreamID)
+			c.balancer.NoteStreamProgress(packet.StreamID)
 		}
 		if _, ok := Enums.GetPacketCloseStream(packet.PacketType); handledAck && ok {
 			if s.StatusValue() == streamStatusCancelled || arqObj.IsClosed() {

@@ -89,7 +89,7 @@ func (c *Client) handleStreamConnected(packet VpnProto.Packet, s *Stream_client,
 
 	arqObj.SetIOReady(true)
 	s.SetStatus(streamStatusActive)
-	c.noteStreamProgress(packet.StreamID)
+	c.balancer.NoteStreamProgress(packet.StreamID)
 	return nil
 }
 

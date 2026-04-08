@@ -48,6 +48,7 @@ func (c *Client) drainStaleUDPResponses(conn *net.UDPConn, buffer []byte) error 
 		if err := conn.SetReadDeadline(time.Now().Add(runtimeUDPDrainGrace)); err != nil {
 			return err
 		}
+
 		_, err := conn.Read(buffer)
 		if err != nil {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
@@ -139,7 +140,7 @@ func (c *Client) getUDPConn(resolverLabel string) (*net.UDPConn, error) {
 	c.resolverConnsMu.Lock()
 	pool, ok := c.resolverConns[resolverLabel]
 	if !ok {
-		pool = make(chan pooledUDPConn, c.cfg.ResolverUDPConnectionPoolSize)
+		pool = make(chan pooledUDPConn, c.cfg.EffectiveResolverUDPConnectionPoolSize())
 		c.resolverConns[resolverLabel] = pool
 	}
 	c.resolverConnsMu.Unlock()

@@ -351,9 +351,7 @@ func (s *Server) dequeueSessionResponse(sessionID uint8, now time.Time) (*VpnPro
 		var selectedStreamID uint16
 
 		if id == -1 {
-			p, _, popOk := record.OrphanQueue.Pop(func(p VpnProto.Packet) uint64 {
-				return Enums.PacketTypeStreamKey(p.StreamID, p.PacketType)
-			})
+			p, _, popOk := record.OrphanQueue.Pop()
 			if popOk {
 				item = &serverStreamTXPacket{
 					PacketType:     p.PacketType,
@@ -696,7 +694,7 @@ func (s *Server) handleSessionInitRequest(questionPacket []byte, decision domain
 		vpnPacket.Payload,
 		resolvedUpload,
 		resolvedDownload,
-		s.cfg.MaxPacketsPerBatch,
+		s.cfg.EffectiveMaxPacketsPerBatch(),
 	)
 	if err != nil {
 		if err == ErrSessionTableFull {
@@ -769,6 +767,7 @@ func (s *Server) handleMTUUpRequest(questionPacket []byte, _ DnsParser.LitePacke
 		PacketType: Enums.PACKET_MTU_UP_RES,
 		Payload:    responsePayload[:],
 	}, baseEncode)
+
 	if err != nil {
 		return nil
 	}

@@ -69,6 +69,11 @@ func deriveDeferredSessionPendingCap(workerCount int, queueLimit int) int32 {
 		capGuess = 8
 	}
 
+	// Never exceed what the worker queues can actually hold.
+	if capGuess > totalCapacity {
+		capGuess = totalCapacity
+	}
+
 	return int32(capGuess)
 }
 

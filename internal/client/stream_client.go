@@ -10,11 +10,13 @@ package client
 import (
 	"net"
 	"sync" // Added for sync.Pool
+	"sync/atomic"
 	"time"
 
 	"masterdnsvpn-go/internal/arq"
 	Enums "masterdnsvpn-go/internal/enums"
 	"masterdnsvpn-go/internal/mlq"
+	VpnProto "masterdnsvpn-go/internal/vpnproto"
 )
 
 var txPacketPool = sync.Pool{
@@ -57,17 +59,10 @@ type Stream_client struct {
 	InitialPayload []byte
 	PriorityCounts map[int]int
 
-	// Metadata & Failover
-	PreferredServerKey     string
-	ResolverResendStreak   int
-	LastResolverFailoverAt time.Time
-	HandshakeLastProgress  time.Time
-	CachedResolverPlan     []Connection
-	CachedResolverPlanFor  string
-	CachedResolverPlanSize int
-	CachedResolverVersion  uint64
+	HandshakeLastProgress time.Time
 
-	resolverMu    sync.Mutex
+	controlCount atomic.Int32
+
 	txQueueMu     sync.Mutex
 	statusMu      sync.RWMutex
 	terminalSince time.Time
@@ -126,7 +121,7 @@ func (c *Client) new_stream(streamID uint16, conn net.Conn, targetPayload []byte
 		InitialPayload:     targetPayload,
 		PriorityCounts:     make(map[int]int),
 
-		txQueue: mlq.New[*clientStreamTXPacket](c.cfg.StreamQueueInitialCapacity),
+		txQueue: mlq.New[*clientStreamTXPacket](c.cfg.EffectiveStreamQueueInitialCapacity()),
 
 		HandshakeLastProgress: now,
 	}
@@ -181,7 +176,7 @@ func (c *Client) new_stream(streamID uint16, conn net.Conn, targetPayload []byte
 	}
 
 	if streamID != 0 {
-		c.ensureStreamPreferredConnection(s)
+		c.balancer.EnsureStream(streamID)
 	}
 
 	return s
@@ -216,6 +211,7 @@ func (s *Stream_client) PushTXPacket(priority int, packetType uint8, sequenceNum
 	p.TTL = ttl
 	p.RetryCount = 0
 	p.Scheduled = false
+	p.isControlCounted.Store(false)
 
 	switch packetType {
 	case Enums.PACKET_STREAM_DATA:
@@ -241,16 +237,20 @@ func (s *Stream_client) PushTXPacket(priority int, packetType uint8, sequenceNum
 		return false
 	}
 
+	if VpnProto.IsPackableControlPacket(packetType, len(payload)) {
+		if p.isControlCounted.CompareAndSwap(false, true) {
+			s.controlCount.Add(1)
+		}
+	}
+
 	if packetType == Enums.PACKET_STREAM_RESEND {
-		if stale, removed := s.txQueue.RemoveByKey(dataKey, func(p *clientStreamTXPacket) uint64 {
-			return Enums.PacketIdentityKey(s.StreamID, p.PacketType, p.SequenceNum, p.FragmentID)
-		}); removed {
+		if stale, removed := s.txQueue.RemoveByKey(dataKey); removed {
 			s.ReleaseTXPacket(stale)
 		}
 	}
 
 	select {
-	case s.client.txSignal <- struct{}{}:
+	case s.client.dispatchSignal <- struct{}{}:
 	default:
 	}
 
@@ -260,9 +260,7 @@ func (s *Stream_client) PushTXPacket(priority int, packetType uint8, sequenceNum
 // PopNextTXPacket retrieves the highest priority packet from the queues.
 func (s *Stream_client) PopNextTXPacket() (*clientStreamTXPacket, int, bool) {
 	// Delegate to MLQ
-	packet, priority, ok := s.txQueue.Pop(func(p *clientStreamTXPacket) uint64 {
-		return Enums.PacketIdentityKey(s.StreamID, p.PacketType, p.SequenceNum, p.FragmentID)
-	})
+	packet, priority, ok := s.txQueue.Pop()
 	if ok && packet != nil {
 		s.NoteTXPacketDequeued(packet)
 	}
@@ -274,6 +272,11 @@ func (s *Stream_client) NoteTXPacketDequeued(packet *clientStreamTXPacket) {
 	if s == nil || packet == nil {
 		return
 	}
+
+	if packet.isControlCounted.CompareAndSwap(true, false) {
+		s.controlCount.Add(-1)
+	}
+
 	if a, ok := s.Stream.(*arq.ARQ); ok && a != nil {
 		a.NoteTXPacketDequeued(packet.PacketType, packet.SequenceNum, packet.FragmentID)
 	}
@@ -296,10 +299,11 @@ func (s *Stream_client) RemoveQueuedData(sequenceNum uint16) bool {
 	removedAny := false
 	for _, packetType := range []uint8{Enums.PACKET_STREAM_DATA, Enums.PACKET_STREAM_RESEND} {
 		key := Enums.PacketIdentityKey(s.StreamID, packetType, sequenceNum, 0)
-		p, ok := s.txQueue.RemoveByKey(key, func(p *clientStreamTXPacket) uint64 {
-			return Enums.PacketIdentityKey(s.StreamID, p.PacketType, p.SequenceNum, p.FragmentID)
-		})
+		p, ok := s.txQueue.RemoveByKey(key)
 		if ok {
+			if p.isControlCounted.CompareAndSwap(true, false) {
+				s.controlCount.Add(-1)
+			}
 			s.ReleaseTXPacket(p)
 			removedAny = true
 		}
@@ -316,13 +320,14 @@ func (s *Stream_client) RemoveQueuedDataNack(sequenceNum uint16) bool {
 	defer s.txQueueMu.Unlock()
 
 	key := Enums.PacketIdentityKey(s.StreamID, Enums.PACKET_STREAM_DATA_NACK, sequenceNum, 0)
-	p, ok := s.txQueue.RemoveByKey(key, func(p *clientStreamTXPacket) uint64 {
-		return Enums.PacketIdentityKey(s.StreamID, p.PacketType, p.SequenceNum, p.FragmentID)
-	})
+	p, ok := s.txQueue.RemoveByKey(key)
 	if !ok {
 		return false
 	}
 
+	if p.isControlCounted.CompareAndSwap(true, false) {
+		s.controlCount.Add(-1)
+	}
 	s.ReleaseTXPacket(p)
 	return true
 }
@@ -337,6 +342,7 @@ func (s *Stream_client) cleanupResources() {
 			s.ReleaseTXPacket(p)
 		})
 	}
+	s.controlCount.Store(0)
 
 	s.PendingInboundData = nil
 	s.SetStatus(streamStatusClosed)
@@ -349,6 +355,7 @@ func (s *Stream_client) finalizeAfterARQClose() {
 
 	s.cleanupOnce.Do(func() {
 		if s.client != nil {
+			s.client.balancer.CleanupStream(s.StreamID)
 			s.client.streamsMu.Lock()
 			if current, ok := s.client.active_streams[s.StreamID]; ok && current == s {
 				delete(s.client.active_streams, s.StreamID)
@@ -415,6 +422,7 @@ func (s *Stream_client) ReleaseTXPacket(p *clientStreamTXPacket) {
 	}
 	p.Payload = nil // Clear payload reference
 	p.TTL = 0
+	p.isControlCounted.Store(false)
 	txPacketPool.Put(p)
 }
 
@@ -562,7 +570,7 @@ func (c *Client) InitVirtualStream0() {
 	s := &Stream_client{
 		client:     c,
 		StreamID:   streamID,
-		txQueue:    mlq.New[*clientStreamTXPacket](c.cfg.StreamQueueInitialCapacity),
+		txQueue:    mlq.New[*clientStreamTXPacket](c.cfg.EffectiveStreamQueueInitialCapacity()),
 		CreateTime: time.Now(),
 	}
 

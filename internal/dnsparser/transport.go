@@ -92,6 +92,7 @@ func BuildTunnelTXTQuestionPacketPrepared(normalizedDomain string, domainQname [
 	if len(encodedFrame) == 0 {
 		return buildTXTQuestionPacketPrepared(domainQname, qType, ednsUDPSize), nil
 	}
+
 	if encodedQNameLen(len(encodedFrame), len(normalizedDomain)) > maxDNSNameLen {
 		return nil, ErrInvalidName
 	}

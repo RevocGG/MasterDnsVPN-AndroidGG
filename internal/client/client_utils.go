@@ -189,14 +189,6 @@ func (c *Client) Log() *logger.Logger {
 	return c.log
 }
 
-// connectionPtrByKey returns a pointer to a Connection object based on its unique key.
-func (c *Client) connectionPtrByKey(key string) *Connection {
-	if idx, ok := c.connectionsByKey[key]; ok {
-		return &c.connections[idx]
-	}
-	return nil
-}
-
 func orphanResetKey(packetType uint8, streamID uint16) uint64 {
 	return Enums.PacketTypeStreamKey(streamID, packetType)
 }
@@ -219,7 +211,7 @@ func (c *Client) enqueueOrphanReset(packetType uint8, streamID uint16, sequenceN
 	c.orphanQueue.Push(0, key, packet)
 
 	select {
-	case c.txSignal <- struct{}{}:
+	case c.dispatchSignal <- struct{}{}:
 	default:
 	}
 }
@@ -280,7 +272,7 @@ func (c *Client) consumeInboundStreamAck(packetType uint8, packet VpnProto.Packe
 
 	handledAck := arqObj.HandleAckPacket(packet.PacketType, packet.SequenceNum, packet.FragmentID)
 	if handledAck {
-		c.noteStreamProgress(packet.StreamID)
+		c.balancer.NoteStreamProgress(packet.StreamID)
 	}
 
 	if _, ok := Enums.GetPacketCloseStream(packet.PacketType); handledAck && ok {
@@ -560,12 +552,8 @@ func (c *Client) PrintBanner() {
 	c.log.Infof("📡 <cyan>Loaded Resolvers:</cyan> <yellow>%d endpoints.</yellow>", len(c.cfg.Resolvers))
 }
 
-func (c *Client) Connections() []Connection {
-	return c.connections
-}
-
 // BuildConnectionMap iterates through all domains and resolvers in the configuration
-// and builds a comprehensive list of unique Connection objects.
+// and builds a comprehensive list of unique Connection objects, then entrusts them to the Balancer.
 func (c *Client) BuildConnectionMap() error {
 	domains := c.cfg.Domains
 	resolvers := c.cfg.Resolvers
@@ -593,22 +581,24 @@ func (c *Client) BuildConnectionMap() error {
 				ResolverPort:  resolver.Port,
 				ResolverLabel: label,
 				Key:           key,
-				IsValid:       true,
+				IsValid:       false, // Initially all are inactive until MTU/Health checks pass
 			})
 			if ip := net.ParseIP(resolver.IP); ip != nil {
+				c.resolverAddrMu.Lock()
 				c.resolverAddrCache[label] = &net.UDPAddr{IP: ip, Port: resolver.Port}
+				c.resolverAddrMu.Unlock()
 			}
 		}
 	}
 
-	c.connections = connections
-	c.connectionsByKey = indexByKey
-
-	pointers := make([]*Connection, len(c.connections))
-	for i := range c.connections {
-		pointers[i] = &c.connections[i]
+	pointers := make([]*Connection, len(connections))
+	for i := range connections {
+		pointers[i] = &connections[i]
 	}
-	c.balancer.SetConnections(pointers)
+
+	if c.balancer != nil {
+		c.balancer.SetConnections(pointers)
+	}
 
 	return nil
 }

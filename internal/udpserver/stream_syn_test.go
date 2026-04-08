@@ -1091,6 +1091,41 @@ func TestDialSOCKSStreamTargetUsesExternalProxyWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestDialSOCKSStreamTargetExternalProxyDetachesSuccessfulConnFromHandshakeContext(t *testing.T) {
+	s := newTestServerForStreamSyn("SOCKS5")
+	s.useExternalSOCKS5 = true
+	s.externalSOCKS5Address = "203.0.113.10:1080"
+
+	conn := &scriptedSOCKS5Conn{
+		readBufs: [][]byte{
+			{0x05, 0x00},
+			{0x05, 0x00, 0x00, 0x01},
+			{203, 0, 113, 1, 0x04, 0x38},
+		},
+	}
+
+	s.dialStreamUpstreamFn = func(network string, address string, timeout time.Duration) (net.Conn, error) {
+		return conn, nil
+	}
+
+	targetPayload := []byte{0x03, 0x0b, 'e', 'x', 'a', 'm', 'p', 'l', 'e', '.', 'c', 'o', 'm', 0x01, 0xbb}
+	ctx, cancel := context.WithCancel(context.Background())
+	upstream, err := s.dialSOCKSStreamTargetContext(ctx, "example.com", 443, targetPayload)
+	if err != nil {
+		t.Fatalf("unexpected external SOCKS5 dial error: %v", err)
+	}
+	if upstream != conn {
+		t.Fatal("expected proxy-backed connection to be returned")
+	}
+
+	cancel()
+	time.Sleep(20 * time.Millisecond)
+
+	if conn.closed {
+		t.Fatal("expected successful external SOCKS5 connection to stay open after handshake context cancellation")
+	}
+}
+
 func TestMapSOCKSConnectErrorMapsBlockedTargetToRulesetDenied(t *testing.T) {
 	s := newTestServerForStreamSyn("SOCKS5")
 	if got := s.mapSOCKSConnectError(&blockedSOCKSTargetError{host: "127.0.0.1"}); got != Enums.PACKET_SOCKS5_RULESET_DENIED {

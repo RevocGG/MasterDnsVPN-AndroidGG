@@ -109,3 +109,22 @@ func TestEncodeLowerBase36PreservesLeadingZeroBytes(t *testing.T) {
 		t.Fatalf("unexpected decoded bytes: %#v", decoded)
 	}
 }
+
+func TestEncodeLowerBase36BytesMatchesStringEncoding(t *testing.T) {
+	original := []byte{0x00, 0x01, 0x02, 0x03, 0xFE, 0xFF}
+	encodedString := EncodeLowerBase36(original)
+	encodedBytes := EncodeLowerBase36Bytes(original)
+	if string(encodedBytes) != encodedString {
+		t.Fatalf("byte encoding mismatch: got=%q want=%q", string(encodedBytes), encodedString)
+	}
+}
+
+func TestEncodeLowerBase36ToMatchesStringEncoding(t *testing.T) {
+	original := []byte{0x10, 0x20, 0x30, 0x40}
+	want := EncodeLowerBase36(original)
+	buf := make([]byte, EncodedLenLowerBase36(len(original)))
+	n := EncodeLowerBase36To(buf, original)
+	if got := string(buf[:n]); got != want {
+		t.Fatalf("EncodeLowerBase36To mismatch: got=%q want=%q", got, want)
+	}
+}

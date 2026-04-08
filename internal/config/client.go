@@ -49,13 +49,8 @@ type ClientConfig struct {
 	StreamResolverFailoverResendThreshold int               `toml:"STREAM_RESOLVER_FAILOVER_RESEND_THRESHOLD"`
 	StreamResolverFailoverCooldownSec     float64           `toml:"STREAM_RESOLVER_FAILOVER_COOLDOWN"`
 	RecheckInactiveServersEnabled         bool              `toml:"RECHECK_INACTIVE_SERVERS_ENABLED"`
-	RecheckInactiveIntervalSeconds        float64           `toml:"RECHECK_INACTIVE_INTERVAL_SECONDS"`
-	RecheckServerIntervalSeconds          float64           `toml:"RECHECK_SERVER_INTERVAL_SECONDS"`
-	RecheckBatchSize                      int               `toml:"RECHECK_BATCH_SIZE"`
 	AutoDisableTimeoutServers             bool              `toml:"AUTO_DISABLE_TIMEOUT_SERVERS"`
 	AutoDisableTimeoutWindowSeconds       float64           `toml:"AUTO_DISABLE_TIMEOUT_WINDOW_SECONDS"`
-	AutoDisableMinObservations            int               `toml:"AUTO_DISABLE_MIN_OBSERVATIONS"`
-	AutoDisableCheckIntervalSeconds       float64           `toml:"AUTO_DISABLE_CHECK_INTERVAL_SECONDS"`
 	BaseEncodeData                        bool              `toml:"BASE_ENCODE_DATA"`
 	UploadCompressionType                 int               `toml:"UPLOAD_COMPRESSION_TYPE"`
 	DownloadCompressionType               int               `toml:"DOWNLOAD_COMPRESSION_TYPE"`
@@ -82,12 +77,7 @@ type ClientConfig struct {
 	PingWarmThresholdSeconds              float64           `toml:"PING_WARM_THRESHOLD_SECONDS"`
 	PingCoolThresholdSeconds              float64           `toml:"PING_COOL_THRESHOLD_SECONDS"`
 	PingColdThresholdSeconds              float64           `toml:"PING_COLD_THRESHOLD_SECONDS"`
-	TXChannelSize                         int               `toml:"TX_CHANNEL_SIZE"`
 	RXChannelSize                         int               `toml:"RX_CHANNEL_SIZE"`
-	ResolverUDPConnectionPoolSize         int               `toml:"RESOLVER_UDP_CONNECTION_POOL_SIZE"`
-	StreamQueueInitialCapacity            int               `toml:"STREAM_QUEUE_INITIAL_CAPACITY"`
-	OrphanQueueInitialCapacity            int               `toml:"ORPHAN_QUEUE_INITIAL_CAPACITY"`
-	DNSResponseFragmentStoreCap           int               `toml:"DNS_RESPONSE_FRAGMENT_STORE_CAPACITY"`
 	DNSResponseFragmentTimeoutSeconds     float64           `toml:"DNS_RESPONSE_FRAGMENT_TIMEOUT_SECONDS"`
 	SOCKSUDPAssociateReadTimeoutSeconds   float64           `toml:"SOCKS_UDP_ASSOCIATE_READ_TIMEOUT_SECONDS"`
 	ClientTerminalStreamRetentionSeconds  float64           `toml:"CLIENT_TERMINAL_STREAM_RETENTION_SECONDS"`
@@ -97,6 +87,7 @@ type ClientConfig struct {
 	SessionInitRetryLinearAfter           int               `toml:"SESSION_INIT_RETRY_LINEAR_AFTER"`
 	SessionInitRetryMaxSeconds            float64           `toml:"SESSION_INIT_RETRY_MAX_SECONDS"`
 	SessionInitBusyRetryIntervalSeconds   float64           `toml:"SESSION_INIT_BUSY_RETRY_INTERVAL_SECONDS"`
+	SessionInitRacingCount                int               `toml:"SESSION_INIT_RACING_COUNT"`
 	SaveMTUServersToFile                  bool              `toml:"SAVE_MTU_SERVERS_TO_FILE"`
 	MTUServersFileName                    string            `toml:"MTU_SERVERS_FILE_NAME"`
 	MTUServersFileFormat                  string            `toml:"MTU_SERVERS_FILE_FORMAT"`
@@ -158,13 +149,8 @@ func defaultClientConfig() ClientConfig {
 		StreamResolverFailoverResendThreshold: 2,
 		StreamResolverFailoverCooldownSec:     1.0,
 		RecheckInactiveServersEnabled:         true,
-		RecheckInactiveIntervalSeconds:        1800.0,
-		RecheckServerIntervalSeconds:          3.0,
-		RecheckBatchSize:                      5,
 		AutoDisableTimeoutServers:             true,
 		AutoDisableTimeoutWindowSeconds:       180.0,
-		AutoDisableMinObservations:            6,
-		AutoDisableCheckIntervalSeconds:       3.0,
 		BaseEncodeData:                        false,
 		UploadCompressionType:                 compression.TypeOff,
 		DownloadCompressionType:               compression.TypeOff,
@@ -189,12 +175,7 @@ func defaultClientConfig() ClientConfig {
 		PingWarmThresholdSeconds:              5.0,
 		PingCoolThresholdSeconds:              10.0,
 		PingColdThresholdSeconds:              20.0,
-		TXChannelSize:                         4096,
 		RXChannelSize:                         4096,
-		ResolverUDPConnectionPoolSize:         64,
-		StreamQueueInitialCapacity:            128,
-		OrphanQueueInitialCapacity:            32,
-		DNSResponseFragmentStoreCap:           256,
 		DNSResponseFragmentTimeoutSeconds:     10.0,
 		SOCKSUDPAssociateReadTimeoutSeconds:   30.0,
 		ClientTerminalStreamRetentionSeconds:  45.0,
@@ -204,6 +185,7 @@ func defaultClientConfig() ClientConfig {
 		SessionInitRetryLinearAfter:           5,
 		SessionInitRetryMaxSeconds:            60.0,
 		SessionInitBusyRetryIntervalSeconds:   60.0,
+		SessionInitRacingCount:                3,
 		SaveMTUServersToFile:                  false,
 		MTUServersFileName:                    "masterdnsvpn_success_test_{time}.log",
 		MTUServersFileFormat:                  "{IP} - UP: {UP_MTU} DOWN: {DOWN-MTU}",
@@ -345,12 +327,7 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 	cfg.SetupPacketDuplicationCount = clampInt(defaultIntBelow(cfg.SetupPacketDuplicationCount, 1, max(2, cfg.PacketDuplicationCount)), cfg.PacketDuplicationCount, 5)
 	cfg.StreamResolverFailoverResendThreshold = clampInt(defaultIntBelow(cfg.StreamResolverFailoverResendThreshold, 1, 2), 1, 128)
 	cfg.StreamResolverFailoverCooldownSec = clampFloat(defaultFloatAtMostZero(cfg.StreamResolverFailoverCooldownSec, 1.0), 0.1, 120.0)
-	cfg.RecheckInactiveIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.RecheckInactiveIntervalSeconds, 1800.0), 60.0, 86400.0)
-	cfg.RecheckServerIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.RecheckServerIntervalSeconds, 3.0), 1.0, 600.0)
-	cfg.RecheckBatchSize = clampInt(defaultIntBelow(cfg.RecheckBatchSize, 1, 5), 1, 1024)
 	cfg.AutoDisableTimeoutWindowSeconds = clampFloat(defaultFloatAtMostZero(cfg.AutoDisableTimeoutWindowSeconds, 180.0), 1.0, 86400.0)
-	cfg.AutoDisableMinObservations = clampInt(defaultIntBelow(cfg.AutoDisableMinObservations, 1, 6), 1, 10000)
-	cfg.AutoDisableCheckIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.AutoDisableCheckIntervalSeconds, 3.0), 0.25, 600.0)
 	cfg.MaxPacketsPerBatch = clampInt(defaultIntBelow(cfg.MaxPacketsPerBatch, 1, 10), 1, 64)
 	cfg.ARQWindowSize = clampInt(defaultIntBelow(cfg.ARQWindowSize, 1, 600), 1, 6000)
 	cfg.ARQInitialRTOSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQInitialRTOSeconds, 1.0), 0.05, 60.0)
@@ -387,8 +364,10 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 	if !cfg.explicitRX_TX_Workers && legacyRX_TX_Workers > 0 {
 		cfg.RX_TX_Workers = legacyRX_TX_Workers
 	}
+
 	cfg.RX_TX_Workers = clampInt(defaultIntBelow(cfg.RX_TX_Workers, 1, 6), 1, 64)
 	cfg.TunnelProcessWorkers = max(clampInt(defaultIntBelow(cfg.TunnelProcessWorkers, 1, 4), 1, 64), cfg.RX_TX_Workers)
+
 	cfg.TunnelPacketTimeoutSec = clampFloat(defaultFloatAtMostZero(cfg.TunnelPacketTimeoutSec, 8.0), 0.5, 120.0)
 	cfg.DispatcherIdlePollIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.DispatcherIdlePollIntervalSeconds, 0.020), 0.001, 1.0)
 	cfg.PingAggressiveIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.PingAggressiveIntervalSeconds, 0.100), 0.05, 30.0)
@@ -398,12 +377,7 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 	cfg.PingWarmThresholdSeconds = clampFloat(defaultFloatAtMostZero(cfg.PingWarmThresholdSeconds, 5.0), 0.1, 600.0)
 	cfg.PingCoolThresholdSeconds = clampFloat(defaultFloatAtMostZero(cfg.PingCoolThresholdSeconds, 10.0), cfg.PingWarmThresholdSeconds, 1800.0)
 	cfg.PingColdThresholdSeconds = clampFloat(defaultFloatAtMostZero(cfg.PingColdThresholdSeconds, 20.0), cfg.PingCoolThresholdSeconds, 3600.0)
-	cfg.TXChannelSize = clampInt(defaultIntBelow(cfg.TXChannelSize, 1, 4096), 64, 65536)
 	cfg.RXChannelSize = clampInt(defaultIntBelow(cfg.RXChannelSize, 1, 4096), 64, 65536)
-	cfg.ResolverUDPConnectionPoolSize = clampInt(defaultIntBelow(cfg.ResolverUDPConnectionPoolSize, 1, 64), 1, 1024)
-	cfg.StreamQueueInitialCapacity = clampInt(defaultIntBelow(cfg.StreamQueueInitialCapacity, 1, 128), 8, 65536)
-	cfg.OrphanQueueInitialCapacity = clampInt(defaultIntBelow(cfg.OrphanQueueInitialCapacity, 1, 32), 4, 4096)
-	cfg.DNSResponseFragmentStoreCap = clampInt(defaultIntBelow(cfg.DNSResponseFragmentStoreCap, 1, 256), 16, 16384)
 	cfg.DNSResponseFragmentTimeoutSeconds = clampFloat(defaultFloatAtMostZero(cfg.DNSResponseFragmentTimeoutSeconds, 10.0), 1.0, 600.0)
 	cfg.SOCKSUDPAssociateReadTimeoutSeconds = clampFloat(defaultFloatAtMostZero(cfg.SOCKSUDPAssociateReadTimeoutSeconds, 30.0), 1.0, 3600.0)
 	cfg.ClientTerminalStreamRetentionSeconds = clampFloat(defaultFloatAtMostZero(cfg.ClientTerminalStreamRetentionSeconds, 45.0), 1.0, 3600.0)
@@ -413,6 +387,7 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 	cfg.SessionInitRetryLinearAfter = clampInt(defaultIntBelow(cfg.SessionInitRetryLinearAfter, 0, 5), 0, 1000)
 	cfg.SessionInitRetryMaxSeconds = clampFloat(defaultFloatAtMostZero(cfg.SessionInitRetryMaxSeconds, 60.0), cfg.SessionInitRetryBaseSeconds, 3600.0)
 	cfg.SessionInitBusyRetryIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.SessionInitBusyRetryIntervalSeconds, 60.0), 1.0, 3600.0)
+	cfg.SessionInitRacingCount = clampInt(defaultIntBelow(cfg.SessionInitRacingCount, 1, 3), 1, 5)
 	cfg.MTUServersFileName = strings.TrimSpace(cfg.MTUServersFileName)
 	cfg.MTUServersFileFormat = strings.TrimSpace(cfg.MTUServersFileFormat)
 	cfg.MTUUsingSeparatorText = strings.TrimSpace(cfg.MTUUsingSeparatorText)
@@ -566,6 +541,92 @@ func (c ClientConfig) SessionInitRetryMax() time.Duration {
 
 func (c ClientConfig) SessionInitBusyRetryInterval() time.Duration {
 	return time.Duration(c.SessionInitBusyRetryIntervalSeconds * float64(time.Second))
+}
+
+func (c ClientConfig) EffectiveResolverUDPConnectionPoolSize() int {
+	maxDup := max(c.PacketDuplicationCount, c.SetupPacketDuplicationCount)
+	if maxDup < 1 {
+		maxDup = 1
+	}
+	resolverCount := len(c.Resolvers)
+	if resolverCount < 1 {
+		resolverCount = 1
+	}
+
+	size := max(8, c.RX_TX_Workers*maxDup*2)
+	switch {
+	case resolverCount <= 4:
+		size *= 2
+	case resolverCount <= 8:
+		size = size * 3 / 2
+	case resolverCount >= 64:
+		size = max(8, size/2)
+	case resolverCount >= 32:
+		size = max(8, size*3/4)
+	}
+
+	return clampInt(size, 8, 128)
+}
+
+func (c ClientConfig) EffectiveStreamQueueInitialCapacity() int {
+	size := max(c.ARQWindowSize/8, c.MaxPacketsPerBatch*8)
+	if c.PacketDuplicationCount > 1 {
+		size += c.PacketDuplicationCount * 4
+	}
+	return clampInt(size, 32, 512)
+}
+
+func (c ClientConfig) EffectiveOrphanQueueInitialCapacity() int {
+	maxDup := max(c.PacketDuplicationCount, c.SetupPacketDuplicationCount)
+	size := c.MaxPacketsPerBatch*4 + c.RX_TX_Workers*2 + maxDup*4
+	return clampInt(size, 16, 128)
+}
+
+func (c ClientConfig) EffectiveDNSResponseFragmentStoreCap() int {
+	size := (c.TunnelProcessWorkers + c.RX_TX_Workers) * c.MaxPacketsPerBatch * 2
+	if c.PacketDuplicationCount > 1 {
+		size += c.PacketDuplicationCount * c.MaxPacketsPerBatch * 4
+	}
+	return clampInt(size, 128, 2048)
+}
+
+func (c ClientConfig) EffectiveRXChannelSize() int {
+	maxDup := max(max(c.PacketDuplicationCount, c.SetupPacketDuplicationCount), 1)
+	workerBudget := max(c.RX_TX_Workers+c.TunnelProcessWorkers, 2)
+	recommended := clampInt(workerBudget*c.MaxPacketsPerBatch*maxDup*16, 1024, 32768)
+	return max(c.RXChannelSize, recommended)
+}
+
+func (c ClientConfig) EffectiveMTUTestParallelism() int {
+	totalResolvers := len(c.Resolvers)
+	if totalResolvers <= 1 {
+		return max(1, c.MTUTestParallelism)
+	}
+
+	recommended := 2
+	switch {
+	case totalResolvers <= 4:
+		recommended = 2
+	case totalResolvers <= 8:
+		recommended = 4
+	case totalResolvers <= 16:
+		recommended = 6
+	case totalResolvers <= 32:
+		recommended = 8
+	case totalResolvers <= 64:
+		recommended = 12
+	case totalResolvers <= 128:
+		recommended = 16
+	default:
+		recommended = 20
+	}
+
+	maxSafe := clampInt(max(c.RX_TX_Workers*2, 4), 4, 24)
+	if recommended > maxSafe {
+		recommended = maxSafe
+	}
+
+	return max(c.MTUTestParallelism, recommended)
 }
 
 func applyClientConfigOverrideValues(cfg *ClientConfig, values map[string]any) error {

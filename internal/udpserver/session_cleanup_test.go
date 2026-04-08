@@ -191,9 +191,7 @@ func TestForceCloseStreamQueuesRSTOnServer(t *testing.T) {
 		t.Fatal("expected force close to close upstream connection")
 	}
 
-	pkt, _, ok := stream.TXQueue.Pop(func(p *serverStreamTXPacket) uint64 {
-		return Enums.PacketIdentityKey(stream.ID, p.PacketType, p.SequenceNum, p.FragmentID)
-	})
+	pkt, _, ok := stream.TXQueue.Pop()
 	if !ok || pkt == nil {
 		t.Fatal("expected queued STREAM_RST after force close")
 	}
@@ -210,9 +208,7 @@ func TestGracefulCloseStreamQueuesCloseReadOnServer(t *testing.T) {
 
 	stream.CloseStream(false, 0, "graceful close")
 
-	pkt, _, ok := stream.TXQueue.Pop(func(p *serverStreamTXPacket) uint64 {
-		return Enums.PacketIdentityKey(stream.ID, p.PacketType, p.SequenceNum, p.FragmentID)
-	})
+	pkt, _, ok := stream.TXQueue.Pop()
 	if !ok || pkt == nil {
 		t.Fatal("expected queued STREAM_CLOSE_READ after graceful close")
 	}
@@ -640,9 +636,7 @@ func TestRecentlyClosedGracefulStreamSuppressesMissingStreamReset(t *testing.T) 
 	if !s.preprocessInboundPacket(packet) {
 		t.Fatal("expected recently closed graceful stream packet to be consumed")
 	}
-	popped, _, ok := record.OrphanQueue.Pop(func(packet VpnProto.Packet) uint64 {
-		return orphanResetKey(packet.PacketType, packet.StreamID)
-	})
+	popped, _, ok := record.OrphanQueue.Pop()
 	if !ok {
 		t.Fatal("expected CLOSE_READ_ACK queued for gracefully closed stream")
 	}
@@ -676,9 +670,7 @@ func TestRecentlyClosedGracefulStreamStillAcksLateCloseWrite(t *testing.T) {
 		t.Fatal("expected recently closed stream CLOSE_WRITE to be consumed")
 	}
 
-	popped, _, ok := record.OrphanQueue.Pop(func(packet VpnProto.Packet) uint64 {
-		return orphanResetKey(packet.PacketType, packet.StreamID)
-	})
+	popped, _, ok := record.OrphanQueue.Pop()
 	if !ok {
 		t.Fatal("expected CLOSE_WRITE_ACK queued for recently closed stream")
 	}
@@ -715,9 +707,7 @@ func TestRecentlyClosedGracefulStreamLateDataQueuesRST(t *testing.T) {
 		t.Fatal("expected recently closed stream DATA to be consumed")
 	}
 
-	popped, _, ok := record.OrphanQueue.Pop(func(packet VpnProto.Packet) uint64 {
-		return orphanResetKey(packet.PacketType, packet.StreamID)
-	})
+	popped, _, ok := record.OrphanQueue.Pop()
 	if !ok {
 		t.Fatal("expected STREAM_RST queued for late data on recently closed stream")
 	}

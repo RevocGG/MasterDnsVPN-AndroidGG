@@ -14,7 +14,7 @@ func TestAsyncStreamDispatcherDrainsQueuedWorkAfterSingleWake(t *testing.T) {
 		t.Fatalf("BuildConnectionMap returned error: %v", err)
 	}
 
-	c.txChannel = make(chan rawOutboundTask, 4)
+	c.plannerQueue = make(chan plannerTask, 4)
 	c.active_streams = make(map[uint16]*Stream_client)
 
 	stream := &Stream_client{
@@ -32,7 +32,7 @@ func TestAsyncStreamDispatcherDrainsQueuedWorkAfterSingleWake(t *testing.T) {
 		t.Fatal("expected second packet to enqueue")
 	}
 
-	c.clearTxSignal()
+	c.clearDispatchSignal()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -45,23 +45,23 @@ func TestAsyncStreamDispatcherDrainsQueuedWorkAfterSingleWake(t *testing.T) {
 	}()
 
 	select {
-	case c.txSignal <- struct{}{}:
+	case c.dispatchSignal <- struct{}{}:
 	default:
 	}
 
 	waitForCondition(t, time.Second, func() bool {
-		return len(c.txChannel) == 2
+		return len(c.plannerQueue) == 2
 	}, "expected dispatcher to drain both queued packets after a single wake signal")
 
 	cancel()
 	c.asyncWG.Wait()
 }
 
-func TestAsyncStreamDispatcherIgnoresTxSpaceSignalWhileIdle(t *testing.T) {
+func TestAsyncStreamDispatcherWakesOnPlannerQueueSpaceSignal(t *testing.T) {
 	c := createTestClient(t)
 	c.cfg.DispatcherIdlePollIntervalSeconds = 0.01
-	c.txSignal = make(chan struct{}, 1)
-	c.txSpaceSignal = make(chan struct{}, 1)
+	c.dispatchSignal = make(chan struct{}, 1)
+	c.plannerQueueSpaceSignal = make(chan struct{}, 1)
 	c.active_streams = make(map[uint16]*Stream_client)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -70,11 +70,11 @@ func TestAsyncStreamDispatcherIgnoresTxSpaceSignalWhileIdle(t *testing.T) {
 	c.asyncWG.Add(1)
 	go c.asyncStreamDispatcher(ctx)
 
-	c.txSpaceSignal <- struct{}{}
+	c.plannerQueueSpaceSignal <- struct{}{}
 	time.Sleep(40 * time.Millisecond)
 
-	if len(c.txSpaceSignal) != 1 {
-		t.Fatal("expected idle dispatcher to ignore txSpaceSignal wakeups")
+	if len(c.plannerQueueSpaceSignal) != 0 {
+		t.Fatal("expected dispatcher to consume plannerQueueSpaceSignal wakeup")
 	}
 
 	cancel()
@@ -91,5 +91,6 @@ func waitForCondition(t *testing.T, timeout time.Duration, fn func() bool, msg s
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+
 	t.Fatal(msg)
 }

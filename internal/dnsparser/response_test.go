@@ -185,6 +185,42 @@ func TestBuildFormatErrorResponseUsesFORMERR(t *testing.T) {
 	}
 }
 
+func TestBuildEmptyNoErrorResponseBuildsResolverLikeFlags(t *testing.T) {
+	request := buildDNSQuery(0x1357, "example.com", Enums.DNS_RECORD_TYPE_A, false)
+	binary.BigEndian.PutUint16(request[2:4], 0x0700)
+	request[2] |= 0x02 // AA
+	request[2] |= 0x01 // TC
+	request[3] |= 0x10 // CD
+
+	response, err := BuildEmptyNoErrorResponse(request)
+	if err != nil {
+		t.Fatalf("BuildEmptyNoErrorResponse returned error: %v", err)
+	}
+
+	flags := binary.BigEndian.Uint16(response[2:4])
+	if flags&(1<<15) == 0 {
+		t.Fatal("response must set QR")
+	}
+	if flags&(1<<7) == 0 {
+		t.Fatal("response must set RA")
+	}
+	if flags&(1<<8) == 0 {
+		t.Fatal("response must preserve RD")
+	}
+	if flags&(1<<4) == 0 {
+		t.Fatal("response must preserve CD")
+	}
+	if flags&(1<<10) != 0 {
+		t.Fatal("resolver-like synthetic response must clear AA")
+	}
+	if flags&(1<<9) != 0 {
+		t.Fatal("resolver-like synthetic response must clear TC")
+	}
+	if got := (flags >> 11) & 0xF; got != 0 {
+		t.Fatalf("unexpected opcode bits: got=%d want=0", got)
+	}
+}
+
 func TestBuildRefusedResponseFromLiteUsesREFUSED(t *testing.T) {
 	request := buildDNSQuery(0x9999, "blocked.example", Enums.DNS_RECORD_TYPE_TXT, true)
 
@@ -234,6 +270,42 @@ func TestBuildEmptyNoErrorResponseHandlesManyLabels(t *testing.T) {
 		t.Fatalf("unexpected qname: got=%q", parsed.Questions[0].Name)
 	}
 	if len(parsed.Additional) != 1 || parsed.Additional[0].Type != Enums.DNS_RECORD_TYPE_OPT {
+		t.Fatalf("response must preserve the OPT record")
+	}
+}
+
+func TestBuildNoDataResponseFromLiteBuildsEmptyNoErrorResponse(t *testing.T) {
+	request := buildDNSQuery(0x5151, "example.com", Enums.DNS_RECORD_TYPE_AAAA, true)
+
+	parsed, err := ParsePacketLite(request)
+	if err != nil {
+		t.Fatalf("ParsePacketLite returned error: %v", err)
+	}
+
+	response, err := BuildNoDataResponseFromLite(request, parsed)
+	if err != nil {
+		t.Fatalf("BuildNoDataResponseFromLite returned error: %v", err)
+	}
+
+	flags := binary.BigEndian.Uint16(response[2:4])
+	if got := flags & 0x000F; got != Enums.DNSR_CODE_NO_ERROR {
+		t.Fatalf("unexpected rcode: got=%d want=%d", got, Enums.DNSR_CODE_NO_ERROR)
+	}
+	if got := binary.BigEndian.Uint16(response[6:8]); got != 0 {
+		t.Fatalf("unexpected ancount: got=%d want=0", got)
+	}
+	if got := binary.BigEndian.Uint16(response[8:10]); got != 0 {
+		t.Fatalf("unexpected nscount: got=%d want=0", got)
+	}
+
+	full, err := ParsePacket(response)
+	if err != nil {
+		t.Fatalf("ParsePacket(response) returned error: %v", err)
+	}
+	if len(full.Authorities) != 0 {
+		t.Fatalf("unexpected authority count: got=%d want=0", len(full.Authorities))
+	}
+	if len(full.Additional) != 1 || full.Additional[0].Type != Enums.DNS_RECORD_TYPE_OPT {
 		t.Fatalf("response must preserve the OPT record")
 	}
 }

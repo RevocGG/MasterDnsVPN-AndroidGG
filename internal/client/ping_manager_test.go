@@ -9,7 +9,7 @@ import (
 
 func TestStreamZeroAllowsMultipleQueuedPingsWithDifferentSequence(t *testing.T) {
 	c := &Client{
-		txSignal: make(chan struct{}, 8),
+		dispatchSignal: make(chan struct{}, 8),
 	}
 	s := &Stream_client{
 		client:   c,
@@ -28,6 +28,27 @@ func TestStreamZeroAllowsMultipleQueuedPingsWithDifferentSequence(t *testing.T) 
 	}
 	if s.PushTXPacket(Enums.DefaultPacketPriority(Enums.PACKET_PING), Enums.PACKET_PING, 2, 0, 0, 0, 0, []byte("dup")) {
 		t.Fatal("expected duplicate ping sequence to be rejected")
+	}
+}
+
+func TestPingQueueDropsWhenCongested(t *testing.T) {
+	c := &Client{
+		dispatchSignal: make(chan struct{}, 8),
+	}
+	s := &Stream_client{
+		client:   c,
+		StreamID: 0,
+		txQueue:  mlq.New[*clientStreamTXPacket](1024),
+	}
+
+	for i := 0; i < 501; i++ {
+		if !s.PushTXPacket(Enums.DefaultPacketPriority(Enums.PACKET_STREAM_DATA), Enums.PACKET_STREAM_DATA, uint16(i+1), 0, 1, 0, 0, []byte("x")) {
+			t.Fatalf("expected data packet %d to queue", i+1)
+		}
+	}
+
+	if s.PushTXPacket(Enums.DefaultPacketPriority(Enums.PACKET_PING), Enums.PACKET_PING, 777, 0, 0, 0, 0, []byte("ping")) {
+		t.Fatal("expected ping to be dropped when tx queue is congested")
 	}
 }
 

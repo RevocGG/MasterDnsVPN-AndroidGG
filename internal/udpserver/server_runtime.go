@@ -28,7 +28,7 @@ func (s *Server) configureSocketBuffers(conn *net.UDPConn) {
 }
 
 func (s *Server) startDNSWorkers(ctx context.Context, conn *net.UDPConn, reqCh <-chan request, workerWG *sync.WaitGroup) {
-	for i := range s.cfg.DNSRequestWorkers {
+	for i := range s.cfg.EffectiveDNSRequestWorkers() {
 		workerWG.Add(1)
 		go func(workerID int) {
 			defer workerWG.Done()
@@ -38,7 +38,7 @@ func (s *Server) startDNSWorkers(ctx context.Context, conn *net.UDPConn, reqCh <
 }
 
 func (s *Server) startReaders(ctx context.Context, conn *net.UDPConn, reqCh chan<- request, readErrCh chan<- error, readerWG *sync.WaitGroup) {
-	for i := range s.cfg.UDPReaders {
+	for i := range s.cfg.EffectiveUDPReaders() {
 		readerWG.Add(1)
 		go func(readerID int) {
 			defer readerWG.Done()

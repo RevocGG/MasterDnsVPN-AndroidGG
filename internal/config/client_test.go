@@ -8,6 +8,7 @@
 package config
 
 import (
+	"flag"
 	"os"
 	"path/filepath"
 	"testing"
@@ -227,8 +228,6 @@ DATA_ENCRYPTION_METHOD = 1
 ENCRYPTION_KEY = "secret"
 AUTO_DISABLE_TIMEOUT_SERVERS = true
 AUTO_DISABLE_TIMEOUT_WINDOW_SECONDS = 3.0
-AUTO_DISABLE_MIN_OBSERVATIONS = 3
-AUTO_DISABLE_CHECK_INTERVAL_SECONDS = 3.0
 `), 0o644); err != nil {
 		t.Fatalf("WriteFile config failed: %v", err)
 	}
@@ -244,7 +243,168 @@ AUTO_DISABLE_CHECK_INTERVAL_SECONDS = 3.0
 	if cfg.AutoDisableTimeoutWindowSeconds != 3.0 {
 		t.Fatalf("unexpected auto-disable timeout window: got=%v want=%v", cfg.AutoDisableTimeoutWindowSeconds, 3.0)
 	}
-	if cfg.AutoDisableCheckIntervalSeconds != 3.0 {
-		t.Fatalf("unexpected auto-disable check interval: got=%v want=%v", cfg.AutoDisableCheckIntervalSeconds, 3.0)
+}
+
+func TestLoadClientConfigUsesMergedRX_TX_Workers(t *testing.T) {
+	dir := t.TempDir()
+
+	configPath := filepath.Join(dir, "client_config.toml")
+	resolversPath := filepath.Join(dir, "client_resolvers.txt")
+
+	if err := os.WriteFile(configPath, []byte(`
+PROTOCOL_TYPE = "SOCKS5"
+DOMAINS = ["v.domain.com"]
+DATA_ENCRYPTION_METHOD = 1
+ENCRYPTION_KEY = "secret"
+RX_TX_WORKERS = 9
+TUNNEL_PROCESS_WORKERS = 2
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile config failed: %v", err)
+	}
+	if err := os.WriteFile(resolversPath, []byte("8.8.8.8\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile resolvers failed: %v", err)
+	}
+
+	cfg, err := LoadClientConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadClientConfig returned error: %v", err)
+	}
+
+	if cfg.RX_TX_Workers != 9 {
+		t.Fatalf("unexpected merged RX/TX workers: got=%d want=%d", cfg.RX_TX_Workers, 9)
+	}
+	if cfg.TunnelProcessWorkers != 9 {
+		t.Fatalf("expected process workers to be raised to RX/TX count: got=%d want=%d", cfg.TunnelProcessWorkers, 9)
+	}
+}
+
+func TestLoadClientConfigFallsBackToLegacyReaderWriterWorkers(t *testing.T) {
+	dir := t.TempDir()
+
+	configPath := filepath.Join(dir, "client_config.toml")
+	resolversPath := filepath.Join(dir, "client_resolvers.txt")
+
+	if err := os.WriteFile(configPath, []byte(`
+PROTOCOL_TYPE = "SOCKS5"
+DOMAINS = ["v.domain.com"]
+DATA_ENCRYPTION_METHOD = 1
+ENCRYPTION_KEY = "secret"
+TUNNEL_READER_WORKERS = 3
+TUNNEL_WRITER_WORKERS = 9
+TUNNEL_PROCESS_WORKERS = 2
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile config failed: %v", err)
+	}
+	if err := os.WriteFile(resolversPath, []byte("8.8.8.8\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile resolvers failed: %v", err)
+	}
+
+	cfg, err := LoadClientConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadClientConfig returned error: %v", err)
+	}
+
+	if cfg.RX_TX_Workers != 9 {
+		t.Fatalf("expected legacy reader/writer workers to map into merged RX/TX workers: got=%d want=%d", cfg.RX_TX_Workers, 9)
+	}
+	if cfg.TunnelProcessWorkers != 9 {
+		t.Fatalf("expected process workers to be raised to merged RX/TX count: got=%d want=%d", cfg.TunnelProcessWorkers, 9)
+	}
+}
+
+func TestLoadClientConfigWithOverridesReplacesResolversDomainsAndMTURange(t *testing.T) {
+	dir := t.TempDir()
+
+	configPath := filepath.Join(dir, "client_config.toml")
+	defaultResolversPath := filepath.Join(dir, "client_resolvers.txt")
+	overrideResolversPath := filepath.Join(dir, "custom_resolvers.txt")
+
+	if err := os.WriteFile(configPath, []byte(`
+PROTOCOL_TYPE = "SOCKS5"
+DOMAINS = ["config.domain.com"]
+DATA_ENCRYPTION_METHOD = 1
+ENCRYPTION_KEY = "secret"
+MIN_UPLOAD_MTU = 40
+MAX_UPLOAD_MTU = 64
+MIN_DOWNLOAD_MTU = 100
+MAX_DOWNLOAD_MTU = 140
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile config failed: %v", err)
+	}
+	if err := os.WriteFile(defaultResolversPath, []byte("8.8.8.8\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile default resolvers failed: %v", err)
+	}
+	if err := os.WriteFile(overrideResolversPath, []byte("1.1.1.1:5353\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile override resolvers failed: %v", err)
+	}
+
+	minUp := 70
+	maxUp := 90
+	minDown := 180
+	maxDown := 220
+	cfg, err := LoadClientConfigWithOverrides(configPath, ClientConfigOverrides{
+		ResolversFilePath: &overrideResolversPath,
+		Values: map[string]any{
+			"Domains":        []string{"a.example.com", "b.example.com."},
+			"MinUploadMTU":   minUp,
+			"MaxUploadMTU":   maxUp,
+			"MinDownloadMTU": minDown,
+			"MaxDownloadMTU": maxDown,
+		},
+	})
+	if err != nil {
+		t.Fatalf("LoadClientConfigWithOverrides returned error: %v", err)
+	}
+
+	if cfg.ResolversPath() != overrideResolversPath {
+		t.Fatalf("unexpected overridden resolvers path: got=%q want=%q", cfg.ResolversPath(), overrideResolversPath)
+	}
+	if len(cfg.Domains) != 2 || cfg.Domains[0] != "a.example.com" || cfg.Domains[1] != "b.example.com" {
+		t.Fatalf("unexpected overridden domains: %+v", cfg.Domains)
+	}
+	if cfg.ResolverMap["1.1.1.1"] != 5353 {
+		t.Fatalf("unexpected override resolver map entry: got=%d want=%d", cfg.ResolverMap["1.1.1.1"], 5353)
+	}
+	if cfg.MinUploadMTU != minUp || cfg.MaxUploadMTU != maxUp || cfg.MinDownloadMTU != minDown || cfg.MaxDownloadMTU != maxDown {
+		t.Fatalf("unexpected overridden MTU range: up=%d..%d down=%d..%d", cfg.MinUploadMTU, cfg.MaxUploadMTU, cfg.MinDownloadMTU, cfg.MaxDownloadMTU)
+	}
+}
+
+func TestClientConfigFlagBinderBuildsOverridesForSetFlagsOnly(t *testing.T) {
+	fs := flag.NewFlagSet("client", flag.ContinueOnError)
+	binder, err := NewClientConfigFlagBinder(fs)
+	if err != nil {
+		t.Fatalf("NewClientConfigFlagBinder returned error: %v", err)
+	}
+
+	if err := fs.Parse([]string{
+		"-domains=a.example.com,b.example.com",
+		"-min-upload-mtu=70",
+		"-max-download-mtu=220",
+		"-encryption-key=override-secret",
+		"-base-encode-data",
+	}); err != nil {
+		t.Fatalf("flag parse failed: %v", err)
+	}
+
+	overrides := binder.Overrides()
+	if got, ok := overrides.Values["MinUploadMTU"].(int); !ok || got != 70 {
+		t.Fatalf("unexpected min upload mtu override: %#v", overrides.Values["MinUploadMTU"])
+	}
+	if got, ok := overrides.Values["MaxDownloadMTU"].(int); !ok || got != 220 {
+		t.Fatalf("unexpected max download mtu override: %#v", overrides.Values["MaxDownloadMTU"])
+	}
+	if got, ok := overrides.Values["EncryptionKey"].(string); !ok || got != "override-secret" {
+		t.Fatalf("unexpected encryption key override: %#v", overrides.Values["EncryptionKey"])
+	}
+	if got, ok := overrides.Values["BaseEncodeData"].(bool); !ok || !got {
+		t.Fatalf("unexpected base encode override: %#v", overrides.Values["BaseEncodeData"])
+	}
+	gotDomains, ok := overrides.Values["Domains"].([]string)
+	if !ok || len(gotDomains) != 2 || gotDomains[0] != "a.example.com" || gotDomains[1] != "b.example.com" {
+		t.Fatalf("unexpected domains override: %#v", overrides.Values["Domains"])
+	}
+	if _, exists := overrides.Values["MaxUploadMTU"]; exists {
+		t.Fatalf("did not expect unset flag to appear in overrides: %#v", overrides.Values["MaxUploadMTU"])
 	}
 }
