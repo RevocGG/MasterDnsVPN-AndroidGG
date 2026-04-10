@@ -111,8 +111,10 @@ jobs:
           # Read upstream version from build.gradle.kts default
           UPSTREAM="${{ inputs.upstream_version }}"
           if [[ -z "$UPSTREAM" ]]; then
-            UPSTREAM=$(grep -oP 'upstreamVersion[^"]*"\K[^"]+' android/app/build.gradle.kts || echo "unknown")
+            UPSTREAM=$(grep -oP ':\s*"v\K[^"]+' android/app/build.gradle.kts | head -1 || echo "unknown")
+            if [[ -n "$UPSTREAM" ]]; then UPSTREAM="v${UPSTREAM}"; fi
           fi
+          UPSTREAM="${UPSTREAM:-unknown}"
 
           echo "version_name=$VER"         >> "$GITHUB_OUTPUT"
           echo "version_code=$CODE"        >> "$GITHUB_OUTPUT"
@@ -188,7 +190,7 @@ jobs:
           ./gradlew assembleRelease \
             -PversionCode=${{ steps.version.outputs.version_code }} \
             -PversionName=${{ steps.version.outputs.version_name }} \
-            -PupstreamVersion=${{ steps.version.outputs.upstream }} \
+            "-PupstreamVersion=${{ steps.version.outputs.upstream }}" \
             --no-daemon \
             --stacktrace
 
