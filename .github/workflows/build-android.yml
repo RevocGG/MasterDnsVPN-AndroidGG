@@ -6,10 +6,13 @@
 name: Build & Release Android
 
 on:
+  push:
+    tags:
+      - 'v[0-9]*'
   workflow_dispatch:
     inputs:
       version_name:
-        description: "Version name (e.g. 1.3.0) — empty = auto date-based"
+        description: "Version name (e.g. 1.3.0) — empty = auto from tag or date"
         required: false
         default: ""
       upstream_version:
@@ -86,20 +89,38 @@ jobs:
       - name: Determine version
         id: version
         run: |
+          # Priority: manual input > git tag > date fallback
           if [[ -n "${{ inputs.version_name }}" ]]; then
             VER="${{ inputs.version_name }}"
             PRERELEASE="${{ inputs.prerelease || 'false' }}"
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VER="${GITHUB_REF#refs/tags/v}"
+            PRERELEASE=false
           else
             VER="$(date -u +%Y.%m.%d)-${{ github.run_number }}"
             PRERELEASE=true
           fi
 
-          echo "version_name=$VER"                     >> "$GITHUB_OUTPUT"
-          echo "version_code=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
-          echo "is_prerelease=$PRERELEASE"             >> "$GITHUB_OUTPUT"
-          echo "release_tag=v${VER}"                   >> "$GITHUB_OUTPUT"
+          # Derive versionCode from version segments: 1.0.7 → 10007
+          # Falls back to github.run_number if parsing fails.
+          CODE=$(echo "$VER" | awk -F. '{ if (NF>=3) printf "%d", $1*10000+$2*100+$3; else print 0 }')
+          if [[ "$CODE" -le 0 ]]; then
+            CODE=${{ github.run_number }}
+          fi
 
-          echo "Version: $VER  code: ${{ github.run_number }}  pre: $PRERELEASE"
+          # Read upstream version from build.gradle.kts default
+          UPSTREAM="${{ inputs.upstream_version }}"
+          if [[ -z "$UPSTREAM" ]]; then
+            UPSTREAM=$(grep -oP 'upstreamVersion[^"]*"\K[^"]+' android/app/build.gradle.kts || echo "unknown")
+          fi
+
+          echo "version_name=$VER"         >> "$GITHUB_OUTPUT"
+          echo "version_code=$CODE"        >> "$GITHUB_OUTPUT"
+          echo "is_prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "release_tag=v${VER}"       >> "$GITHUB_OUTPUT"
+          echo "upstream=$UPSTREAM"        >> "$GITHUB_OUTPUT"
+
+          echo "Version: $VER  code: $CODE  pre: $PRERELEASE  upstream: $UPSTREAM"
 
       # ── gomobile ─────────────────────────────────────────────────────────
       - name: Install gomobile
@@ -167,7 +188,7 @@ jobs:
           ./gradlew assembleRelease \
             -PversionCode=${{ steps.version.outputs.version_code }} \
             -PversionName=${{ steps.version.outputs.version_name }} \
-            -PupstreamVersion=${{ inputs.upstream_version || 'unknown' }} \
+            -PupstreamVersion=${{ steps.version.outputs.upstream }} \
             --no-daemon \
             --stacktrace
 
@@ -187,7 +208,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name:   ${{ steps.version.outputs.release_tag }}
-          name:       "MasterDnsVPN-GG ${{ steps.version.outputs.version_name }} — upstream ${{ inputs.upstream_version || 'unknown' }}"
+          name:       "MasterDnsVPN-GG ${{ steps.version.outputs.version_name }} — upstream ${{ steps.version.outputs.upstream }}"
           prerelease: ${{ steps.version.outputs.is_prerelease }}
           generate_release_notes: true
           fail_on_unmatched_files: false
@@ -198,7 +219,7 @@ jobs:
             | | |
             |---|---|
             | **Version Code** | `${{ steps.version.outputs.version_code }}` |
-            | **Upstream Engine** | `${{ inputs.upstream_version || 'N/A' }}` |
+            | **Upstream Engine** | `${{ steps.version.outputs.upstream }}` |
             | **Commit** | [`${{ github.sha }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}) |
             | **Build** | #${{ github.run_number }} |
             | **Triggered by** | `${{ github.event_name }}` |
