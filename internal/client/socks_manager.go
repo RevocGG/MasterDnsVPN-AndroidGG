@@ -576,6 +576,11 @@ func (c *Client) rejectSocksUDPAssociateUnsupportedTarget(conn net.Conn, targetA
 }
 
 func (c *Client) handleSocksUDPAssociate(ctx context.Context, conn net.Conn, clientAddr string, clientPort uint16, atyp byte) {
+	// Close the control connection when we exit so the TUN bridge detects session
+	// end via EOF and can recycle the gVisor UDP endpoint, allowing the browser
+	// DNS stack to retry (which will find the result in cache on the next attempt).
+	defer conn.Close()
+
 	replyIP := net.ParseIP(c.cfg.ListenIP)
 	if tcpAddr, ok := conn.LocalAddr().(*net.TCPAddr); ok && tcpAddr != nil && tcpAddr.IP != nil {
 		replyIP = tcpAddr.IP

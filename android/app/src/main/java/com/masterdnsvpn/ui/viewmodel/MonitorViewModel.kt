@@ -24,6 +24,8 @@ data class ProfileMonitorInfo(
     val profile: ProfileEntity,
     val stats: Stats?,
     val lastError: String?,
+    val uploadBytes: Long = 0L,
+    val downloadBytes: Long = 0L,
 )
 
 data class MonitorUiState(
@@ -86,9 +88,7 @@ class MonitorViewModel @Inject constructor(
         val am = appContext.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val memInfo = ActivityManager.MemoryInfo()
         am.getMemoryInfo(memInfo)
-        val pid = Process.myPid()
-        val procMem = am.getProcessMemoryInfo(intArrayOf(pid))
-        val usedMb = if (procMem.isNotEmpty()) procMem[0].totalPss.toLong() / 1024 else 0L
+        val usedMb = readProcMemMb()
         val totalMb = memInfo.totalMem / (1024 * 1024)
 
         // Wire traffic (actual network bytes this process sent/received, including protocol overhead).
@@ -150,11 +150,16 @@ class MonitorViewModel @Inject constructor(
                 }
             } else {
                 // SOCKS mode: wire bytes ARE the session data (no separate overhead layer).
+                // We accumulate both session and wire bytes with the same delta so that
+                // overhead = wireTotalBytes - totalUsageBytes stays at zero rather than
+                // decreasing when totalUsageBytes catches up to a stale wireTotalBytes
+                // left over from a previous TUN session.
                 if (wireRxDelta > 0 || wireTxDelta > 0) {
                     val perUp = wireTxDelta / currentRunning.size
                     val perDown = wireRxDelta / currentRunning.size
                     currentRunning.forEach { id ->
                         bandwidthPrefs.addSessionBytes(id, perUp, perDown)
+                        bandwidthPrefs.addWireBytes(id, perUp, perDown)
                     }
                 }
             }
@@ -173,7 +178,13 @@ class MonitorViewModel @Inject constructor(
                 val profile = repo.getProfile(id) ?: return@mapNotNull null
                 val stats = try { bridge.getStats(id) } catch (_: Exception) { null }
                 val error = try { bridge.getLastError(id) } catch (_: Exception) { null }
-                ProfileMonitorInfo(profile, stats, error)
+                ProfileMonitorInfo(
+                    profile = profile,
+                    stats = stats,
+                    lastError = error,
+                    uploadBytes = bandwidthPrefs.getUploadBytes(id),
+                    downloadBytes = bandwidthPrefs.getDownloadBytes(id),
+                )
             }
         } else emptyList()
 
@@ -187,6 +198,17 @@ class MonitorViewModel @Inject constructor(
             downloadSpeed = downloadSpeed,
             activeProfiles = profiles,
         )
+    }
+
+    private fun readProcMemMb(): Long {
+        return try {
+            java.io.File("/proc/self/status").readLines()
+                .firstOrNull { it.startsWith("VmRSS:") }
+                ?.trim()?.split("\\s+".toRegex())?.getOrNull(1)?.toLong()?.div(1024L) ?: 0L
+        } catch (_: Exception) {
+            val rt = Runtime.getRuntime()
+            (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024)
+        }
     }
 
     private fun measureCpuUsage(): Float {

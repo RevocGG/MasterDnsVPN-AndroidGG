@@ -126,6 +126,19 @@ _, exists := instances[instanceID]
 return exists
 }
 
+// getAnyClient returns the first running engine client, or nil if none.
+// Used by the TUN bridge to call ProcessDNSQuery directly.
+func getAnyClient() *client.Client {
+instancesMu.Lock()
+defer instancesMu.Unlock()
+for _, h := range instances {
+	if h.cl != nil {
+		return h.cl
+	}
+}
+return nil
+}
+
 func GetInstanceStats(instanceID string) MobileStats {
 instancesMu.Lock()
 h, exists := instances[instanceID]

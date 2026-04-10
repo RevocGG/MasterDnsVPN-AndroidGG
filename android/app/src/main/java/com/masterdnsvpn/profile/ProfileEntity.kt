@@ -92,12 +92,12 @@ data class ProfileEntity(
     val dispatcherIdlePollIntervalSeconds: Double = 0.020,
 
     // Section 9: Ping
-    val pingAggressiveIntervalSeconds: Double = 0.200,
+    val pingAggressiveIntervalSeconds: Double = 0.100,
     val pingLazyIntervalSeconds: Double = 0.750,
     val pingCooldownIntervalSeconds: Double = 2.0,
     val pingColdIntervalSeconds: Double = 15.0,
-    val pingWarmThresholdSeconds: Double = 5.0,
-    val pingCoolThresholdSeconds: Double = 15.0,
+    val pingWarmThresholdSeconds: Double = 8.0,
+    val pingCoolThresholdSeconds: Double = 20.0,
     val pingColdThresholdSeconds: Double = 30.0,
 
     // Section 10: Advanced
@@ -136,13 +136,13 @@ data class ProfileEntity(
     val arqMaxRtoSeconds: Double = 5.0,
     val arqControlInitialRtoSeconds: Double = 0.5,
     val arqControlMaxRtoSeconds: Double = 3.0,
-    val arqMaxControlRetries: Int = 300,
+    val arqMaxControlRetries: Int = 400,
     val arqInactivityTimeoutSeconds: Double = 1800.0,
     val arqDataPacketTtlSeconds: Double = 2400.0,
     val arqControlPacketTtlSeconds: Double = 1200.0,
     val arqMaxDataRetries: Int = 1200,
     val arqDataNackMaxGap: Int = 16,
-    val arqDataNackInitialDelaySeconds: Double = 0.4,
+    val arqDataNackInitialDelaySeconds: Double = 0.1,
     val arqDataNackRepeatSeconds: Double = 1.0,
     val arqTerminalDrainTimeoutSec: Double = 120.0,
     val arqTerminalAckWaitTimeoutSec: Double = 90.0,

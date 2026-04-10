@@ -1,7 +1,6 @@
 package com.masterdnsvpn.hotspot
 
 import android.content.Context
-import android.net.wifi.WifiManager
 import java.net.NetworkInterface
 
 /**
@@ -16,37 +15,56 @@ import java.net.NetworkInterface
  */
 object HotspotManager {
 
-    private val HOTSPOT_PREFIXES = listOf("192.168.43.", "192.168.49.", "192.168.1.")
+    // Well-known hotspot AP interface names used by major Android OEMs.
+    // Checked before IP-prefix scanning because interface name is more reliable
+    // than subnet — home routers also live on 192.168.1.x.
+    private val HOTSPOT_IFACE_NAMES = setOf(
+        "ap0",       // Qualcomm (Pixel, many brands)
+        "swlan0",    // Samsung
+        "wlan1",     // Some MediaTek devices
+        "softap0",   // AOSP generic
+        "wlan0",     // AOSP single-radio AP mode
+    )
+
+    // IP prefixes used exclusively (or predominantly) for Android soft-AP.
+    // 192.168.1.x intentionally excluded — too broad, matches home routers.
+    private val HOTSPOT_PREFIXES = listOf(
+        "192.168.43.",   // AOSP default since Android 2.x
+        "192.168.49.",   // Pixel / newer AOSP
+        "192.168.100.",  // Some Samsung / Xiaomi
+        "10.0.0.",       // Xiaomi hotspot default
+    )
 
     /**
      * Returns the hotspot AP IP address (e.g. "192.168.43.1") if the
      * device is currently broadcasting a hotspot, or null otherwise.
+     *
+     * Strategy:
+     *  1. Scan by known hotspot interface names — most reliable.
+     *  2. Fall back to subnet-prefix scanning for unlisted OEM names.
      */
     fun getHotspotIp(ctx: Context): String? {
-        // Primary: try WifiManager AP IP (Android 10+ hides actual API but
-        // getConnectionInfo still works for legacy and some OEMs)
-        try {
-            val wm = ctx.applicationContext
-                .getSystemService(Context.WIFI_SERVICE) as WifiManager
-            @Suppress("DEPRECATION")
-            val info = wm.connectionInfo
-            if (info != null) {
-                val ip = info.ipAddress
-                if (ip != 0) {
-                    // connectionInfo gives the STA IP, not AP IP — skip
-                }
-            }
-        } catch (_: Exception) {}
-
-        // Fallback: scan all network interfaces
         try {
             val ifaces = NetworkInterface.getNetworkInterfaces() ?: return null
-            for (iface in ifaces.asSequence()) {
-                if (!iface.isUp || iface.isLoopback) continue
+            val all = ifaces.toList().filter { it.isUp && !it.isLoopback }
+
+            // Pass 1: match by interface name
+            for (iface in all) {
+                val name = iface.name.lowercase()
+                if (name in HOTSPOT_IFACE_NAMES) {
+                    val ip = iface.inetAddresses.asSequence()
+                        .firstOrNull { !it.isLoopbackAddress && !it.hostAddress.contains(':') }
+                        ?.hostAddress
+                    if (ip != null) return ip
+                }
+            }
+
+            // Pass 2: match by IP prefix
+            for (iface in all) {
                 for (addr in iface.inetAddresses.asSequence()) {
                     if (addr.isLoopbackAddress) continue
                     val hostAddr = addr.hostAddress ?: continue
-                    if (hostAddr.contains(':')) continue // skip IPv6
+                    if (hostAddr.contains(':')) continue
                     for (prefix in HOTSPOT_PREFIXES) {
                         if (hostAddr.startsWith(prefix)) return hostAddr
                     }

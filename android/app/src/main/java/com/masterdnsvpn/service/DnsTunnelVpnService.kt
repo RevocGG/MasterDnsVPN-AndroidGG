@@ -5,8 +5,6 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.Network
-import android.net.NetworkRequest
-import android.net.TrafficStats
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
@@ -98,13 +96,13 @@ class DnsTunnelVpnService : VpnService() {
             ServiceCompat.startForeground(
                 this,
                 TunnelNotification.NOTIFICATION_ID,
-                TunnelNotification.build(this, profileName, "VPN"),
+                TunnelNotification.build(this, profileName, "TUN"),
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
             )
         } else {
             startForeground(
                 TunnelNotification.NOTIFICATION_ID,
-                TunnelNotification.build(this, profileName, "VPN"),
+                TunnelNotification.build(this, profileName, "TUN"),
             )
         }
 
@@ -322,6 +320,7 @@ class DnsTunnelVpnService : VpnService() {
                 for (subId in activeSubProfileIds) {
                     try { bridge.stopInstance(subId) } catch (_: Exception) {}
                     bridge.clearLockedDomains(subId)
+                    deleteDnsCacheFile(subId)
                     tunnelStateManager.onTunnelStopped(subId)
                 }
                 tunnelStateManager.onMetaStopped(activeMetaId!!)
@@ -333,6 +332,7 @@ class DnsTunnelVpnService : VpnService() {
             activeProfileId?.let { pid ->
                 try { bridge.stopInstance(pid) } catch (_: Exception) {}
                 bridge.clearLockedDomains(pid)
+                deleteDnsCacheFile(pid)
                 tunnelStateManager.onTunnelStopped(pid)
                 activeProfileId = null
             }
@@ -347,37 +347,34 @@ class DnsTunnelVpnService : VpnService() {
         }
     }
 
+    private fun deleteDnsCacheFile(profileId: String) {
+        try {
+            java.io.File("${filesDir.absolutePath}/profiles/$profileId/local_dns_cache.bin").delete()
+        } catch (_: Exception) {}
+    }
+
     private fun startSpeedMonitor() {
         scope.launch {
-            val uid = android.os.Process.myUid()
-            val baseRx = TrafficStats.getUidRxBytes(uid)
-            val baseTx = TrafficStats.getUidTxBytes(uid)
-            var prevRx = baseRx
-            var prevTx = baseTx
+            var prevTunUp = 0L
+            var prevTunDown = 0L
             val nm = getSystemService(NotificationManager::class.java)
             while (isActive) {
-                delay(2_000)
+                delay(1_000)
                 if (!isActive) break
-                val rx = TrafficStats.getUidRxBytes(uid)
-                val tx = TrafficStats.getUidTxBytes(uid)
-                val rxSpeed = (rx - prevRx).coerceAtLeast(0L)
-                val txSpeed = (tx - prevTx).coerceAtLeast(0L)
-                prevRx = rx
-                prevTx = tx
-                val totalRx = (rx - baseRx).coerceAtLeast(0L)
-                val totalTx = (tx - baseTx).coerceAtLeast(0L)
+                val (tunUp, tunDown) = bridge.getBandwidth()
+                val tunUpSpeed = (tunUp - prevTunUp).coerceAtLeast(0L)
+                val tunDownSpeed = (tunDown - prevTunDown).coerceAtLeast(0L)
+                prevTunUp = tunUp
+                prevTunDown = tunDown
                 val notif = TunnelNotification.buildWithSpeed(
                     this@DnsTunnelVpnService,
                     activeProfileName,
-                    "VPN",
-                    rxSpeed,
-                    txSpeed,
-                    totalRx,
-                    totalTx,
+                    "TUN",
+                    tunUpSpeed,
+                    tunDownSpeed,
                 )
                 nm.notify(TunnelNotification.NOTIFICATION_ID, notif)
             }
-            // Speed monitor coroutine exited — cancel the notification so it never gets stuck
             nm.cancel(TunnelNotification.NOTIFICATION_ID)
         }
     }
@@ -410,6 +407,7 @@ class DnsTunnelVpnService : VpnService() {
             val builder = Builder()
                 .setSession("MasterDnsVPN")
                 .addAddress("10.89.0.1", 32)
+                .addAddress("fd00::1", 128)  // IPv6 TUN address so gVisor can handle IPv6 flows
                 .addDnsServer(dnsServer)
                 .setMtu(TUN_INTERFACE_MTU)
                 .addRoute("0.0.0.0", 0)

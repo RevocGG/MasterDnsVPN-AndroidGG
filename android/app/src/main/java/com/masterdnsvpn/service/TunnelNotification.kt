@@ -13,7 +13,8 @@ import com.masterdnsvpn.R
 object TunnelNotification {
 
     const val CHANNEL_ID = "masterdnsvpn_tunnel"
-    const val NOTIFICATION_ID = 1001
+    const val NOTIFICATION_ID = 1001       // TUN/VPN service
+    const val PROXY_NOTIFICATION_ID = 1002 // SOCKS5 proxy service
 
     fun createChannel(ctx: Context) {
         val nm = ctx.getSystemService(NotificationManager::class.java)
@@ -38,19 +39,12 @@ object TunnelNotification {
         ctx: Context,
         profileName: String,
         mode: String,
-        rxBytesPerSec: Long,
-        txBytesPerSec: Long,
-        totalRxBytes: Long = 0L,
-        totalTxBytes: Long = 0L,
+        upBytesPerSec: Long,
+        downBytesPerSec: Long,
     ): Notification {
         createChannel(ctx)
-        val rxSpeed = formatSpeed(rxBytesPerSec)
-        val txSpeed = formatSpeed(txBytesPerSec)
-        val totalRxStr = formatBytes(totalRxBytes)
-        val totalTxStr = formatBytes(totalTxBytes)
         return baseBuilder(ctx, profileName, mode)
-            .setContentText("\u2191 $txSpeed   \u2193 $rxSpeed")
-            .setSubText("\u2191 $totalTxStr  \u2193 $totalRxStr")
+            .setContentText("\u2191 ${formatSpeed(upBytesPerSec)}   \u2193 ${formatSpeed(downBytesPerSec)}")
             .build()
     }
 
@@ -82,21 +76,11 @@ object TunnelNotification {
     }
 
     private fun formatSpeed(bytesPerSec: Long): String {
-        if (bytesPerSec < 0) return "0 B/s"
+        if (bytesPerSec <= 0) return "0 B/s"
         return when {
             bytesPerSec < 1024 -> "$bytesPerSec B/s"
             bytesPerSec < 1024 * 1024 -> "${bytesPerSec / 1024} KB/s"
             else -> String.format("%.1f MB/s", bytesPerSec / (1024.0 * 1024.0))
-        }
-    }
-
-    private fun formatBytes(bytes: Long): String {
-        if (bytes <= 0) return "0 B"
-        return when {
-            bytes < 1024 -> "$bytes B"
-            bytes < 1024 * 1024 -> "${bytes / 1024} KB"
-            bytes < 1024L * 1024 * 1024 -> String.format("%.1f MB", bytes / (1024.0 * 1024.0))
-            else -> String.format("%.2f GB", bytes / (1024.0 * 1024.0 * 1024.0))
         }
     }
 }

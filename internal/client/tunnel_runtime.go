@@ -241,7 +241,7 @@ func dialUDPResolver(resolverLabel string) (*net.UDPConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return net.DialUDP("udp", nil, addr)
+	return DialUDPFunc("udp", nil, addr)
 }
 
 // normalizeTimeout ensures the timeout is positive, falling back to a default if necessary.

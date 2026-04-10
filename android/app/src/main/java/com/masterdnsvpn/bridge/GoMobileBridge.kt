@@ -91,7 +91,9 @@ class GoMobileBridge @Inject constructor(
                 } catch (_: Exception) {
                     System.currentTimeMillis()
                 }
-                logManager.append(LogEntry(level = logLevel, timestamp = timestamp, message = redact(message), epochMs = epochMs))
+                // TUN BRIDGE logs go to ANDROID tab, everything else to APP tab
+                val source = if (message.startsWith("[TUN-BRIDGE]")) LogEntry.Source.LOGCAT else LogEntry.Source.APP
+                logManager.append(LogEntry(level = logLevel, timestamp = timestamp, message = redact(message), epochMs = epochMs, source = source))
             }
         })
         logCallbackRegistered = true

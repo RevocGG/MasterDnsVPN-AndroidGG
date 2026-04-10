@@ -54,14 +54,31 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             val pm = application.packageManager
             val (apps, system) = withContext(Dispatchers.IO) {
-                val installed = pm.getInstalledApplications(PackageManager.GET_META_DATA)
-                val a = installed.map { info ->
-                    info.packageName to (info.loadLabel(pm).toString())
-                }.sortedBy { it.second.lowercase() }
-                val s = installed
+                val selfPkg = application.packageName
+
+                // Use launcher-intent query instead of getInstalledApplications to get
+                // all user-visible apps regardless of FLAG_SYSTEM.
+                // This ensures preinstalled apps like Chrome (com.android.chrome) that
+                // have FLAG_SYSTEM but are user-launchable still appear in the list.
+                val launcherIntent = android.content.Intent(android.content.Intent.ACTION_MAIN).apply {
+                    addCategory(android.content.Intent.CATEGORY_LAUNCHER)
+                }
+                @Suppress("DEPRECATION")
+                val resolved = pm.queryIntentActivities(launcherIntent, 0)
+                    .mapNotNull { it.activityInfo?.applicationInfo }
+                    .distinctBy { it.packageName }
+                    .filter { it.packageName != selfPkg }
+
+                val a = resolved
+                    .map { info -> info.packageName to (info.loadLabel(pm).toString()) }
+                    .sortedBy { it.second.lowercase() }
+
+                // FLAG_SYSTEM is kept only as a display hint (shown in italic or badge).
+                val s = resolved
                     .filter { it.flags and ApplicationInfo.FLAG_SYSTEM != 0 }
                     .map { it.packageName }
                     .toSet()
+
                 a to s
             }
             allApps = apps
@@ -138,11 +155,12 @@ class SettingsViewModel @Inject constructor(
 
     private fun getVisiblePackages(): Set<String> {
         val s = _state.value
+        val q = s.searchQuery.trim()
         return allApps
             .filter { (pkg, label) ->
                 val isSystem = pkg in systemPackages
                 (s.showSystemApps || !isSystem) &&
-                    (s.searchQuery.isBlank() || label.contains(s.searchQuery, ignoreCase = true) || pkg.contains(s.searchQuery, ignoreCase = true))
+                    (q.isBlank() || label.contains(q, ignoreCase = true) || pkg.contains(q, ignoreCase = true))
             }
             .map { it.first }
             .toSet()
@@ -150,11 +168,12 @@ class SettingsViewModel @Inject constructor(
 
     private fun rebuildList() {
         val s = _state.value
+        val q = s.searchQuery.trim()
         val filtered = allApps
             .filter { (pkg, label) ->
                 val isSystem = pkg in systemPackages
                 (s.showSystemApps || !isSystem) &&
-                    (s.searchQuery.isBlank() || label.contains(s.searchQuery, ignoreCase = true) || pkg.contains(s.searchQuery, ignoreCase = true))
+                    (q.isBlank() || label.contains(q, ignoreCase = true) || pkg.contains(q, ignoreCase = true))
             }
             .map { (pkg, label) ->
                 AppItem(

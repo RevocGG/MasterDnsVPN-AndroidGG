@@ -41,33 +41,33 @@ object HardwareAdvisor {
 
         val warnings = mutableListOf<ProfileWarning>()
 
+        // Safe maximum workers: 1.5× core count keeps CPU usage at or below ~70%.
+        // Beyond this ratio, goroutine scheduling overhead pushes CPU load past 70%,
+        // causing thermal throttling, battery drain, and foreground app jank.
+        // Example: 8 cores → safe max = 12. Values up to 12 are allowed without warning.
+        val safeMaxWorkers = (cpuCores * 1.5).toInt().coerceAtLeast(cpuCores)
+
         // ── 1. RX/TX Workers vs CPU cores ─────────────────────────────────────────
-        // Each worker is a goroutine that continuously reads/writes UDP sockets.
-        // More goroutines than cores = thread contention = permanent CPU overhead.
-        if (profile.rxTxWorkers > cpuCores) {
-            val rec = minOf(cpuCores, 4)
+        if (profile.rxTxWorkers > safeMaxWorkers) {
             warnings += ProfileWarning(
                 fieldKey = "rxTxWorkers",
                 fieldLabel = "RX/TX Workers",
                 currentValue = profile.rxTxWorkers.toString(),
-                recommendedValue = rec.toString(),
-                reason = "Current value (${profile.rxTxWorkers}) exceeds device CPU core count ($cpuCores). This causes thread contention and permanent CPU overhead.",
-                applyTo = { it.copy(rxTxWorkers = rec) },
+                recommendedValue = safeMaxWorkers.toString(),
+                reason = "Current value (${profile.rxTxWorkers}) will push CPU usage well above 70% on a ${cpuCores}-core device, causing thermal throttling and battery drain. Max safe value for this device is $safeMaxWorkers.",
+                applyTo = { it.copy(rxTxWorkers = safeMaxWorkers) },
             )
         }
 
         // ── 2. Tunnel Process Workers vs CPU cores ──────────────────────────────────
-        // Each worker is a goroutine that decrypts and dispatches packets.
-        // More goroutines than cores = thread contention = permanent CPU overhead.
-        if (profile.tunnelProcessWorkers > cpuCores) {
-            val rec = minOf(cpuCores, 4)
+        if (profile.tunnelProcessWorkers > safeMaxWorkers) {
             warnings += ProfileWarning(
                 fieldKey = "tunnelProcessWorkers",
                 fieldLabel = "Tunnel Process Workers",
                 currentValue = profile.tunnelProcessWorkers.toString(),
-                recommendedValue = rec.toString(),
-                reason = "Current value (${profile.tunnelProcessWorkers}) exceeds device CPU core count ($cpuCores). This causes thread contention and permanent CPU overhead.",
-                applyTo = { it.copy(tunnelProcessWorkers = rec) },
+                recommendedValue = safeMaxWorkers.toString(),
+                reason = "Current value (${profile.tunnelProcessWorkers}) will push CPU usage well above 70% on a ${cpuCores}-core device, causing thermal throttling and battery drain. Max safe value for this device is $safeMaxWorkers.",
+                applyTo = { it.copy(tunnelProcessWorkers = safeMaxWorkers) },
             )
         }
 

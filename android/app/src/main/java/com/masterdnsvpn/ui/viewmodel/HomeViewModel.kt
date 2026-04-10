@@ -20,6 +20,8 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+private const val LOCAL_DNS_ROOT_PORT = 53
+
 data class HomeUiState(
     val profiles: List<ProfileEntity> = emptyList(),
     val metaProfiles: List<MetaProfileEntity> = emptyList(),
@@ -43,6 +45,9 @@ class HomeViewModel @Inject constructor(
     // ── Hardware warning state ────────────────────────────────────────────────────
     private val _pendingWarnings = MutableStateFlow<List<ProfileWarning>?>(null)
     val pendingWarnings: StateFlow<List<ProfileWarning>?> = _pendingWarnings.asStateFlow()
+
+    private val _startError = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val startError: SharedFlow<String> = _startError.asSharedFlow()
 
     private val _warningForProfileId = MutableStateFlow<String?>(null)
     val warningForProfileId: StateFlow<String?> = _warningForProfileId.asStateFlow()
@@ -118,7 +123,21 @@ class HomeViewModel @Inject constructor(
         _warningForProfileId.value = null
     }
 
+    /** Returns a non-null error message if local DNS settings are incompatible with the requested mode. */
+    private fun validateLocalDns(profile: ProfileEntity, isTun: Boolean): String? {
+        if (!profile.localDnsEnabled) return null
+        if (isTun) return "Local DNS is not supported in TUN mode. Disable Local DNS in profile settings or switch to SOCKS5 mode."
+        if (profile.localDnsPort == LOCAL_DNS_ROOT_PORT) return "Port 53 requires root access on Android. Change Local DNS port to 5353 in profile settings."
+        return null
+    }
+
     private fun doConnect(ctx: Context, profile: ProfileEntity) {
+        val isTun = profile.tunnelMode == "TUN"
+        val error = validateLocalDns(profile, isTun)
+        if (error != null) {
+            _startError.tryEmit(error)
+            return
+        }
         tunnelStateManager.markBusy(profile.id)
         viewModelScope.launch {
             when (profile.tunnelMode) {
@@ -159,14 +178,21 @@ class HomeViewModel @Inject constructor(
         if (tunnelStateManager.busyProfileIds.value.contains(profileId)) return
         if (!tunnelStateManager.runningProfileIds.value.contains(profileId)) return
         tunnelStateManager.markBusy(profileId)
-        // Force-kill: stop Go instance on IO thread, then stop services
         viewModelScope.launch {
+            // Stop only this profile's Go instance.
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 try { bridge.forceStopInstance(profileId) } catch (_: Exception) {}
             }
-            try { controller.stopProxy(ctx) } catch (_: Exception) {}
-            try { controller.stopVpn(ctx) } catch (_: Exception) {}
             tunnelStateManager.onTunnelStopped(profileId)
+
+            // Only destroy the Android service when this was the last running profile.
+            // If other profiles are still active (running their own Go instances in the
+            // same service process), keep the service alive so they are unaffected.
+            val stillRunning = tunnelStateManager.runningProfileIds.value
+            if (stillRunning.isEmpty() && tunnelStateManager.runningMetaIds.value.isEmpty()) {
+                try { controller.stopProxy(ctx) } catch (_: Exception) {}
+                try { controller.stopVpn(ctx) } catch (_: Exception) {}
+            }
         }
     }
 
@@ -194,9 +220,20 @@ class HomeViewModel @Inject constructor(
         if (tunnelStateManager.runningMetaIds.value.contains(meta.id)) return
         val profileIds = meta.profileIds.split(",").filter { it.isNotBlank() }
         if (profileIds.isEmpty()) return
-        tunnelStateManager.markBusy(meta.id)
-
         viewModelScope.launch {
+            val isTun = meta.tunnelMode == "TUN"
+            val profileIds = meta.profileIds.split(",").filter { it.isNotBlank() }
+            for (pid in profileIds) {
+                val sub = repo.getProfileForTunnel(pid) ?: continue
+                val error = validateLocalDns(sub, isTun)
+                if (error != null) {
+                    _startError.emit(error)
+                    return@launch
+                }
+            }
+
+            tunnelStateManager.markBusy(meta.id)
+
             when (meta.tunnelMode) {
                 "TUN" -> {
                     val permIntent = controller.prepareVpnIntent(ctx)

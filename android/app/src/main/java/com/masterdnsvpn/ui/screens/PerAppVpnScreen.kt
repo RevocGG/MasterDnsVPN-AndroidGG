@@ -8,10 +8,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -55,36 +52,14 @@ fun PerAppVpnScreen(
             Column(
                 modifier = Modifier
                     .padding(padding)
-                    .padding(horizontal = 16.dp),
+                    .padding(horizontal = 16.dp)
+                    .fillMaxSize(),
             ) {
-                // ── TUN-only info banner ────────────────────────────────────────
-                Surface(
-                    color = TealPrimary.copy(alpha = 0.15f),
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(Icons.Default.Info, null, tint = TealLight, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            "These settings only apply in TUN mode. They have no effect in SOCKS5 mode.",
-                            color = TealLight,
-                            fontSize = 12.sp,
-                        )
-                    }
-                }
-
-                Spacer(Modifier.height(8.dp))
-
                 // ── Mode selector ───────────────────────────────────────────────
                 GlassCard {
-                    Column {
-                        Text("Per-App VPN Mode", color = TealLight, fontWeight = FontWeight.SemiBold)
-                        Spacer(Modifier.height(8.dp))
-
+                    Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
+                        Text("Mode", color = TealLight, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        Spacer(Modifier.height(2.dp))
                         AppSelectionPrefs.Mode.entries.forEach { mode ->
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
@@ -97,6 +72,7 @@ fun PerAppVpnScreen(
                                         selectedColor = TealLight,
                                         unselectedColor = TextSecondary,
                                     ),
+                                    modifier = Modifier.size(32.dp),
                                 )
                                 Text(
                                     when (mode) {
@@ -105,51 +81,31 @@ fun PerAppVpnScreen(
                                         AppSelectionPrefs.Mode.EXCLUDE -> "All apps EXCEPT selected"
                                     },
                                     color = TextPrimary,
-                                    fontSize = 14.sp,
+                                    fontSize = 13.sp,
                                 )
                             }
-                        }
-
-                        Spacer(Modifier.height(8.dp))
-
-                        // ── Save button ─────────────────────────────────────────
-                        Button(
-                            onClick = { vm.save() },
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (state.savedToPrefs) TealPrimary.copy(alpha = 0.5f) else TealPrimary,
-                            ),
-                            shape = RoundedCornerShape(10.dp),
-                        ) {
-                            Icon(Icons.Default.Save, null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                if (state.savedToPrefs) "Saved \u2713" else "Save Settings",
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.SemiBold,
-                            )
                         }
                     }
                 }
 
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(6.dp))
 
                 // ── Search bar ──────────────────────────────────────────────────
                 OutlinedTextField(
                     value = state.searchQuery,
                     onValueChange = { vm.setSearchQuery(it) },
-                    placeholder = { Text("Search apps...", color = TextHint) },
-                    leadingIcon = { Icon(Icons.Default.Search, null, tint = TextSecondary) },
+                    placeholder = { Text("Search apps...", color = TextHint, fontSize = 13.sp) },
+                    leadingIcon = { Icon(Icons.Default.Search, null, tint = TextSecondary, modifier = Modifier.size(18.dp)) },
                     trailingIcon = {
                         if (state.searchQuery.isNotBlank()) {
-                            IconButton(onClick = { vm.setSearchQuery("") }) {
-                                Icon(Icons.Default.Clear, null, tint = TextSecondary)
+                            IconButton(onClick = { vm.setSearchQuery("") }, modifier = Modifier.size(36.dp)) {
+                                Icon(Icons.Default.Clear, null, tint = TextSecondary, modifier = Modifier.size(16.dp))
                             }
                         }
                     },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().height(50.dp),
+                    shape = RoundedCornerShape(10.dp),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = TealPrimary,
                         unfocusedBorderColor = GlassBorder,
@@ -157,64 +113,69 @@ fun PerAppVpnScreen(
                         focusedTextColor = TextPrimary,
                         unfocusedTextColor = TextPrimary,
                     ),
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp),
                 )
 
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(2.dp))
 
-                // ── Show system apps + selected count ───────────────────────────
+                // ── Controls row: system toggle + count + select/clear ──────────
+                val enabled = state.mode != AppSelectionPrefs.Mode.ALL
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    Checkbox(
-                        checked = state.showSystemApps,
-                        onCheckedChange = { vm.toggleSystemApps(it) },
-                        colors = CheckboxDefaults.colors(
-                            checkedColor = TealPrimary,
-                            uncheckedColor = TextSecondary,
-                            checkmarkColor = DarkBg,
-                        ),
-                    )
-                    Text("Show system apps", color = TextSecondary, fontSize = 13.sp)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = state.showSystemApps,
+                            onCheckedChange = { vm.toggleSystemApps(it) },
+                            colors = CheckboxDefaults.colors(
+                                checkedColor = TealPrimary,
+                                uncheckedColor = TextSecondary,
+                                checkmarkColor = DarkBg,
+                            ),
+                            modifier = Modifier.size(32.dp),
+                        )
+                        Text("System", color = TextSecondary, fontSize = 12.sp)
+                    }
+                    Text("${state.apps.count { it.selected }} sel.", color = TealLight, fontSize = 12.sp)
                     Spacer(Modifier.weight(1f))
-                    Text("${state.apps.count { it.selected }} selected", color = TealLight, fontSize = 13.sp)
-                }
-
-                // ── Select All / Clear row ──────────────────────────────────────
-                val enabled = state.mode != AppSelectionPrefs.Mode.ALL
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
                     OutlinedButton(
                         onClick = { vm.selectAll() },
                         enabled = enabled,
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.height(30.dp),
+                        shape = RoundedCornerShape(6.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = CyanAccent),
                         border = androidx.compose.foundation.BorderStroke(
-                            1.dp,
-                            if (enabled) CyanAccent else TextSecondary.copy(alpha = 0.3f),
+                            1.dp, if (enabled) CyanAccent else TextSecondary.copy(alpha = 0.3f),
                         ),
-                    ) {
-                        Icon(Icons.Default.SelectAll, null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Select All", fontSize = 13.sp)
-                    }
+                    ) { Text("All", fontSize = 12.sp) }
                     OutlinedButton(
                         onClick = { vm.deselectAll() },
                         enabled = enabled,
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.height(30.dp),
+                        shape = RoundedCornerShape(6.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary),
                         border = androidx.compose.foundation.BorderStroke(
-                            1.dp,
-                            if (enabled) TextSecondary else TextSecondary.copy(alpha = 0.3f),
+                            1.dp, if (enabled) TextSecondary else TextSecondary.copy(alpha = 0.3f),
                         ),
+                    ) { Text("None", fontSize = 12.sp) }
+                    Button(
+                        onClick = { vm.save() },
+                        modifier = Modifier.height(30.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (state.savedToPrefs) TealPrimary.copy(alpha = 0.5f) else TealPrimary,
+                        ),
+                        shape = RoundedCornerShape(6.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                     ) {
-                        Icon(Icons.Default.Clear, null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Clear All", fontSize = 13.sp)
+                        Text(
+                            if (state.savedToPrefs) "Saved \u2713" else "Save",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
                     }
                 }
 
@@ -223,13 +184,14 @@ fun PerAppVpnScreen(
                 // ── App list ────────────────────────────────────────────────────
                 if (state.loading) {
                     Box(
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
                         contentAlignment = Alignment.Center,
                     ) {
                         CircularProgressIndicator(color = TealPrimary)
                     }
                 } else {
                     LazyColumn(
+                        modifier = Modifier.weight(1f),
                         verticalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
                         items(state.apps, key = { it.packageName }) { app ->

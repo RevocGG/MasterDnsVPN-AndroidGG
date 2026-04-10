@@ -12,6 +12,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -41,10 +42,13 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.masterdnsvpn.BuildConfig
 import com.masterdnsvpn.hardware.ProfileWarning
@@ -80,8 +84,13 @@ fun HomeScreen(
     var showAboutDialog by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
+    var startErrorMessage by remember { mutableStateOf<String?>(null) }
 
-
+    LaunchedEffect(Unit) {
+        vm.startError.collect { msg ->
+            startErrorMessage = msg
+        }
+    }
 
     // Show welcome dialog on first launch
     val prefs = ctx.getSharedPreferences("masterdnsvpn_prefs", android.content.Context.MODE_PRIVATE)
@@ -283,6 +292,19 @@ fun HomeScreen(
                 },
             )
         }
+        // Floating red glass error banner — shown above content when startErrorMessage is set
+        startErrorMessage?.let { msg ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp, vertical = 80.dp)
+                    .zIndex(10f),
+                contentAlignment = Alignment.TopCenter,
+            ) {
+                ErrorGlassCard(message = msg, onDismiss = { startErrorMessage = null })
+            }
+        }
+
         Scaffold(
             containerColor = androidx.compose.ui.graphics.Color.Transparent,
             snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -302,9 +324,11 @@ fun HomeScreen(
                                 "MasterDnsVPN-GG",
                                 fontWeight = FontWeight.Bold,
                                 color = TealLight,
+                                fontSize = 15.sp,
                             )
                         }
                     },
+                    windowInsets = WindowInsets(0),
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = androidx.compose.ui.graphics.Color.Transparent,
                     ),
@@ -392,15 +416,12 @@ fun HomeScreen(
 
                 items(uiState.profiles, key = { it.id }) { profile ->
                     val monitorInfo = monitorState.activeProfiles.find { it.profile.id == profile.id }
-                    val totalBytes = monitorVm.bandwidthPrefs.getTotalBytes(profile.id)
-                    val wireTotalBytes = monitorVm.bandwidthPrefs.getWireTotalBytes(profile.id)
                     ProfileCard(
                         profile = profile,
                         isRunning = uiState.runningProfileIds.contains(profile.id),
                         isBusy = uiState.busyIds.contains(profile.id),
                         monitorInfo = monitorInfo,
-                        totalUsageBytes = totalBytes,
-                        wireTotalBytes = wireTotalBytes,
+                        hasError = startErrorMessage != null,
                         onConnect = {
                             pendingVpnProfileId = profile.id
                             vm.connectProfile(ctx, profile)
@@ -430,6 +451,62 @@ fun HomeScreen(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ErrorGlassCard(message: String, onDismiss: () -> Unit) {
+    val red = Color(0xFFFF5252)
+    val redGlassBg = Color(0xFF3A0A0A)
+    val redGlassBorder = red.copy(alpha = 0.60f)
+    val shape = RoundedCornerShape(16.dp)
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(
+                brush = androidx.compose.ui.graphics.Brush.verticalGradient(
+                    colors = listOf(
+                        redGlassBg.copy(alpha = 0.92f),
+                        Color(0xFF1A0404).copy(alpha = 0.97f),
+                    )
+                )
+            )
+            .border(
+                border = androidx.compose.foundation.BorderStroke(1.dp, redGlassBorder),
+                shape = shape,
+            )
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+    ) {
+        Row(verticalAlignment = Alignment.Top) {
+            Icon(
+                Icons.Default.ErrorOutline,
+                contentDescription = null,
+                tint = red,
+                modifier = Modifier.size(20.dp).padding(top = 1.dp),
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = message,
+                color = Color(0xFFFFCDD2),
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(8.dp))
+            IconButton(
+                onClick = onDismiss,
+                modifier = Modifier.size(24.dp),
+            ) {
+                Icon(
+                    Icons.Default.Close,
+                    contentDescription = "Dismiss",
+                    tint = red.copy(alpha = 0.7f),
+                    modifier = Modifier.size(16.dp),
+                )
             }
         }
     }
@@ -633,25 +710,6 @@ private fun StatusDashboard(
                 color = TealLight,
             )
         }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            MiniStatTile(
-                modifier = Modifier.weight(1f),
-                icon = Icons.Default.ArrowUpward,
-                label = "UP",
-                value = formatSpeedCompact(monitorState.uploadSpeed),
-                color = GreenOnline,
-            )
-            MiniStatTile(
-                modifier = Modifier.weight(1f),
-                icon = Icons.Default.ArrowDownward,
-                label = "DOWN",
-                value = formatSpeedCompact(monitorState.downloadSpeed),
-                color = Color(0xFFFFAB40),
-            )
-        }
     }
 }
 
@@ -675,23 +733,6 @@ private fun MiniStatTile(
             Text(value, color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
         }
     }
-}
-
-private fun formatSpeedCompact(bytesPerSec: Long): String = when {
-    bytesPerSec < 1024 -> "${bytesPerSec}B/s"
-    bytesPerSec < 1024 * 1024 -> "%.1fKB/s".format(bytesPerSec / 1024.0)
-    else -> "%.1fMB/s".format(bytesPerSec / (1024.0 * 1024.0))
-}
-
-@Composable
-private fun formatBytes(bytes: Long): String {
-    if (bytes < 1024) return "${bytes} B"
-    val kb = bytes / 1024.0
-    if (kb < 1024) return "%.1f KB".format(kb)
-    val mb = kb / 1024.0
-    if (mb < 1024) return "%.1f MB".format(mb)
-    val gb = mb / 1024.0
-    return "%.2f GB".format(gb)
 }
 
 @Composable
@@ -719,14 +760,60 @@ private fun AboutLink(
     }
 }
 
+/** Format accumulated bytes for usage badges (e.g. "1.2 MB", "340 KB"). */
+private fun formatUsageBytes(bytes: Long): String {
+    if (bytes <= 0L) return "0 B"
+    return when {
+        bytes < 1024L -> "$bytes B"
+        bytes < 1024L * 1024 -> "${bytes / 1024} KB"
+        bytes < 1024L * 1024 * 1024 -> String.format("%.1f MB", bytes / (1024.0 * 1024.0))
+        else -> String.format("%.2f GB", bytes / (1024.0 * 1024.0 * 1024.0))
+    }
+}
+
+/** Blinking circle icon — only instantiate when actually scanning to avoid idle 60fps invalidations. */
+@Composable
+private fun BlinkingDotIcon(color: Color, durationMs: Int, modifier: Modifier = Modifier) {
+    val alpha by rememberInfiniteTransition(label = "dot_blink").animateFloat(
+        initialValue = 1f,
+        targetValue = 0.15f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMs, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "dot_alpha",
+    )
+    Icon(
+        Icons.Default.Circle,
+        contentDescription = null,
+        tint = color.copy(alpha = alpha),
+        modifier = modifier.size(12.dp),
+    )
+}
+
+/** Scanning subtitle with animated dots — only instantiate when actually scanning. */
+@Composable
+private fun ScanningStatusText(prefix: String, color: Color, style: TextStyle, fontSize: TextUnit) {
+    val raw by rememberInfiniteTransition(label = "scan_dots").animateFloat(
+        initialValue = 0f,
+        targetValue = 3f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "scan_dots_idx",
+    )
+    val dots = (raw.toInt() % 3) + 1
+    Text("$prefix - Scanning" + ".".repeat(dots), style = style, color = color, fontSize = fontSize)
+}
+
 @Composable
 private fun ProfileCard(
     profile: ProfileEntity,
     isRunning: Boolean,
     isBusy: Boolean,
     monitorInfo: com.masterdnsvpn.ui.viewmodel.ProfileMonitorInfo?,
-    totalUsageBytes: Long = 0L,
-    wireTotalBytes: Long = 0L,
+    hasError: Boolean = false,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
     onEdit: () -> Unit,
@@ -737,6 +824,8 @@ private fun ProfileCard(
     // Instant feedback — set true on click, reset when external state actually changes
     var localBusy by remember { mutableStateOf(false) }
     LaunchedEffect(isRunning, isBusy) { localBusy = false }
+    // If a start error was emitted (e.g. local DNS validation failed), unblock the button.
+    LaunchedEffect(hasError) { if (hasError) localBusy = false }
     val effectiveBusy = localBusy || isBusy
 
     // Scanning = tunnel started but session not ready yet
@@ -789,28 +878,22 @@ private fun ProfileCard(
         Column {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // Status indicator — blinks orange while scanning, solid green when ready
-                val scanTransition = rememberInfiniteTransition(label = "dot_blink")
-                val scanAlpha by scanTransition.animateFloat(
-                    initialValue = 1f,
-                    targetValue = 0.15f,
-                    animationSpec = infiniteRepeatable(
-                        animation = tween(500, easing = LinearEasing),
-                        repeatMode = RepeatMode.Reverse,
-                    ),
-                    label = "dot_alpha",
-                )
                 val dotColor = when {
                     isBusy -> Color(0xFFFFAA00)
                     isScanning -> Color(0xFFFFAA00)
                     isReady -> GreenOnline
                     else -> TextSecondary.copy(alpha = 0.3f)
                 }
-                Icon(
-                    Icons.Default.Circle,
-                    contentDescription = null,
-                    tint = if (isScanning) dotColor.copy(alpha = scanAlpha) else dotColor,
-                    modifier = Modifier.size(12.dp),
-                )
+                if (isScanning) {
+                    BlinkingDotIcon(color = dotColor, durationMs = 500)
+                } else {
+                    Icon(
+                        Icons.Default.Circle,
+                        contentDescription = null,
+                        tint = dotColor,
+                        modifier = Modifier.size(12.dp),
+                    )
+                }
                 Spacer(Modifier.width(10.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
@@ -819,75 +902,66 @@ private fun ProfileCard(
                         fontWeight = FontWeight.SemiBold,
                         color = TextPrimary,
                     )
-                    // Animated dots: Scanning. → Scanning.. → Scanning... → Scanning.
-                    // Use InfiniteTransition instead of a while-loop coroutine to avoid
-                    // allocating a suspended coroutine per profile card.
-                    val scanDotsTransition = rememberInfiniteTransition(label = "scan_dots")
-                    val scanDotsRaw by scanDotsTransition.animateFloat(
-                        initialValue = 0f,
-                        targetValue = 3f,
-                        animationSpec = infiniteRepeatable(
-                            animation = tween(1200, easing = LinearEasing),
-                            repeatMode = RepeatMode.Restart,
-                        ),
-                        label = "scan_dots_idx",
-                    )
-                    val scanDots = if (isScanning) (scanDotsRaw.toInt() % 3) + 1 else 1
-                    Text(
-                        buildString {
-                            append(profile.tunnelMode)
-                            when {
-                                isBusy -> append(" - Processing...")
-                                isScanning -> append(" - Scanning" + ".".repeat(scanDots))
-                                isReady -> append(" - Connected")
-                                profile.identityLocked -> append(" - \uD83D\uDD12 Locked")
-                                else -> { /* no extra info */ }
-                            }
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = when {
-                            isBusy -> Color(0xFFFFAA00)
-                            isScanning -> Color(0xFFFFAA00)
-                            isReady -> GreenOnline
-                            else -> TextSecondary
-                        },
-                        fontSize = 11.sp,
-                    )
+                    // Status sub-text: animated only while scanning, static otherwise.
+                    val statusSuffix = when {
+                        isBusy -> " - Processing..."
+                        isReady -> " - Connected"
+                        profile.identityLocked -> " - \uD83D\uDD12 Locked"
+                        else -> ""
+                    }
+                    if (isScanning) {
+                        ScanningStatusText(
+                            prefix = profile.tunnelMode,
+                            color = Color(0xFFFFAA00),
+                            style = MaterialTheme.typography.bodySmall,
+                            fontSize = 11.sp,
+                        )
+                    } else {
+                        Text(
+                            profile.tunnelMode + statusSuffix,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = when {
+                                isBusy -> Color(0xFFFFAA00)
+                                isReady -> GreenOnline
+                                else -> TextSecondary
+                            },
+                            fontSize = 11.sp,
+                        )
+                    }
                 }
-                // Usage badges — actual traffic + MasterDNS overhead (side by side)
-                if (totalUsageBytes > 0 || wireTotalBytes > 0) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        // Actual traffic (TUN — what apps really consumed)
-                        if (totalUsageBytes > 0) {
+
+                // Compact usage badges — right side of header row
+                if (monitorInfo != null) {
+                    val upBytes = monitorInfo.uploadBytes
+                    val downBytes = monitorInfo.downloadBytes
+                    if (upBytes > 0L || downBytes > 0L) {
+                        Spacer(Modifier.width(6.dp))
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
                             Surface(
                                 color = CyanAccent.copy(alpha = 0.12f),
-                                shape = RoundedCornerShape(8.dp),
+                                shape = RoundedCornerShape(4.dp),
                             ) {
                                 Text(
-                                    "↕ ${formatBytes(totalUsageBytes)}",
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                    "↓ ${formatUsageBytes(downBytes)}",
                                     color = CyanAccent,
-                                    fontSize = 10.sp,
+                                    fontSize = 9.sp,
                                     fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
                                 )
                             }
-                        }
-                        // MasterDNS overhead (wire - actual = extra from ARQ/duplication)
-                        val overhead = (wireTotalBytes - totalUsageBytes).coerceAtLeast(0L)
-                        if (overhead > 0) {
                             Surface(
-                                color = Color(0xFFFFAB40).copy(alpha = 0.12f),
-                                shape = RoundedCornerShape(8.dp),
+                                color = AmberWarn.copy(alpha = 0.12f),
+                                shape = RoundedCornerShape(4.dp),
                             ) {
                                 Text(
-                                    "+${formatBytes(overhead)}",
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                                    color = Color(0xFFFFAB40),
-                                    fontSize = 10.sp,
+                                    "↑ ${formatUsageBytes(upBytes)}",
+                                    color = AmberWarn,
+                                    fontSize = 9.sp,
                                     fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
                                 )
                             }
                         }
@@ -952,6 +1026,7 @@ private fun ProfileCard(
                         maxLines = 2,
                     )
                 }
+
                 Spacer(Modifier.height(8.dp))
             }
 
@@ -1068,27 +1143,22 @@ private fun MetaProfileCard(
         Column {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // Status dot — blinks orange while scanning, solid green when ready
-                val scanTransition = rememberInfiniteTransition(label = "meta_dot_blink")
-                val scanAlpha by scanTransition.animateFloat(
-                    initialValue = 1f,
-                    targetValue = 0.15f,
-                    animationSpec = infiniteRepeatable(
-                        animation = tween(600, easing = LinearEasing),
-                        repeatMode = RepeatMode.Reverse,
-                    ),
-                    label = "meta_dot_alpha",
-                )
-                Icon(
-                    Icons.Default.Circle,
-                    contentDescription = null,
-                    tint = when {
-                        isScanning -> Color(0xFFFFAA00).copy(alpha = scanAlpha)
-                        isBusy -> Color(0xFFFFAA00)
-                        isReady -> GreenOnline
-                        else -> TextSecondary.copy(alpha = 0.3f)
-                    },
-                    modifier = Modifier.size(12.dp),
-                )
+                val dotColor = when {
+                    isScanning -> Color(0xFFFFAA00)
+                    isBusy -> Color(0xFFFFAA00)
+                    isReady -> GreenOnline
+                    else -> TextSecondary.copy(alpha = 0.3f)
+                }
+                if (isScanning) {
+                    BlinkingDotIcon(color = dotColor, durationMs = 600)
+                } else {
+                    Icon(
+                        Icons.Default.Circle,
+                        contentDescription = null,
+                        tint = dotColor,
+                        modifier = Modifier.size(12.dp),
+                    )
+                }
                 Spacer(Modifier.width(8.dp))
                 Icon(Icons.Default.AccountTree, "Meta", tint = CyanAccent)
                 Spacer(Modifier.width(10.dp))
@@ -1109,32 +1179,29 @@ private fun MetaProfileCard(
                     val count = meta.profileIds.split(",").filter { it.isNotBlank() }.size
 
                     // Animated "Scanning…" text while waiting for sub-profiles
-                    val scanDots by scanTransition.animateFloat(
-                        initialValue = 0f,
-                        targetValue = 3f,
-                        animationSpec = infiniteRepeatable(
-                            animation = tween(1200, easing = LinearEasing),
-                            repeatMode = RepeatMode.Restart,
-                        ),
-                        label = "meta_scan_dots",
-                    )
-                    val dotsStr = ".".repeat(scanDots.toInt() + 1)
-
-                    Text(
-                        buildString {
-                            append("${meta.tunnelMode} - $strategy - $count profiles")
-                            if (isScanning) append(" - Scanning$dotsStr")
-                            else if (isBusy) append(" - Processing...")
-                            else if (isReady) append(" - Active")
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = when {
-                            isScanning -> Color(0xFFFFAA00)
-                            isBusy -> Color(0xFFFFAA00)
-                            else -> TextSecondary
-                        },
-                        fontSize = 11.sp,
-                    )
+                    if (isScanning) {
+                        ScanningStatusText(
+                            prefix = "${meta.tunnelMode} - $strategy - $count profiles",
+                            color = Color(0xFFFFAA00),
+                            style = MaterialTheme.typography.bodySmall,
+                            fontSize = 11.sp,
+                        )
+                    } else {
+                        val statusSuffix = when {
+                            isBusy -> " - Processing..."
+                            isReady -> " - Active"
+                            else -> ""
+                        }
+                        Text(
+                            "${meta.tunnelMode} - $strategy - $count profiles$statusSuffix",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = when {
+                                isBusy -> Color(0xFFFFAA00)
+                                else -> TextSecondary
+                            },
+                            fontSize = 11.sp,
+                        )
+                    }
                 }
             }
 

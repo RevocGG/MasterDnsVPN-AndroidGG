@@ -58,13 +58,13 @@ class DnsTunnelProxyService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             ServiceCompat.startForeground(
                 this,
-                TunnelNotification.NOTIFICATION_ID,
+                TunnelNotification.PROXY_NOTIFICATION_ID,
                 TunnelNotification.build(this, profileName, "SOCKS5 Proxy"),
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
             )
         } else {
             startForeground(
-                TunnelNotification.NOTIFICATION_ID,
+                TunnelNotification.PROXY_NOTIFICATION_ID,
                 TunnelNotification.build(this, profileName, "SOCKS5 Proxy"),
             )
         }
@@ -162,10 +162,8 @@ class DnsTunnelProxyService : Service() {
     private fun startSpeedMonitor() {
         scope.launch {
             val uid = android.os.Process.myUid()
-            val baseRx = TrafficStats.getUidRxBytes(uid)
-            val baseTx = TrafficStats.getUidTxBytes(uid)
-            var prevRx = baseRx
-            var prevTx = baseTx
+            var prevRx = TrafficStats.getUidRxBytes(uid)
+            var prevTx = TrafficStats.getUidTxBytes(uid)
             val nm = getSystemService(NotificationManager::class.java)
             while (isActive) {
                 delay(1_000)
@@ -176,21 +174,17 @@ class DnsTunnelProxyService : Service() {
                 val txSpeed = (tx - prevTx).coerceAtLeast(0L)
                 prevRx = rx
                 prevTx = tx
-                val totalRx = (rx - baseRx).coerceAtLeast(0L)
-                val totalTx = (tx - baseTx).coerceAtLeast(0L)
                 val notif = TunnelNotification.buildWithSpeed(
                     this@DnsTunnelProxyService,
                     activeProfileName,
                     "SOCKS5 Proxy",
-                    rxSpeed,
                     txSpeed,
-                    totalRx,
-                    totalTx,
+                    rxSpeed,
                 )
-                nm.notify(TunnelNotification.NOTIFICATION_ID, notif)
+                nm.notify(TunnelNotification.PROXY_NOTIFICATION_ID, notif)
             }
             // Speed monitor coroutine exited — cancel the notification so it never gets stuck
-            nm.cancel(TunnelNotification.NOTIFICATION_ID)
+            nm.cancel(TunnelNotification.PROXY_NOTIFICATION_ID)
         }
     }
 
@@ -202,6 +196,7 @@ class DnsTunnelProxyService : Service() {
             for (subId in activeSubProfileIds) {
                 try { bridge.stopInstance(subId) } catch (_: Exception) {}
                 bridge.clearLockedDomains(subId)
+                deleteDnsCacheFile(subId)
                 tunnelStateManager.onTunnelStopped(subId)
             }
             tunnelStateManager.onMetaStopped(activeMetaId!!)
@@ -210,13 +205,20 @@ class DnsTunnelProxyService : Service() {
         activeProfileId?.let { id ->
             try { bridge.stopInstance(id) } catch (_: Exception) {}
             bridge.clearLockedDomains(id)
+            deleteDnsCacheFile(id)
             tunnelStateManager.onTunnelStopped(id)
         }
         stopForeground(STOP_FOREGROUND_REMOVE)
         getSystemService(NotificationManager::class.java)
-            ?.cancel(TunnelNotification.NOTIFICATION_ID)
+            ?.cancel(TunnelNotification.PROXY_NOTIFICATION_ID)
         scope.cancel()
         super.onDestroy()
+    }
+
+    private fun deleteDnsCacheFile(profileId: String) {
+        try {
+            java.io.File("${filesDir.absolutePath}/profiles/$profileId/local_dns_cache.bin").delete()
+        } catch (_: Exception) {}
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

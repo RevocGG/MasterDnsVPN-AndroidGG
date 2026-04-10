@@ -25,6 +25,20 @@ import (
 	"time"
 )
 
+// ── Buffer pool for relay copies ───────────────────────────────────────────────
+
+const balancerRelayBufSize = 64 * 1024
+
+var balancerBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, balancerRelayBufSize)
+		return &b
+	},
+}
+
+func getBalancerBuf() []byte  { return *(balancerBufPool.Get().(*[]byte)) }
+func putBalancerBuf(b []byte) { balancerBufPool.Put(&b) }
+
 // BalancerStrategy mirrors internal/client/balancer.go constants.
 const (
 	BalancerDefault       = 0 // round-robin
@@ -261,20 +275,37 @@ func (b *socksBalancer) pickFallback(exclude string) *upstreamEntry {
 }
 
 func relay(ctx context.Context, a, b net.Conn) {
-	done := make(chan struct{}, 2)
-	cp := func(dst, src net.Conn) {
-		io.Copy(dst, src)
+	buf1 := getBalancerBuf()
+	buf2 := getBalancerBuf()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	cp := func(dst, src net.Conn, buf []byte) {
+		defer wg.Done()
+		defer putBalancerBuf(buf)
+		io.CopyBuffer(dst, src, buf)
+		// Half-close so the other side sees EOF cleanly.
 		if tc, ok := dst.(*net.TCPConn); ok {
 			tc.CloseWrite()
+		} else {
+			dst.Close()
 		}
-		done <- struct{}{}
 	}
 
-	go cp(a, b)
-	go cp(b, a)
+	go cp(a, b, buf1) // upstream → client (download)
+	go cp(b, a, buf2) // client → upstream (upload)
+
+	// Wait for BOTH directions — only then close connections (via defer in
+	// handleConn). Closing early after one direction truncates in-flight data.
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
 
 	select {
 	case <-done:
 	case <-ctx.Done():
+		a.Close()
+		b.Close()
+		<-done
 	}
 }
