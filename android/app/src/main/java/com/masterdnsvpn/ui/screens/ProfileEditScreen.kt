@@ -18,6 +18,15 @@ import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
@@ -87,6 +96,9 @@ fun ProfileEditScreen(
         } catch (_: Exception) { }
     }
 
+    // MTU folder fallback warning (shown inline when the selected directory is not engine-writable)
+    var mtuDirWarning by remember { mutableStateOf<String?>(null) }
+
     // MTU output directory picker
     val mtuDirLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
@@ -98,9 +110,16 @@ fun ProfileEditScreen(
                 android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
                         android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
             )
-            // Resolve to a real filesystem path for the Go runtime
-            val resolved = resolveUriToPath(context, uri)
+            // Resolve to a real filesystem path for the Go runtime.
+            // On Android 10+, direct write to shared storage is blocked (scoped storage);
+            // resolveUriToPath returns the fallback app-scoped folder in that case.
+            val (resolved, isFallback) = resolveUriToPath(context, uri)
             vm.update { copy(mtuServersFileDir = resolved) }
+            if (isFallback) {
+                mtuDirWarning = "Selected folder is not directly writable by the engine on this Android version (scoped storage). Saving to: $resolved"
+            } else {
+                mtuDirWarning = null
+            }
         }
     }
 
@@ -415,6 +434,11 @@ fun ProfileEditScreen(
                             )
                         }
                     }
+                    mtuDirWarning?.let { warning ->
+                        Spacer(Modifier.height(6.dp))
+                        MtuDirWarningCard(message = warning, onDismiss = { mtuDirWarning = null })
+                        Spacer(Modifier.height(4.dp))
+                    }
                     ProfileTextField("MTU_SERVERS_FILE_NAME", profile.mtuServersFileName) {
                         vm.update { copy(mtuServersFileName = it) }
                     }
@@ -540,12 +564,69 @@ fun ProfileEditScreen(
 // Reusable field composables
 // ---------------------------------------------------------------------------
 
+@Composable
+private fun MtuDirWarningCard(message: String, onDismiss: () -> Unit) {
+    val orange = Color(0xFFFF9800)
+    val orangeGlassBg = Color(0xFF2B1800)
+    val orangeGlassBorder = orange.copy(alpha = 0.55f)
+    val shape = RoundedCornerShape(16.dp)
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(
+                brush = androidx.compose.ui.graphics.Brush.verticalGradient(
+                    colors = listOf(
+                        orangeGlassBg.copy(alpha = 0.93f),
+                        Color(0xFF1A0D00).copy(alpha = 0.97f),
+                    )
+                )
+            )
+            .border(
+                border = androidx.compose.foundation.BorderStroke(1.dp, orangeGlassBorder),
+                shape = shape,
+            )
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+    ) {
+        Row(verticalAlignment = Alignment.Top) {
+            Icon(
+                Icons.Default.Warning,
+                contentDescription = null,
+                tint = orange,
+                modifier = Modifier.size(20.dp).padding(top = 1.dp),
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = message,
+                color = Color(0xFFFFE0B2),
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(8.dp))
+            IconButton(
+                onClick = onDismiss,
+                modifier = Modifier.size(24.dp),
+            ) {
+                Icon(
+                    Icons.Default.Close,
+                    contentDescription = "Dismiss",
+                    tint = orange.copy(alpha = 0.7f),
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        }
+    }
+}
+
 /**
- * Attempt to resolve a SAF tree URI to a real filesystem path.
- * Falls back to the external documents directory if resolution fails
- * (e.g. on emulators or obscure storage providers).
+ * Attempt to resolve a SAF tree URI to a real filesystem path the Go engine can write to.
+ * Returns Pair(path, isFallback).
+ * isFallback = true means the selected folder was not directly writable (e.g. due to
+ * Android 10+ scoped storage enforcement), and the app-scoped documents dir was used instead.
  */
-private fun resolveUriToPath(context: android.content.Context, uri: android.net.Uri): String {
+private fun resolveUriToPath(context: android.content.Context, uri: android.net.Uri): Pair<String, Boolean> {
     try {
         // Most common case on Android 10+: primary external storage
         // content://com.android.externalstorage.documents/tree/primary:path/to/dir
@@ -558,15 +639,31 @@ private fun resolveUriToPath(context: android.content.Context, uri: android.net.
                 val root = android.os.Environment.getExternalStorageDirectory()
                 val path = if (relativePath.isBlank()) root.absolutePath else "${root.absolutePath}/$relativePath"
                 val dir = java.io.File(path)
-                if (dir.exists() || dir.mkdirs()) return dir.absolutePath
+                // On Android 10+ (API 29+), apps cannot write to shared external storage
+                // via direct filesystem access — scoped storage blocks it even with SAF.
+                // The Go engine uses os.WriteFile (not ContentResolver), so we probe-write
+                // to verify actual filesystem access before trusting the path.
+                if ((dir.exists() || dir.mkdirs()) && dir.canWrite()) {
+                    // Double-check by attempting a probe write — canWrite() can lie on some OEMs
+                    val probe = java.io.File(dir, ".masterdnsvpn_probe_${System.nanoTime()}")
+                    try {
+                        if (probe.createNewFile()) {
+                            probe.delete()
+                            return Pair(dir.absolutePath, false)
+                        }
+                    } catch (_: Exception) {
+                        probe.delete()
+                    }
+                }
             }
         }
     } catch (_: Exception) {}
-    // Fallback: app-owned external documents directory (always writable, no special permission)
+    // Fallback: app-scoped external documents directory — always writable, visible in
+    // file manager at Android/data/com.masterdnsvpn/files/Documents/
     val fallback = context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS)
         ?: context.filesDir
     fallback.mkdirs()
-    return fallback.absolutePath
+    return Pair(fallback.absolutePath, true)
 }
 
 @Composable
@@ -766,6 +863,10 @@ fun BalancingStrategySelector(strategy: Int, onSelect: (Int) -> Unit) {
         2 to "Round-Robin",
         3 to "Least-Loss",
         4 to "Lowest-Latency",
+        5 to "Hybrid Score",
+        6 to "Loss Then Latency",
+        7 to "Least Loss Top Random",
+        8 to "Least Loss Top Round-Robin",
     )
     Column {
         Text("RESOLVER_BALANCING_STRATEGY", style = MaterialTheme.typography.labelMedium)

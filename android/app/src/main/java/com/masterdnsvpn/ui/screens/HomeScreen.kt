@@ -86,6 +86,15 @@ fun HomeScreen(
     val coroutineScope = rememberCoroutineScope()
     var startErrorMessage by remember { mutableStateOf<String?>(null) }
 
+    // Nearby Wi-Fi Devices permission (Android 13+) — needed for hotspot AP interface detection
+    val nearbyWifiPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        // Proceed regardless — hotspot toggle will show an error if AP IP can't be detected
+        if (!hotspotState.isRunning) hotspotVm.toggle(ctx)
+        showHotspotDialog = true
+    }
+
     LaunchedEffect(Unit) {
         vm.startError.collect { msg ->
             startErrorMessage = msg
@@ -348,6 +357,10 @@ fun HomeScreen(
                     onClick = {
                         if (hotspotState.isRunning) {
                             showHotspotDialog = true
+                        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                            ctx.checkSelfPermission(android.Manifest.permission.NEARBY_WIFI_DEVICES) != android.content.pm.PackageManager.PERMISSION_GRANTED
+                        ) {
+                            nearbyWifiPermissionLauncher.launch(android.Manifest.permission.NEARBY_WIFI_DEVICES)
                         } else {
                             hotspotVm.toggle(ctx)
                             showHotspotDialog = true
@@ -416,12 +429,16 @@ fun HomeScreen(
 
                 items(uiState.profiles, key = { it.id }) { profile ->
                     val monitorInfo = monitorState.activeProfiles.find { it.profile.id == profile.id }
+                    val totalBytes = monitorVm.bandwidthPrefs.getTotalBytes(profile.id)
+                    val wireTotalBytes = monitorVm.bandwidthPrefs.getWireTotalBytes(profile.id)
                     ProfileCard(
                         profile = profile,
                         isRunning = uiState.runningProfileIds.contains(profile.id),
                         isBusy = uiState.busyIds.contains(profile.id),
                         monitorInfo = monitorInfo,
                         hasError = startErrorMessage != null,
+                        totalUsageBytes = totalBytes,
+                        wireTotalBytes = wireTotalBytes,
                         onConnect = {
                             pendingVpnProfileId = profile.id
                             vm.connectProfile(ctx, profile)
@@ -814,6 +831,8 @@ private fun ProfileCard(
     isBusy: Boolean,
     monitorInfo: com.masterdnsvpn.ui.viewmodel.ProfileMonitorInfo?,
     hasError: Boolean = false,
+    totalUsageBytes: Long = 0L,
+    wireTotalBytes: Long = 0L,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
     onEdit: () -> Unit,
@@ -930,38 +949,40 @@ private fun ProfileCard(
                     }
                 }
 
-                // Compact usage badges — right side of header row
-                if (monitorInfo != null) {
-                    val upBytes = monitorInfo.uploadBytes
-                    val downBytes = monitorInfo.downloadBytes
-                    if (upBytes > 0L || downBytes > 0L) {
-                        Spacer(Modifier.width(6.dp))
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
+                // Usage badges — actual traffic + MasterDNS overhead (side by side)
+                if (totalUsageBytes > 0 || wireTotalBytes > 0) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        // Actual traffic (TUN — what apps really consumed)
+                        if (totalUsageBytes > 0) {
                             Surface(
                                 color = CyanAccent.copy(alpha = 0.12f),
-                                shape = RoundedCornerShape(4.dp),
+                                shape = RoundedCornerShape(8.dp),
                             ) {
                                 Text(
-                                    "↓ ${formatUsageBytes(downBytes)}",
+                                    "↕ ${formatUsageBytes(totalUsageBytes)}",
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                                     color = CyanAccent,
-                                    fontSize = 9.sp,
+                                    fontSize = 10.sp,
                                     fontWeight = FontWeight.Medium,
-                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
                                 )
                             }
+                        }
+                        // MasterDNS overhead (wire - actual = extra from ARQ/duplication)
+                        val overhead = (wireTotalBytes - totalUsageBytes).coerceAtLeast(0L)
+                        if (overhead > 0) {
                             Surface(
-                                color = AmberWarn.copy(alpha = 0.12f),
-                                shape = RoundedCornerShape(4.dp),
+                                color = Color(0xFFFFAB40).copy(alpha = 0.12f),
+                                shape = RoundedCornerShape(8.dp),
                             ) {
                                 Text(
-                                    "↑ ${formatUsageBytes(upBytes)}",
-                                    color = AmberWarn,
-                                    fontSize = 9.sp,
+                                    "+${formatUsageBytes(overhead)}",
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                    color = Color(0xFFFFAB40),
+                                    fontSize = 10.sp,
                                     fontWeight = FontWeight.Medium,
-                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
                                 )
                             }
                         }

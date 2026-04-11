@@ -8,6 +8,7 @@
 package udpserver
 
 import (
+	"container/heap"
 	"context"
 	"net"
 	"strconv"
@@ -21,6 +22,7 @@ import (
 	fragmentStore "masterdnsvpn-go/internal/fragmentstore"
 	"masterdnsvpn-go/internal/logger"
 	"masterdnsvpn-go/internal/security"
+	VpnProto "masterdnsvpn-go/internal/vpnproto"
 )
 
 const (
@@ -32,7 +34,7 @@ const (
 	mtuProbeDownMinSize = mtuProbeUpMinSize + 2
 	mtuProbeMinDownSize = 30
 	mtuProbeMaxDownSize = 4096
-	sessionAcceptSize   = 7
+	sessionAcceptSize   = VpnProto.SessionAcceptPayloadSize
 )
 
 var preSessionPacketTypes = buildPreSessionPacketTypes()
@@ -73,6 +75,7 @@ type Server struct {
 	packetPool               sync.Pool
 	deferredInflightMu       sync.Mutex
 	deferredInflight         map[uint64]struct{}
+	deferredInflightIndex    map[uint8]map[uint16]map[uint64]struct{}
 	immediateConnectedLog    throttledLogState
 	invalidSessionDropLog    throttledLogState
 	droppedPackets           atomic.Uint64
@@ -87,6 +90,7 @@ type request struct {
 	buf  []byte
 	size int
 	addr *net.UDPAddr
+	conn *net.UDPConn
 }
 
 type postSessionValidation struct {
@@ -113,12 +117,15 @@ func New(cfg config.ServerConfig, log *logger.Logger, codec *security.Codec) *Se
 		socksConnectTimeout = 8 * time.Second
 	}
 	dnsDeferredWorkers, connectDeferredWorkers, dnsDeferredQueue, connectDeferredQueue := splitDeferredSessionPools(cfg.EffectiveDeferredSessionWorkers(), cfg.EffectiveDeferredSessionQueueLimit())
+	sessions := newSessionStore(cfg.EffectiveSessionOrphanQueueInitialCap(), cfg.EffectiveStreamQueueInitialCapacity(), cfg.SessionInitReuseTTL(), cfg.RecentlyClosedStreamTTL(), cfg.RecentlyClosedStreamCap)
+	sessions.maxActiveSessions = cfg.MaxAllowedClientActiveSessions
+	sessions.maxActiveStreams = cfg.MaxAllowedClientActiveStreams
 	return &Server{
 		cfg:                    cfg,
 		log:                    log,
 		codec:                  codec,
 		domainMatcher:          domainMatcher.New(cfg.Domain, cfg.MinVPNLabelLength),
-		sessions:               newSessionStore(cfg.EffectiveSessionOrphanQueueInitialCap(), cfg.EffectiveStreamQueueInitialCapacity(), cfg.SessionInitReuseTTL(), cfg.RecentlyClosedStreamTTL(), cfg.RecentlyClosedStreamCap),
+		sessions:               sessions,
 		deferredDNSSession:     newDeferredSessionProcessor(dnsDeferredWorkers, dnsDeferredQueue, log),
 		deferredConnectSession: newDeferredSessionProcessor(connectDeferredWorkers, connectDeferredQueue, log),
 		invalidCookieTracker:   newInvalidCookieTracker(),
@@ -157,7 +164,8 @@ func New(cfg config.ServerConfig, log *logger.Logger, codec *security.Codec) *Se
 				return make([]byte, mtuProbeMaxDownSize)
 			},
 		},
-		deferredInflight: make(map[uint64]struct{}, 128),
+		deferredInflight:      make(map[uint64]struct{}, 128),
+		deferredInflightIndex: make(map[uint8]map[uint16]map[uint64]struct{}, 64),
 		packetPool: sync.Pool{
 			New: func() any {
 				return make([]byte, cfg.MaxPacketSize)
@@ -169,6 +177,34 @@ func New(cfg config.ServerConfig, log *logger.Logger, codec *security.Codec) *Se
 type throttledLogState struct {
 	mu   sync.Mutex
 	last map[string]int64
+	heap throttledLogHeap
+}
+
+type throttledLogEntry struct {
+	key  string
+	seen int64
+}
+
+type throttledLogHeap []throttledLogEntry
+
+func (h throttledLogHeap) Len() int { return len(h) }
+
+func (h throttledLogHeap) Less(i, j int) bool {
+	return h[i].seen < h[j].seen
+}
+
+func (h throttledLogHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+
+func (h *throttledLogHeap) Push(x any) {
+	*h = append(*h, x.(throttledLogEntry))
+}
+
+func (h *throttledLogHeap) Pop() any {
+	old := *h
+	n := len(old)
+	item := old[n-1]
+	*h = old[:n-1]
+	return item
 }
 
 const (
@@ -192,10 +228,6 @@ func (s *throttledLogState) allow(key string, now time.Time, interval time.Durat
 		s.last = make(map[string]int64, 64)
 	}
 
-	if len(s.last) > 0 {
-		s.pruneLocked(nowUnixNano, interval)
-	}
-
 	last := s.last[key]
 
 	if last != 0 && nowUnixNano-last < interval.Nanoseconds() {
@@ -203,6 +235,12 @@ func (s *throttledLogState) allow(key string, now time.Time, interval time.Durat
 	}
 
 	s.last[key] = nowUnixNano
+	heap.Push(&s.heap, throttledLogEntry{key: key, seen: nowUnixNano})
+
+	if len(s.last) > 0 {
+		s.pruneLocked(nowUnixNano, interval)
+	}
+
 	return true
 }
 
@@ -212,30 +250,27 @@ func (s *throttledLogState) pruneLocked(nowUnixNano int64, interval time.Duratio
 	}
 
 	cutoff := nowUnixNano - interval.Nanoseconds()
-	for key, last := range s.last {
-		if last == 0 || last <= cutoff {
-			delete(s.last, key)
+	for len(s.heap) > 0 {
+		entry := s.heap[0]
+		last, ok := s.last[entry.key]
+		if !ok || last != entry.seen {
+			heap.Pop(&s.heap)
+			continue
 		}
+		if entry.seen > cutoff && len(s.last) <= throttledLogHardCap {
+			break
+		}
+		delete(s.last, entry.key)
+		heap.Pop(&s.heap)
 	}
 
-	if len(s.last) <= throttledLogHardCap {
-		return
-	}
-
-	target := throttledLogSoftCap
-	for len(s.last) > target {
-		oldestKey := ""
-		oldestSeen := nowUnixNano
-		for key, last := range s.last {
-			if oldestKey == "" || last < oldestSeen {
-				oldestKey = key
-				oldestSeen = last
-			}
+	for len(s.last) > throttledLogSoftCap && len(s.heap) > 0 {
+		entry := heap.Pop(&s.heap).(throttledLogEntry)
+		last, ok := s.last[entry.key]
+		if !ok || last != entry.seen {
+			continue
 		}
-		if oldestKey == "" {
-			return
-		}
-		delete(s.last, oldestKey)
+		delete(s.last, entry.key)
 	}
 }
 
@@ -262,25 +297,23 @@ func (s *Server) Run(ctx context.Context) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	conn, err := net.ListenUDP("udp", &net.UDPAddr{
-		IP:   net.ParseIP(s.cfg.UDPHost),
-		Port: s.cfg.UDPPort,
-	})
-
+	conns, err := s.openUDPListeners()
 	if err != nil {
 		return err
 	}
-
-	defer conn.Close()
-
-	s.configureSocketBuffers(conn)
+	defer func() {
+		for _, conn := range conns {
+			_ = conn.Close()
+		}
+	}()
 
 	s.log.Infof(
-		"\U0001F4E1 <green>UDP Listener Ready, Addr: <cyan>%s</cyan>, Readers: <cyan>%d</cyan>, Workers: <cyan>%d</cyan>, Queue: <cyan>%d</cyan></green>",
+		"\U0001F4E1 <green>UDP Listener Ready, Addr: <cyan>%s</cyan>, Readers: <cyan>%d</cyan>, Workers: <cyan>%d</cyan>, Queue: <cyan>%d</cyan>, Sockets: <cyan>%d</cyan></green>",
 		s.cfg.Address(),
 		s.cfg.EffectiveUDPReaders(),
 		s.cfg.EffectiveDNSRequestWorkers(),
 		s.cfg.EffectiveMaxConcurrentRequests(),
+		len(conns),
 	)
 
 	reqCh := make(chan request, s.cfg.EffectiveMaxConcurrentRequests())
@@ -294,16 +327,18 @@ func (s *Server) Run(ctx context.Context) error {
 
 	s.deferredDNSSession.Start(runCtx)
 	s.deferredConnectSession.Start(runCtx)
-	s.startDNSWorkers(runCtx, conn, reqCh, &workerWG)
+	s.startDNSWorkers(runCtx, conns[0], reqCh, &workerWG)
 
 	go func() {
 		<-runCtx.Done()
-		_ = conn.Close()
+		for _, conn := range conns {
+			_ = conn.Close()
+		}
 	}()
 
-	readErrCh := make(chan error, s.cfg.EffectiveUDPReaders())
+	readErrCh := make(chan error, max(1, len(conns)))
 	var readerWG sync.WaitGroup
-	s.startReaders(runCtx, conn, reqCh, readErrCh, &readerWG)
+	s.startReaders(runCtx, conns, reqCh, readErrCh, &readerWG)
 
 	readerWG.Wait()
 	close(reqCh)

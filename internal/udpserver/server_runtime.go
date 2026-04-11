@@ -27,6 +27,43 @@ func (s *Server) configureSocketBuffers(conn *net.UDPConn) {
 	}
 }
 
+func (s *Server) openUDPListeners() ([]*net.UDPConn, error) {
+	addr := &net.UDPAddr{
+		IP:   net.ParseIP(s.cfg.UDPHost),
+		Port: s.cfg.UDPPort,
+	}
+	desired := s.cfg.EffectiveUDPReaders()
+	if desired < 1 {
+		desired = 1
+	}
+
+	if desired > 1 {
+		conns := make([]*net.UDPConn, 0, desired)
+		for i := 0; i < desired; i++ {
+			conn, err := listenUDPReusePort(addr)
+			if err != nil {
+				for _, opened := range conns {
+					_ = opened.Close()
+				}
+				conns = nil
+				break
+			}
+			s.configureSocketBuffers(conn)
+			conns = append(conns, conn)
+		}
+		if len(conns) == desired {
+			return conns, nil
+		}
+	}
+
+	conn, err := net.ListenUDP("udp", addr)
+	if err != nil {
+		return nil, err
+	}
+	s.configureSocketBuffers(conn)
+	return []*net.UDPConn{conn}, nil
+}
+
 func (s *Server) startDNSWorkers(ctx context.Context, conn *net.UDPConn, reqCh <-chan request, workerWG *sync.WaitGroup) {
 	for i := range s.cfg.EffectiveDNSRequestWorkers() {
 		workerWG.Add(1)
@@ -37,8 +74,34 @@ func (s *Server) startDNSWorkers(ctx context.Context, conn *net.UDPConn, reqCh <
 	}
 }
 
-func (s *Server) startReaders(ctx context.Context, conn *net.UDPConn, reqCh chan<- request, readErrCh chan<- error, readerWG *sync.WaitGroup) {
-	for i := range s.cfg.EffectiveUDPReaders() {
+func (s *Server) startReaders(ctx context.Context, conns []*net.UDPConn, reqCh chan<- request, readErrCh chan<- error, readerWG *sync.WaitGroup) {
+	if len(conns) == 0 {
+		return
+	}
+
+	readerCount := s.cfg.EffectiveUDPReaders()
+	if readerCount < 1 {
+		readerCount = 1
+	}
+
+	if len(conns) > 1 {
+		for i, conn := range conns {
+			readerWG.Add(1)
+			go func(readerID int, readerConn *net.UDPConn) {
+				defer readerWG.Done()
+				if err := s.readLoop(ctx, readerConn, reqCh, readerID); err != nil {
+					select {
+					case readErrCh <- err:
+					default:
+					}
+				}
+			}(i+1, conn)
+		}
+		return
+	}
+
+	conn := conns[0]
+	for i := 0; i < readerCount; i++ {
 		readerWG.Add(1)
 		go func(readerID int) {
 			defer readerWG.Done()
@@ -133,7 +196,7 @@ func (s *Server) readLoop(ctx context.Context, conn *net.UDPConn, reqCh chan<- r
 		}
 
 		select {
-		case reqCh <- request{buf: buffer, size: n, addr: addr}:
+		case reqCh <- request{buf: buffer, size: n, addr: addr, conn: conn}:
 		case <-ctx.Done():
 			s.packetPool.Put(buffer)
 			return nil
@@ -156,7 +219,11 @@ func (s *Server) dnsWorker(ctx context.Context, conn *net.UDPConn, reqCh <-chan 
 
 			response := s.safeHandlePacket(req.buf[:req.size])
 			if len(response) != 0 {
-				if _, err := conn.WriteToUDP(response, req.addr); err != nil {
+				writeConn := conn
+				if req.conn != nil {
+					writeConn = req.conn
+				}
+				if _, err := writeConn.WriteToUDP(response, req.addr); err != nil {
 					s.log.Debugf(
 						"\U0001F4A5 <yellow>UDP Write Error, Worker: <cyan>%d</cyan>, Remote: <cyan>%v</cyan>, Error: <cyan>%v</cyan></yellow>",
 						workerID,

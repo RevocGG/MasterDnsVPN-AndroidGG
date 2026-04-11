@@ -54,7 +54,7 @@ data class ProfileEntity(
     val localDnsCacheFlushSec: Double = 60.0,
 
     // Section 4: Balancing & Duplication
-    val resolverBalancingStrategy: Int = 0,
+    val resolverBalancingStrategy: Int = 2,
     val packetDuplicationCount: Int = 2,
     val setupPacketDuplicationCount: Int = 2,
     val streamResolverFailoverResendThreshold: Int = 2,
@@ -121,10 +121,10 @@ data class ProfileEntity(
     val saveMtuServersToFile: Boolean = false,
     val mtuServersFileDir: String = "",  // empty = use internal profile dir; set to absolute path for accessible output
     val mtuServersFileName: String = "masterdnsvpn_success_test_{time}.log",
-    val mtuServersFileFormat: String = "{IP} - UP: {UP_MTU} DOWN: {DOWN-MTU}",
+    val mtuServersFileFormat: String = "{IP} ({DOMAIN}) - UP: {UP_MTU} DOWN: {DOWN-MTU}",
     val mtuUsingSeparatorText: String = "",
-    val mtuRemovedServerLogFormat: String = "Resolver {IP} removed at {TIME} due to {CAUSE}",
-    val mtuAddedServerLogFormat: String = "Resolver {IP} added back at {TIME} (UP {UP_MTU}, DOWN {DOWN_MTU})",
+    val mtuRemovedServerLogFormat: String = "Resolver {IP} ({DOMAIN}) removed at {TIME} due to {CAUSE}",
+    val mtuAddedServerLogFormat: String = "Resolver {IP} ({DOMAIN}) added back at {TIME} (UP {UP_MTU}, DOWN {DOWN_MTU})",
 
     // Section 12: Logging
     val logLevel: String = "INFO",

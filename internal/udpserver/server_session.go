@@ -695,6 +695,8 @@ func (s *Server) handleSessionInitRequest(questionPacket []byte, decision domain
 		resolvedUpload,
 		resolvedDownload,
 		s.cfg.EffectiveMaxPacketsPerBatch(),
+		s.cfg.ClientMaxUploadMTU,
+		s.cfg.ClientMaxDownloadMTU,
 	)
 	if err != nil {
 		if err == ErrSessionTableFull {
@@ -726,16 +728,31 @@ func (s *Server) handleSessionInitRequest(questionPacket []byte, decision domain
 		)
 	}
 
-	var responsePayload [sessionAcceptSize]byte
-	responsePayload[0] = record.ID
-	responsePayload[1] = record.Cookie
-	responsePayload[2] = compression.PackPair(record.UploadCompression, record.DownloadCompression)
-	copy(responsePayload[3:], record.VerifyCode[:])
+	responsePayload := VpnProto.EncodeSessionAcceptPayload(VpnProto.SessionAcceptPayload{
+		SessionID:       record.ID,
+		SessionCookie:   record.Cookie,
+		CompressionPair: compression.PackPair(record.UploadCompression, record.DownloadCompression),
+		VerifyCode:      record.VerifyCode,
+		ClientPolicy: VpnProto.SessionAcceptClientPolicy{
+			MaxPacketDuplicationCount: s.cfg.ClientMaxPacketDuplicationCount,
+			MaxSetupDuplicationCount:  s.cfg.ClientMaxSetupDuplicationCount,
+			MaxUploadMTU:              s.cfg.ClientMaxUploadMTU,
+			MaxDownloadMTU:            s.cfg.ClientMaxDownloadMTU,
+			MaxRxTxWorkers:            s.cfg.ClientMaxRxTxWorkers,
+			MinPingAggressiveInterval: s.cfg.ClientMinPingAggressiveInterval,
+			MaxPacketsPerBatch:        s.cfg.ClientMaxPacketsPerBatch,
+			MaxARQWindowSize:          s.cfg.ClientMaxARQWindowSize,
+			MaxARQDataNackMaxGap:      s.cfg.ClientMaxARQDataNackMaxGap,
+			MinCompressionMinSize:     s.cfg.ClientMinCompressionMinSize,
+			MinARQInitialRTOSeconds:   s.cfg.ClientMinARQInitialRTOSeconds,
+		},
+		HasClientPolicySync: true,
+	})
 
 	response, err := DnsParser.BuildVPNResponsePacket(questionPacket, decision.RequestName, VpnProto.Packet{
 		SessionID:  0,
 		PacketType: Enums.PACKET_SESSION_ACCEPT,
-		Payload:    responsePayload[:],
+		Payload:    responsePayload,
 	}, record.ResponseMode == mtuProbeModeBase64)
 	if err != nil {
 		return nil

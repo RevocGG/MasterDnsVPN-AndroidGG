@@ -211,7 +211,6 @@ type ARQ struct {
 	// Virtual streams do not emit local close side effects.
 	isVirtual bool
 
-	dataNackMu        sync.Mutex
 	firstDataNackSeen map[uint16]time.Time
 	lastDataNackSent  map[uint16]time.Time
 
@@ -610,8 +609,8 @@ func (a *ARQ) signalFlushReady() {
 
 // IsReset checks whether stream is explicitly in reset path
 func (a *ARQ) IsReset() bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.mu.RLock()
+	defer a.mu.RUnlock()
 	return a.state == StateReset || a.rstReceived || a.rstSent
 }
 
@@ -637,12 +636,16 @@ func (a *ARQ) clearAllQueues(clearControl bool) {
 	if clearControl {
 		a.controlSndBuf = make(map[uint32]*arqControlItem)
 	}
-	a.dataNackMu.Lock()
-	clear(a.firstDataNackSeen)
-	clear(a.lastDataNackSent)
-	a.dataNackMu.Unlock()
+	a.clearDataNackStateLocked()
 
 	a.signalWindowNotFull()
+}
+
+// clearDataNackStateLocked clears data NACK tracking maps.
+// Caller must hold a.mu.
+func (a *ARQ) clearDataNackStateLocked() {
+	clear(a.firstDataNackSeen)
+	clear(a.lastDataNackSent)
 }
 
 func (a *ARQ) clearOutboundStateLocked(clearControl bool) {
@@ -662,10 +665,7 @@ func (a *ARQ) clearOutboundStateLocked(clearControl bool) {
 	if clearControl {
 		a.controlSndBuf = make(map[uint32]*arqControlItem)
 	}
-	a.dataNackMu.Lock()
-	clear(a.firstDataNackSeen)
-	clear(a.lastDataNackSent)
-	a.dataNackMu.Unlock()
+	a.clearDataNackStateLocked()
 	a.signalWindowNotFull()
 }
 
@@ -1099,6 +1099,15 @@ func (a *ARQ) ioLoop() {
 	var transientReadSince time.Time
 
 	buf := make([]byte, max(a.mtu, 1))
+	ioReadyTimer := time.NewTimer(100 * time.Millisecond)
+	defer func() {
+		if !ioReadyTimer.Stop() {
+			select {
+			case <-ioReadyTimer.C:
+			default:
+			}
+		}
+	}()
 
 	for !a.isClosed() {
 		a.waitWindowNotFull()
@@ -1112,10 +1121,17 @@ func (a *ARQ) ioLoop() {
 
 		if !a.ioReady {
 			a.mu.Unlock()
+			if !ioReadyTimer.Stop() {
+				select {
+				case <-ioReadyTimer.C:
+				default:
+				}
+			}
+			ioReadyTimer.Reset(100 * time.Millisecond)
 			select {
 			case <-a.ctx.Done():
 				return
-			case <-time.After(100 * time.Millisecond):
+			case <-ioReadyTimer.C:
 				continue
 			}
 		}
@@ -1126,13 +1142,14 @@ func (a *ARQ) ioLoop() {
 			resetRequired = true
 			break
 		}
+		localConn := a.localConn
 		a.mu.Unlock()
 
-		if c, ok := a.localConn.(interface{ SetReadDeadline(time.Time) error }); ok {
+		if c, ok := localConn.(interface{ SetReadDeadline(time.Time) error }); ok {
 			_ = c.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 		}
 
-		n, err := a.localConn.Read(buf)
+		n, err := localConn.Read(buf)
 		if n > 0 {
 			transientReadSince = time.Time{}
 			raw := append([]byte(nil), buf[:n]...)
@@ -1909,6 +1926,10 @@ func (a *ARQ) maybeSendDataNacks(sn uint16) {
 		return
 	}
 
+	a.mu.Lock()
+	a.pruneDataNackStateLocked(rcvNxt)
+	a.mu.Unlock()
+
 	windowSpan := uint16(a.dataNackMaxGap)
 	a.mu.RLock()
 	missingSeqs := make([]uint16, 0, a.dataNackMaxGap)
@@ -1965,8 +1986,8 @@ func (a *ARQ) maybeSendDataNacks(sn uint16) {
 }
 
 func (a *ARQ) shouldSendDataNack(sn uint16, now time.Time) bool {
-	a.dataNackMu.Lock()
-	defer a.dataNackMu.Unlock()
+	a.mu.Lock()
+	defer a.mu.Unlock()
 
 	firstSeenAt, exists := a.firstDataNackSeen[sn]
 	if !exists {
@@ -1985,19 +2006,36 @@ func (a *ARQ) shouldSendDataNack(sn uint16, now time.Time) bool {
 }
 
 func (a *ARQ) noteDataNackSent(sn uint16, now time.Time) {
-	a.dataNackMu.Lock()
+	a.mu.Lock()
 	a.lastDataNackSent[sn] = now
-	a.dataNackMu.Unlock()
+	a.mu.Unlock()
 }
 
 func (a *ARQ) clearSentDataNack(sn uint16) {
-	a.dataNackMu.Lock()
+	a.mu.Lock()
 	delete(a.firstDataNackSeen, sn)
 	delete(a.lastDataNackSent, sn)
-	a.dataNackMu.Unlock()
+	a.mu.Unlock()
 
 	if remover, ok := a.enqueuer.(queuedDataNackRemover); ok {
 		remover.RemoveQueuedDataNack(sn)
+	}
+}
+
+func seqBehind(base uint16, candidate uint16) bool {
+	return candidate != base && uint16(base-candidate) < 32768
+}
+
+func (a *ARQ) pruneDataNackStateLocked(rcvNxt uint16) {
+	for sn := range a.firstDataNackSeen {
+		if seqBehind(rcvNxt, sn) {
+			delete(a.firstDataNackSeen, sn)
+		}
+	}
+	for sn := range a.lastDataNackSent {
+		if seqBehind(rcvNxt, sn) {
+			delete(a.lastDataNackSent, sn)
+		}
 	}
 }
 
@@ -2031,6 +2069,7 @@ func (a *ARQ) runGapRecoveryWatchdog(now time.Time) {
 	a.mu.RLock()
 	closed := a.closed
 	lastActivity := a.lastActivity
+	rcvNxt := a.rcvNxt
 	missingSeqs := a.gapRecoveryCandidatesLocked()
 	a.mu.RUnlock()
 
@@ -2041,6 +2080,10 @@ func (a *ARQ) runGapRecoveryWatchdog(now time.Time) {
 	if now.Sub(lastActivity) < a.dataNackRepeatInterval {
 		return
 	}
+
+	a.mu.Lock()
+	a.pruneDataNackStateLocked(rcvNxt)
+	a.mu.Unlock()
 
 	for _, missing := range missingSeqs {
 		if !a.shouldSendDataNack(missing, now) {
@@ -2561,7 +2604,6 @@ func (a *ARQ) handleTerminalRetransmitState(now time.Time) bool {
 
 func (a *ARQ) checkControlRetransmits(now time.Time) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 
 	for key, info := range a.controlSndBuf {
 		if info.TTL > 0 {
@@ -2569,7 +2611,6 @@ func (a *ARQ) checkControlRetransmits(now time.Time) {
 				delete(a.controlSndBuf, key)
 				a.mu.Unlock()
 				a.handleTrackedPacketTTLExpiry(info.PacketType, "Packet TTL expired")
-				a.mu.Lock()
 				return
 			}
 		} else {
@@ -2595,7 +2636,6 @@ func (a *ARQ) checkControlRetransmits(now time.Time) {
 				}
 				a.mu.Unlock()
 				a.handleTrackedPacketTTLExpiry(info.PacketType, reason)
-				a.mu.Lock()
 				return
 			}
 		}
@@ -2631,6 +2671,7 @@ func (a *ARQ) checkControlRetransmits(now time.Time) {
 		grownRTO := time.Duration(float64(info.CurrentRTO) * growth)
 		info.CurrentRTO = clampDuration(grownRTO, floorRto, a.controlMaxRto)
 	}
+	a.mu.Unlock()
 }
 
 // ---------------------------------------------------------------------

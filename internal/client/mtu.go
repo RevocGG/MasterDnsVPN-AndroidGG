@@ -487,7 +487,7 @@ func (c *Client) reactivateResolverConnection(conn Connection) bool {
 		return false
 	}
 
-	if !c.balancer.SetConnectionValidity(conn.Key, true) {
+	if !c.balancer.SetConnectionValidityWithLog(conn.Key, true, false) {
 		return false
 	}
 	c.balancer.SeedConservativeStats(conn.Key)
@@ -505,6 +505,7 @@ func (c *Client) runConnectionMTUTest(ctx context.Context, conn Connection, serv
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			c.applyMTUDecision(conn.Key, mtuDecision{})
+			c.appendMTURemovedServerLine(&conn, "PANIC")
 			if c.log != nil {
 				c.log.Errorf(
 					"💥 <red>MTU Probe Worker Panic: <cyan>%v</cyan> (Resolver: <cyan>%s</cyan>)</red>",
@@ -549,6 +550,7 @@ func (c *Client) runConnectionMTUTest(ctx context.Context, conn Connection, serv
 
 	switch reason {
 	case mtuRejectUpload:
+		c.appendMTURemovedServerLine(&conn, "UPLOAD_MTU")
 		completed := counters.completed.Add(1)
 		rejectedNow := counters.rejectUpload.Add(1) + counters.rejectDownload.Load()
 		if c.log != nil && c.log.Enabled(logger.LevelWarn) {
@@ -565,6 +567,7 @@ func (c *Client) runConnectionMTUTest(ctx context.Context, conn Connection, serv
 		}
 		return
 	case mtuRejectDownload:
+		c.appendMTURemovedServerLine(&conn, "DOWNLOAD_MTU")
 		completed := counters.completed.Add(1)
 		rejectedNow := counters.rejectUpload.Load() + counters.rejectDownload.Add(1)
 		if c.log != nil && c.log.Enabled(logger.LevelWarn) {

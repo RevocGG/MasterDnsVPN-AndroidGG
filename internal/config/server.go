@@ -1,4 +1,4 @@
-﻿// ==============================================================================
+// ==============================================================================
 // MasterDnsVPN
 // Author: MasterkinG32
 // Github: https://github.com/masterking32
@@ -86,6 +86,19 @@ type ServerConfig struct {
 	ARQDataNackRepeatSeconds          float64  `toml:"ARQ_DATA_NACK_REPEAT_SECONDS"`
 	ARQTerminalDrainTimeoutSec        float64  `toml:"ARQ_TERMINAL_DRAIN_TIMEOUT_SECONDS"`
 	ARQTerminalAckWaitTimeoutSec      float64  `toml:"ARQ_TERMINAL_ACK_WAIT_TIMEOUT_SECONDS"`
+	MaxAllowedClientActiveSessions    int      `toml:"MAX_ALLOWED_CLIENT_ACTIVE_SESSION"`
+	MaxAllowedClientActiveStreams     int      `toml:"MAX_ALLOWED_CLIENT_ACTIVE_STREAMS_PER_SESSION"`
+	ClientMaxPacketDuplicationCount   int      `toml:"MAX_ALLOWED_CLIENT_PACKET_DUPLICATION_COUNT"`
+	ClientMaxSetupDuplicationCount    int      `toml:"MAX_ALLOWED_CLIENT_SETUP_PACKET_DUPLICATION_COUNT"`
+	ClientMaxUploadMTU                int      `toml:"MAX_ALLOWED_CLIENT_UPLOAD_MTU"`
+	ClientMaxDownloadMTU              int      `toml:"MAX_ALLOWED_CLIENT_DOWNLOAD_MTU"`
+	ClientMaxRxTxWorkers              int      `toml:"MAX_ALLOWED_CLIENT_RX_TX_WORKERS"`
+	ClientMinPingAggressiveInterval   float64  `toml:"MIN_ALLOWED_CLIENT_PING_AGGRESSIVE_INTERVAL_SECONDS"`
+	ClientMaxPacketsPerBatch          int      `toml:"MAX_ALLOWED_CLIENT_PACKETS_PER_BATCH"`
+	ClientMaxARQWindowSize            int      `toml:"MAX_ALLOWED_CLIENT_ARQ_WINDOW_SIZE"`
+	ClientMaxARQDataNackMaxGap        int      `toml:"MAX_ALLOWED_CLIENT_ARQ_DATA_NACK_MAX_GAP"`
+	ClientMinCompressionMinSize       int      `toml:"MIN_ALLOWED_CLIENT_COMPRESSION_MIN_SIZE"`
+	ClientMinARQInitialRTOSeconds     float64  `toml:"MIN_ALLOWED_CLIENT_ARQ_INITIAL_RTO_SECONDS"`
 }
 
 type ServerConfigOverrides struct {
@@ -99,19 +112,15 @@ type ServerConfigFlagBinder struct {
 }
 
 func defaultServerConfig() ServerConfig {
-	workers := min(max(runtime.NumCPU(), 1), 16)
-
-	readers := min(max(runtime.NumCPU()/2, 1), 4)
-
 	return ServerConfig{
 		ProtocolType:                      "SOCKS5",
 		UDPHost:                           "0.0.0.0",
 		UDPPort:                           53,
-		UDPReaders:                        readers,
+		UDPReaders:                        4,
 		SocketBufferSize:                  8 * 1024 * 1024,
 		MaxConcurrentRequests:             16384,
-		DNSRequestWorkers:                 workers,
-		DeferredSessionWorkers:            8,
+		DNSRequestWorkers:                 8,
+		DeferredSessionWorkers:            4,
 		DeferredSessionQueueLimit:         4096,
 		MaxPacketSize:                     65535,
 		DropLogIntervalSecs:               2.0,
@@ -124,17 +133,17 @@ func defaultServerConfig() ServerConfig {
 		RecentlyClosedStreamTTLSeconds:    600.0,
 		RecentlyClosedStreamCap:           2000,
 		TerminalStreamRetentionSeconds:    45.0,
-		MaxPacketsPerBatch:                8,
+		MaxPacketsPerBatch:                5,
 		PacketBlockControlDuplication:     1,
-		DNSUpstreamServers:                []string{"1.1.1.1:53"},
+		DNSUpstreamServers:                []string{"1.1.1.1:53", "1.0.0.1:53"},
 		DNSUpstreamTimeoutSecs:            4.0,
-		DNSInflightWaitTimeoutSecs:        8.0,
-		SOCKSConnectTimeoutSecs:           8.0,
+		DNSInflightWaitTimeoutSecs:        15.0,
+		SOCKSConnectTimeoutSecs:           120.0,
 		DNSFragmentAssemblyTimeoutSecs:    300.0,
 		StreamSetupAckTTLSeconds:          400.0,
 		StreamResultPacketTTLSeconds:      300.0,
 		StreamFailurePacketTTLSeconds:     120.0,
-		DNSCacheMaxRecords:                20000,
+		DNSCacheMaxRecords:                50000,
 		DNSCacheTTLSeconds:                300.0,
 		UseExternalSOCKS5:                 false,
 		SOCKS5Auth:                        false,
@@ -144,26 +153,39 @@ func defaultServerConfig() ServerConfig {
 		ForwardPort:                       1080,
 		Domain:                            nil,
 		MinVPNLabelLength:                 3,
-		SupportedUploadCompressionTypes:   []int{0, 3},
-		SupportedDownloadCompressionTypes: []int{0, 3},
+		SupportedUploadCompressionTypes:   []int{0, 1, 2, 3},
+		SupportedDownloadCompressionTypes: []int{0, 1, 2, 3},
 		DataEncryptionMethod:              1,
 		EncryptionKeyFile:                 "encrypt_key.txt",
 		LogLevel:                          "INFO",
-		ARQWindowSize:                     2000,
+		ARQWindowSize:                     800,
 		ARQInitialRTOSeconds:              1.0,
-		ARQMaxRTOSeconds:                  8.0,
-		ARQControlInitialRTOSeconds:       1.0,
-		ARQControlMaxRTOSeconds:           8.0,
-		ARQMaxControlRetries:              80,
+		ARQMaxRTOSeconds:                  5.0,
+		ARQControlInitialRTOSeconds:       0.5,
+		ARQControlMaxRTOSeconds:           3.0,
+		ARQMaxControlRetries:              400,
 		ARQInactivityTimeoutSeconds:       1800.0,
-		ARQDataPacketTTLSeconds:           1800.0,
-		ARQControlPacketTTLSeconds:        900.0,
-		ARQMaxDataRetries:                 800,
-		ARQDataNackMaxGap:                 0,
-		ARQDataNackInitialDelaySeconds:    0.4,
+		ARQDataPacketTTLSeconds:           2400.0,
+		ARQControlPacketTTLSeconds:        1200.0,
+		ARQMaxDataRetries:                 1200,
+		ARQDataNackMaxGap:                 16,
+		ARQDataNackInitialDelaySeconds:    0.3,
 		ARQDataNackRepeatSeconds:          1.0,
-		ARQTerminalDrainTimeoutSec:        90.0,
-		ARQTerminalAckWaitTimeoutSec:      60.0,
+		ARQTerminalDrainTimeoutSec:        120.0,
+		ARQTerminalAckWaitTimeoutSec:      90.0,
+		MaxAllowedClientActiveSessions:    255,
+		MaxAllowedClientActiveStreams:     2000,
+		ClientMaxPacketDuplicationCount:   5,
+		ClientMaxSetupDuplicationCount:    6,
+		ClientMaxUploadMTU:                150,
+		ClientMaxDownloadMTU:              4096,
+		ClientMaxRxTxWorkers:              255,
+		ClientMinPingAggressiveInterval:   0.05,
+		ClientMaxPacketsPerBatch:          20,
+		ClientMaxARQWindowSize:            8000,
+		ClientMaxARQDataNackMaxGap:        255,
+		ClientMinCompressionMinSize:       120,
+		ClientMinARQInitialRTOSeconds:     0.05,
 	}
 }
 
@@ -177,17 +199,24 @@ func LoadServerConfig(filename string) (ServerConfig, error) {
 
 func loadServerConfigFile(filename string) (ServerConfig, error) {
 	cfg := defaultServerConfig()
-	path, err := filepath.Abs(filename)
+	path, format, err := resolveConfigPathWithJSONFallback(filename)
 	if err != nil {
 		return cfg, err
 	}
 
-	if _, err := os.Stat(path); err != nil {
-		return cfg, fmt.Errorf("config file not found: %s", path)
-	}
-
-	if _, err := toml.DecodeFile(path, &cfg); err != nil {
-		return cfg, fmt.Errorf("parse TOML failed for %s: %w", path, err)
+	switch format {
+	case configSourceJSON:
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return cfg, err
+		}
+		if _, err := decodeConfigJSONInto(&cfg, raw); err != nil {
+			return cfg, fmt.Errorf("parse JSON failed for %s: %w", path, err)
+		}
+	default:
+		if _, err := toml.DecodeFile(path, &cfg); err != nil {
+			return cfg, fmt.Errorf("parse TOML failed for %s: %w", path, err)
+		}
 	}
 
 	cfg.ConfigPath = path
@@ -195,8 +224,43 @@ func loadServerConfigFile(filename string) (ServerConfig, error) {
 	return cfg, nil
 }
 
+func LoadServerConfigFromJSONBase64(encoded string) (ServerConfig, error) {
+	cfg, err := loadServerConfigFromJSONBase64(encoded)
+	if err != nil {
+		return cfg, err
+	}
+	return finalizeServerConfig(cfg)
+}
+
+func loadServerConfigFromJSONBase64(encoded string) (ServerConfig, error) {
+	cfg := defaultServerConfig()
+	raw, err := decodeBase64ConfigJSON(encoded)
+	if err != nil {
+		return cfg, fmt.Errorf("decode server JSON base64 failed: %w", err)
+	}
+	if _, err := decodeConfigJSONInto(&cfg, raw); err != nil {
+		return cfg, fmt.Errorf("parse server JSON base64 failed: %w", err)
+	}
+	cfg.ConfigDir = currentWorkingConfigDir()
+	cfg.ConfigPath = "<json_base64>"
+	return cfg, nil
+}
+
 func LoadServerConfigWithOverrides(filename string, overrides ServerConfigOverrides) (ServerConfig, error) {
 	cfg, err := loadServerConfigFile(filename)
+	if err != nil {
+		return cfg, err
+	}
+	if len(overrides.Values) > 0 {
+		if err := applyServerConfigOverrideValues(&cfg, overrides.Values); err != nil {
+			return cfg, err
+		}
+	}
+	return finalizeServerConfig(cfg)
+}
+
+func LoadServerConfigFromJSONBase64WithOverrides(encoded string, overrides ServerConfigOverrides) (ServerConfig, error) {
+	cfg, err := loadServerConfigFromJSONBase64(encoded)
 	if err != nil {
 		return cfg, err
 	}
@@ -307,10 +371,10 @@ func finalizeServerConfig(cfg ServerConfig) (ServerConfig, error) {
 	if cfg.DNSUpstreamTimeoutSecs <= 0 {
 		cfg.DNSUpstreamTimeoutSecs = 4.0
 	}
-	cfg.DNSInflightWaitTimeoutSecs = clampFloat(defaultFloatAtMostZero(cfg.DNSInflightWaitTimeoutSecs, 8.0), 0.1, 120.0)
+	cfg.DNSInflightWaitTimeoutSecs = clampFloat(defaultFloatAtMostZero(cfg.DNSInflightWaitTimeoutSecs, 15.0), 0.1, 120.0)
 
 	if cfg.SOCKSConnectTimeoutSecs <= 0 {
-		cfg.SOCKSConnectTimeoutSecs = 8.0
+		cfg.SOCKSConnectTimeoutSecs = 120.0
 	}
 
 	if cfg.DNSFragmentAssemblyTimeoutSecs <= 0 {
@@ -321,7 +385,7 @@ func finalizeServerConfig(cfg ServerConfig) (ServerConfig, error) {
 	cfg.StreamFailurePacketTTLSeconds = clampFloat(defaultFloatAtMostZero(cfg.StreamFailurePacketTTLSeconds, 120.0), 1.0, 86400.0)
 
 	if cfg.DNSCacheMaxRecords < 1 {
-		cfg.DNSCacheMaxRecords = 2000
+		cfg.DNSCacheMaxRecords = 50000
 	}
 
 	if cfg.DNSCacheTTLSeconds <= 0 {
@@ -372,22 +436,35 @@ func finalizeServerConfig(cfg ServerConfig) (ServerConfig, error) {
 		cfg.LogLevel = "INFO"
 	}
 
-	cfg.ARQWindowSize = clampInt(defaultIntBelow(cfg.ARQWindowSize, 1, 2000), 1, 8000)
+	cfg.ARQWindowSize = clampInt(defaultIntBelow(cfg.ARQWindowSize, 1, 800), 1, 8000)
 	cfg.ARQInitialRTOSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQInitialRTOSeconds, 1.0), 0.05, 60.0)
-	cfg.ARQMaxRTOSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQMaxRTOSeconds, 8.0), cfg.ARQInitialRTOSeconds, 120.0)
-	cfg.ARQControlInitialRTOSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQControlInitialRTOSeconds, 1.0), 0.05, 60.0)
-	cfg.ARQControlMaxRTOSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQControlMaxRTOSeconds, 8.0), cfg.ARQControlInitialRTOSeconds, 120.0)
-	cfg.ARQMaxControlRetries = clampInt(defaultIntBelow(cfg.ARQMaxControlRetries, 1, 80), 5, 5000)
+	cfg.ARQMaxRTOSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQMaxRTOSeconds, 5.0), cfg.ARQInitialRTOSeconds, 120.0)
+	cfg.ARQControlInitialRTOSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQControlInitialRTOSeconds, 0.5), 0.05, 60.0)
+	cfg.ARQControlMaxRTOSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQControlMaxRTOSeconds, 3.0), cfg.ARQControlInitialRTOSeconds, 120.0)
+	cfg.ARQMaxControlRetries = clampInt(defaultIntBelow(cfg.ARQMaxControlRetries, 1, 400), 5, 5000)
 	cfg.ARQInactivityTimeoutSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQInactivityTimeoutSeconds, 1800.0), 30.0, 86400.0)
-	cfg.ARQDataPacketTTLSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQDataPacketTTLSeconds, 1800.0), 30.0, 86400.0)
-	cfg.ARQControlPacketTTLSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQControlPacketTTLSeconds, 900.0), 30.0, 86400.0)
-	cfg.ARQMaxDataRetries = clampInt(defaultIntBelow(cfg.ARQMaxDataRetries, 1, 800), 60, 100000)
+	cfg.ARQDataPacketTTLSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQDataPacketTTLSeconds, 2400.0), 30.0, 86400.0)
+	cfg.ARQControlPacketTTLSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQControlPacketTTLSeconds, 1200.0), 30.0, 86400.0)
+	cfg.ARQMaxDataRetries = clampInt(defaultIntBelow(cfg.ARQMaxDataRetries, 1, 1200), 60, 100000)
 	dataNackGapCap := min(max(cfg.ARQWindowSize/8, 4), 128)
-	cfg.ARQDataNackMaxGap = clampInt(defaultIntBelow(cfg.ARQDataNackMaxGap, 0, 0), 0, dataNackGapCap)
-	cfg.ARQDataNackInitialDelaySeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQDataNackInitialDelaySeconds, 0.0), 0.1, 30.0)
-	cfg.ARQDataNackRepeatSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQDataNackRepeatSeconds, 2.0), 0.2, 30.0)
-	cfg.ARQTerminalDrainTimeoutSec = clampFloat(defaultFloatAtMostZero(cfg.ARQTerminalDrainTimeoutSec, 90.0), 10.0, 3600.0)
-	cfg.ARQTerminalAckWaitTimeoutSec = clampFloat(defaultFloatAtMostZero(cfg.ARQTerminalAckWaitTimeoutSec, 60.0), 5.0, 3600.0)
+	cfg.ARQDataNackMaxGap = clampInt(defaultIntBelow(cfg.ARQDataNackMaxGap, 0, 16), 0, dataNackGapCap)
+	cfg.ARQDataNackInitialDelaySeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQDataNackInitialDelaySeconds, 0.3), 0.1, 30.0)
+	cfg.ARQDataNackRepeatSeconds = clampFloat(defaultFloatAtMostZero(cfg.ARQDataNackRepeatSeconds, 1.0), 0.2, 30.0)
+	cfg.ARQTerminalDrainTimeoutSec = clampFloat(defaultFloatAtMostZero(cfg.ARQTerminalDrainTimeoutSec, 120.0), 10.0, 3600.0)
+	cfg.ARQTerminalAckWaitTimeoutSec = clampFloat(defaultFloatAtMostZero(cfg.ARQTerminalAckWaitTimeoutSec, 90.0), 5.0, 3600.0)
+	cfg.MaxAllowedClientActiveSessions = clampInt(defaultIntBelow(cfg.MaxAllowedClientActiveSessions, 1, defaultServerConfig().MaxAllowedClientActiveSessions), 1, 255)
+	cfg.MaxAllowedClientActiveStreams = clampInt(defaultIntBelow(cfg.MaxAllowedClientActiveStreams, 1, defaultServerConfig().MaxAllowedClientActiveStreams), 1, int(^uint16(0)))
+	cfg.ClientMaxPacketDuplicationCount = clampInt(defaultIntBelow(cfg.ClientMaxPacketDuplicationCount, 0, defaultServerConfig().ClientMaxPacketDuplicationCount), 0, min(15, int(^uint8(0))))
+	cfg.ClientMaxSetupDuplicationCount = clampInt(defaultIntBelow(cfg.ClientMaxSetupDuplicationCount, 0, defaultServerConfig().ClientMaxSetupDuplicationCount), 0, min(15, int(^uint8(0))))
+	cfg.ClientMaxUploadMTU = clampInt(defaultIntBelow(cfg.ClientMaxUploadMTU, 1, defaultServerConfig().ClientMaxUploadMTU), 1, int(^uint8(0)))
+	cfg.ClientMaxDownloadMTU = clampInt(defaultIntBelow(cfg.ClientMaxDownloadMTU, 1, defaultServerConfig().ClientMaxDownloadMTU), 1, int(^uint16(0)))
+	cfg.ClientMaxRxTxWorkers = clampInt(defaultIntBelow(cfg.ClientMaxRxTxWorkers, 1, defaultServerConfig().ClientMaxRxTxWorkers), 1, int(^uint8(0)))
+	cfg.ClientMinPingAggressiveInterval = clampFloat(defaultFloatAtMostZero(cfg.ClientMinPingAggressiveInterval, defaultServerConfig().ClientMinPingAggressiveInterval), 0.05, 1.0)
+	cfg.ClientMaxPacketsPerBatch = clampInt(defaultIntBelow(cfg.ClientMaxPacketsPerBatch, 1, defaultServerConfig().ClientMaxPacketsPerBatch), 1, int(^uint8(0)))
+	cfg.ClientMaxARQWindowSize = clampInt(defaultIntBelow(cfg.ClientMaxARQWindowSize, 1, defaultServerConfig().ClientMaxARQWindowSize), 1, min(8000, int(^uint16(0))))
+	cfg.ClientMaxARQDataNackMaxGap = clampInt(defaultIntBelow(cfg.ClientMaxARQDataNackMaxGap, 0, defaultServerConfig().ClientMaxARQDataNackMaxGap), 0, min(255, int(^uint8(0))))
+	cfg.ClientMinCompressionMinSize = clampInt(defaultIntBelow(cfg.ClientMinCompressionMinSize, 1, defaultServerConfig().ClientMinCompressionMinSize), 1, int(^uint16(0)))
+	cfg.ClientMinARQInitialRTOSeconds = clampFloat(defaultFloatAtMostZero(cfg.ClientMinARQInitialRTOSeconds, defaultServerConfig().ClientMinARQInitialRTOSeconds), 0.05, 1.0)
 
 	return cfg, nil
 }
@@ -484,7 +561,7 @@ func (c ServerConfig) EffectiveDNSRequestWorkers() int {
 		recommended = readerTarget
 	}
 
-	return clampInt(max(c.DNSRequestWorkers, recommended), 1, 64)
+	return clampInt(max(c.DNSRequestWorkers, recommended), 1, 256)
 }
 
 func (c ServerConfig) EffectiveDeferredSessionWorkers() int {
@@ -492,7 +569,7 @@ func (c ServerConfig) EffectiveDeferredSessionWorkers() int {
 	if c.ProtocolType == "SOCKS5" && recommended < 4 {
 		recommended = 4
 	}
-	return clampInt(max(c.DeferredSessionWorkers, recommended), 0, 64)
+	return clampInt(max(c.DeferredSessionWorkers, recommended), 0, 256)
 }
 
 func (c ServerConfig) EffectiveDeferredSessionQueueLimit() int {
@@ -506,13 +583,13 @@ func (c ServerConfig) EffectiveMaxConcurrentRequests() int {
 }
 
 func (c ServerConfig) EffectiveMaxPacketsPerBatch() int {
-	recommended := 8
+	recommended := 5
 	switch {
 	case c.ARQWindowSize > 3000:
 		recommended = 14
 	case c.ARQWindowSize > 1500:
 		recommended = 12
-	case c.ARQWindowSize > 512:
+	case c.ARQWindowSize > 1024:
 		recommended = 10
 	}
 	return clampInt(max(c.MaxPacketsPerBatch, recommended), 1, 64)

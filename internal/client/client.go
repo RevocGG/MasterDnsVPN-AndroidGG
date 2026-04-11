@@ -112,6 +112,7 @@ type Client struct {
 	orphanQueue           *mlq.MultiLevelQueue[VpnProto.Packet]
 	recentlyClosedMu      sync.Mutex
 	recentlyClosedStreams map[uint16]time.Time
+	recentlyClosedHeap    recentlyClosedHeap
 
 	// Signals to wake up dispatcher and downstream stages.
 	dispatchSignal          chan struct{}
@@ -152,6 +153,33 @@ type clientStreamTXPacket struct {
 	isControlCounted atomic.Bool
 }
 
+type recentlyClosedEntry struct {
+	streamID uint16
+	expires  time.Time
+}
+
+type recentlyClosedHeap []recentlyClosedEntry
+
+func (h recentlyClosedHeap) Len() int { return len(h) }
+
+func (h recentlyClosedHeap) Less(i, j int) bool {
+	return h[i].expires.Before(h[j].expires)
+}
+
+func (h recentlyClosedHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+
+func (h *recentlyClosedHeap) Push(x any) {
+	*h = append(*h, x.(recentlyClosedEntry))
+}
+
+func (h *recentlyClosedHeap) Pop() any {
+	old := *h
+	n := len(old)
+	item := old[n-1]
+	*h = old[:n-1]
+	return item
+}
+
 // plannerTask is the handoff between dispatcher and the planner/encoder stage.
 // The dispatcher only decides fairness/dequeue/packing. Resolver selection and
 // fan-out happen later in the encode stage.
@@ -183,7 +211,10 @@ func Bootstrap(configPath string, logPath string, overrides config.ClientConfigO
 	if err != nil {
 		return nil, err
 	}
+	return BootstrapLoadedConfig(cfg, logPath)
+}
 
+func BootstrapLoadedConfig(cfg config.ClientConfig, logPath string) (*Client, error) {
 	var log *logger.Logger
 	if logPath != "" {
 		log = logger.NewWithFile("MasterDnsVPN Client", cfg.LogLevel, logPath)
@@ -249,6 +280,7 @@ func New(cfg config.ClientConfig, log *logger.Logger, codec *security.Codec) *Cl
 		rxChannel:               make(chan asyncReadPacket, cfg.EffectiveRXChannelSize()),
 		active_streams:          make(map[uint16]*Stream_client),
 		recentlyClosedStreams:   make(map[uint16]time.Time),
+		recentlyClosedHeap:      make(recentlyClosedHeap, 0, 128),
 		dispatchSignal:          make(chan struct{}, 1),
 		plannerQueueSpaceSignal: make(chan struct{}, 1),
 		writerQueueSpaceSignal:  make(chan struct{}, 1),

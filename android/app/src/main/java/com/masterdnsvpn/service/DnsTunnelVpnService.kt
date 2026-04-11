@@ -312,6 +312,8 @@ class DnsTunnelVpnService : VpnService() {
     private fun performStop() {
         intentionalStop = true
         scope.launch {
+            getSystemService(NotificationManager::class.java)
+                ?.cancel(TunnelNotification.NOTIFICATION_ID)
             try { bridge.stopTunBridge() } catch (_: Exception) {}
             try { bridge.stopSocksBalancer() } catch (_: Exception) {}
 
@@ -343,6 +345,8 @@ class DnsTunnelVpnService : VpnService() {
             vpnInterface = null
 
             stopForeground(STOP_FOREGROUND_REMOVE)
+            getSystemService(NotificationManager::class.java)
+                ?.cancel(TunnelNotification.NOTIFICATION_ID)
             stopSelf()
         }
     }
@@ -360,7 +364,7 @@ class DnsTunnelVpnService : VpnService() {
             val nm = getSystemService(NotificationManager::class.java)
             while (isActive) {
                 delay(1_000)
-                if (!isActive) break
+                if (!isActive || intentionalStop) break
                 val (tunUp, tunDown) = bridge.getBandwidth()
                 val tunUpSpeed = (tunUp - prevTunUp).coerceAtLeast(0L)
                 val tunDownSpeed = (tunDown - prevTunDown).coerceAtLeast(0L)
@@ -384,6 +388,9 @@ class DnsTunnelVpnService : VpnService() {
         // vpnInterface is already closed in performStop() — guard against double-close.
         try { connectivityManager.unregisterNetworkCallback(networkCallback) } catch (_: Exception) {}
         bridge.registerProtectCallback(null)
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        getSystemService(NotificationManager::class.java)
+            ?.cancel(TunnelNotification.NOTIFICATION_ID)
         if (vpnInterface != null) {
             vpnInterface?.close()
             vpnInterface = null

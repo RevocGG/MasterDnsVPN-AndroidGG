@@ -31,6 +31,10 @@
     <!-- Vibration feedback (e.g. when VPN session becomes ready) -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <!-- Hotspot sharing: detect AP interface on Android 13+ -->
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES"
+        android:usesPermissionFlags="neverForLocation" />
+
     <!-- Query all installed packages for per-app VPN selection (Android 11+) -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />

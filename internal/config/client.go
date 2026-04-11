@@ -28,6 +28,7 @@ type ClientConfig struct {
 	ConfigPath                            string            `toml:"-"`
 	ResolversFilePath                     string            `toml:"-"`
 	explicitRX_TX_Workers                 bool              `toml:"-"`
+	explicitTunnelProcessWorkers          bool              `toml:"-"`
 	ProtocolType                          string            `toml:"PROTOCOL_TYPE"`
 	Domains                               []string          `toml:"DOMAINS"`
 	ListenIP                              string            `toml:"LISTEN_IP"`
@@ -143,7 +144,7 @@ func defaultClientConfig() ClientConfig {
 		LocalDNSPendingTimeoutSec:             300.0,
 		LocalDNSCachePersist:                  true,
 		LocalDNSCacheFlushSec:                 60.0,
-		ResolverBalancingStrategy:             0,
+		ResolverBalancingStrategy:             2,
 		PacketDuplicationCount:                5,
 		SetupPacketDuplicationCount:           5,
 		StreamResolverFailoverResendThreshold: 2,
@@ -168,7 +169,7 @@ func defaultClientConfig() ClientConfig {
 		TunnelProcessWorkers:                  4,
 		TunnelPacketTimeoutSec:                8.0,
 		DispatcherIdlePollIntervalSeconds:     0.020,
-		PingAggressiveIntervalSeconds:         0.300,
+		PingAggressiveIntervalSeconds:         0.100,
 		PingLazyIntervalSeconds:               1.0,
 		PingCooldownIntervalSeconds:           3.0,
 		PingColdIntervalSeconds:               30.0,
@@ -188,10 +189,10 @@ func defaultClientConfig() ClientConfig {
 		SessionInitRacingCount:                3,
 		SaveMTUServersToFile:                  false,
 		MTUServersFileName:                    "masterdnsvpn_success_test_{time}.log",
-		MTUServersFileFormat:                  "{IP} - UP: {UP_MTU} DOWN: {DOWN-MTU}",
+		MTUServersFileFormat:                  "{IP} ({DOMAIN}) - UP: {UP_MTU} DOWN: {DOWN-MTU}",
 		MTUUsingSeparatorText:                 "",
-		MTURemovedServerLogFormat:             "Resolver {IP} removed at {TIME} due to {CAUSE}",
-		MTUAddedServerLogFormat:               "Resolver {IP} added back at {TIME} (UP {UP_MTU}, DOWN {DOWN_MTU})",
+		MTURemovedServerLogFormat:             "Resolver {IP} ({DOMAIN}) removed at {TIME} due to {CAUSE}",
+		MTUAddedServerLogFormat:               "Resolver {IP} ({DOMAIN}) added back at {TIME} (UP {UP_MTU}, DOWN {DOWN_MTU})",
 		LogLevel:                              "INFO",
 		MaxPacketsPerBatch:                    8,
 		ARQWindowSize:                         2000,
@@ -222,25 +223,84 @@ func LoadClientConfig(filename string) (ClientConfig, error) {
 
 func loadClientConfigFile(filename string) (ClientConfig, error) {
 	cfg := defaultClientConfig()
-	path, err := filepath.Abs(filename)
+	path, format, err := resolveConfigPathWithJSONFallback(filename)
 	if err != nil {
 		return cfg, err
-	}
-
-	if _, err := os.Stat(path); err != nil {
-		return cfg, fmt.Errorf("config file not found: %s", path)
-	}
-
-	meta, err := toml.DecodeFile(path, &cfg)
-	if err != nil {
-		return cfg, fmt.Errorf("parse TOML failed for %s: %w", path, err)
 	}
 
 	cfg.ConfigPath = path
 	cfg.ConfigDir = filepath.Dir(path)
 	cfg.ResolversFilePath = ""
-	cfg.explicitRX_TX_Workers = meta.IsDefined("RX_TX_WORKERS")
+
+	switch format {
+	case configSourceJSON:
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return cfg, err
+		}
+		defined, err := decodeConfigJSONInto(&cfg, raw)
+		if err != nil {
+			return cfg, fmt.Errorf("parse JSON failed for %s: %w", path, err)
+		}
+		cfg.explicitRX_TX_Workers = defined["RX_TX_Workers"]
+		cfg.explicitTunnelProcessWorkers = defined["TunnelProcessWorkers"]
+	default:
+		meta, err := toml.DecodeFile(path, &cfg)
+		if err != nil {
+			return cfg, fmt.Errorf("parse TOML failed for %s: %w", path, err)
+		}
+		cfg.explicitRX_TX_Workers = meta.IsDefined("RX_TX_WORKERS")
+		cfg.explicitTunnelProcessWorkers = meta.IsDefined("TUNNEL_PROCESS_WORKERS")
+	}
+
 	return cfg, nil
+}
+
+func LoadClientConfigFromJSONBase64(encoded string) (ClientConfig, error) {
+	cfg, err := loadClientConfigFromJSONBase64(encoded)
+	if err != nil {
+		return cfg, err
+	}
+	return finalizeClientConfig(cfg)
+}
+
+func loadClientConfigFromJSONBase64(encoded string) (ClientConfig, error) {
+	cfg := defaultClientConfig()
+	raw, err := decodeBase64ConfigJSON(encoded)
+	if err != nil {
+		return cfg, fmt.Errorf("decode client JSON base64 failed: %w", err)
+	}
+	defined, err := decodeConfigJSONInto(&cfg, raw)
+	if err != nil {
+		return cfg, fmt.Errorf("parse client JSON base64 failed: %w", err)
+	}
+	cfg.ConfigDir = currentWorkingConfigDir()
+	cfg.ConfigPath = "<json_base64>"
+	cfg.ResolversFilePath = ""
+	cfg.explicitRX_TX_Workers = defined["RX_TX_Workers"]
+	cfg.explicitTunnelProcessWorkers = defined["TunnelProcessWorkers"]
+	return cfg, nil
+}
+
+func LoadClientConfigFromJSONBase64WithOverrides(encoded string, overrides ClientConfigOverrides) (ClientConfig, error) {
+	cfg, err := loadClientConfigFromJSONBase64(encoded)
+	if err != nil {
+		return cfg, err
+	}
+
+	if overrides.ResolversFilePath != nil {
+		cfg.ResolversFilePath = strings.TrimSpace(*overrides.ResolversFilePath)
+	}
+	if len(overrides.Values) > 0 {
+		if err := applyClientConfigOverrideValues(&cfg, overrides.Values); err != nil {
+			return cfg, err
+		}
+		if _, ok := overrides.Values["TunnelProcessWorkers"]; ok {
+			cfg.explicitTunnelProcessWorkers = true
+		}
+	}
+
+	return finalizeClientConfig(cfg)
 }
 
 func LoadClientConfigWithOverrides(filename string, overrides ClientConfigOverrides) (ClientConfig, error) {
@@ -255,6 +315,9 @@ func LoadClientConfigWithOverrides(filename string, overrides ClientConfigOverri
 	if len(overrides.Values) > 0 {
 		if err := applyClientConfigOverrideValues(&cfg, overrides.Values); err != nil {
 			return cfg, err
+		}
+		if _, ok := overrides.Values["TunnelProcessWorkers"]; ok {
+			cfg.explicitTunnelProcessWorkers = true
 		}
 	}
 
@@ -319,7 +382,7 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 
 	cfg.CompressionMinSize = defaultIntBelow(cfg.CompressionMinSize, 100, compression.DefaultMinSize)
 
-	if cfg.ResolverBalancingStrategy < 0 || cfg.ResolverBalancingStrategy > 4 {
+	if cfg.ResolverBalancingStrategy < 0 || cfg.ResolverBalancingStrategy > 8 {
 		return cfg, fmt.Errorf("invalid RESOLVER_BALANCING_STRATEGY: %d", cfg.ResolverBalancingStrategy)
 	}
 
@@ -366,13 +429,17 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 		cfg.RX_TX_Workers = legacyRX_TX_Workers
 	}
 
-	cfg.RX_TX_Workers = clampInt(defaultIntBelow(cfg.RX_TX_Workers, 1, 6), 1, 64)
-	cfg.TunnelProcessWorkers = max(clampInt(defaultIntBelow(cfg.TunnelProcessWorkers, 1, 4), 1, 64), cfg.RX_TX_Workers)
+	cfg.RX_TX_Workers = clampInt(defaultIntBelow(cfg.RX_TX_Workers, 1, 6), 1, 128)
+	cfg.TunnelProcessWorkers = deriveConfiguredTunnelProcessWorkers(
+		cfg.TunnelProcessWorkers,
+		cfg.RX_TX_Workers,
+		cfg.explicitTunnelProcessWorkers,
+	)
 
 	cfg.TunnelPacketTimeoutSec = clampFloat(defaultFloatAtMostZero(cfg.TunnelPacketTimeoutSec, 8.0), 0.5, 120.0)
 	cfg.DispatcherIdlePollIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.DispatcherIdlePollIntervalSeconds, 0.020), 0.001, 1.0)
-	cfg.PingAggressiveIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.PingAggressiveIntervalSeconds, 0.300), 0.1, 30.0)
-	cfg.PingLazyIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.PingLazyIntervalSeconds, 1.0), cfg.PingAggressiveIntervalSeconds, 60.0)
+	cfg.PingAggressiveIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.PingAggressiveIntervalSeconds, 0.100), 0.1, 30.0)
+	cfg.PingLazyIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.PingLazyIntervalSeconds, 0.750), cfg.PingAggressiveIntervalSeconds, 60.0)
 	cfg.PingCooldownIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.PingCooldownIntervalSeconds, 3.0), cfg.PingLazyIntervalSeconds, 300.0)
 	cfg.PingColdIntervalSeconds = clampFloat(defaultFloatAtMostZero(cfg.PingColdIntervalSeconds, 30.0), cfg.PingCooldownIntervalSeconds, 3600.0)
 	cfg.PingWarmThresholdSeconds = clampFloat(defaultFloatAtMostZero(cfg.PingWarmThresholdSeconds, 5.0), 0.1, 600.0)
@@ -978,4 +1045,23 @@ func clampFloat(value float64, minValue float64, maxValue float64) float64 {
 		return maxValue
 	}
 	return value
+}
+
+func deriveConfiguredTunnelProcessWorkers(current int, rxWorkers int, explicit bool) int {
+	recommended := deriveRecommendedTunnelProcessWorkers(rxWorkers)
+	if explicit {
+		current = clampInt(current, 1, 256)
+		if current < rxWorkers {
+			return rxWorkers
+		}
+		return current
+	}
+	return recommended
+}
+
+func deriveRecommendedTunnelProcessWorkers(rxWorkers int) int {
+	if rxWorkers < 1 {
+		rxWorkers = 1
+	}
+	return clampInt(max(4, rxWorkers+1), rxWorkers, 256)
 }

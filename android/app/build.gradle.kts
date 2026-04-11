@@ -18,15 +18,15 @@ android {
         targetSdk = 35
         // Read from Gradle properties injected by CI (-PversionCode=X -PversionName=Y)
         // Fallback to hardcoded values for local development.
-        versionCode = (project.findProperty("versionCode") as? String)?.toIntOrNull() ?: 7
-        versionName = project.findProperty("versionName") as? String ?: "1.0.7"
+        versionCode = (project.findProperty("versionCode") as? String)?.toIntOrNull() ?: 9
+        versionName = project.findProperty("versionName") as? String ?: "1.0.9"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField(
             "String",
             "UPSTREAM_VERSION",
-            "\"${project.findProperty("upstreamVersion") as? String ?: "v2026.04.09.020149-a788a98"}\""
+            "\"${project.findProperty("upstreamVersion") as? String ?: "v2026.04.11.044523-0639f8b"}\""
         )
 
         // Include all ABIs in universal APK

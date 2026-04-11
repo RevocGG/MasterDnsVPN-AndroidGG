@@ -10,6 +10,7 @@
 package client
 
 import (
+	"container/heap"
 	"crypto/rand"
 	"fmt"
 	"net"
@@ -325,22 +326,16 @@ func (c *Client) rememberClosedStream(streamID uint16, reason string, now time.T
 		retention = 15 * time.Second
 	}
 
+	expiresAt := now.Add(retention)
+
 	c.recentlyClosedMu.Lock()
 	// Cap the map to prevent unbounded growth during long sessions.
 	// If at limit, evict the oldest entry before adding.
 	const maxRecentlyClosed = 2000
-	if len(c.recentlyClosedStreams) >= maxRecentlyClosed {
-		var oldestID uint16
-		var oldestTime time.Time
-		for id, t := range c.recentlyClosedStreams {
-			if oldestTime.IsZero() || t.Before(oldestTime) {
-				oldestID = id
-				oldestTime = t
-			}
-		}
-		delete(c.recentlyClosedStreams, oldestID)
-	}
-	c.recentlyClosedStreams[streamID] = now.Add(retention)
+	c.pruneRecentlyClosedLocked(now)
+	c.recentlyClosedStreams[streamID] = expiresAt
+	heap.Push(&c.recentlyClosedHeap, recentlyClosedEntry{streamID: streamID, expires: expiresAt})
+	c.evictRecentlyClosedLocked(maxRecentlyClosed)
 	c.recentlyClosedMu.Unlock()
 }
 
@@ -352,6 +347,7 @@ func (c *Client) isRecentlyClosedStream(streamID uint16, now time.Time) bool {
 	c.recentlyClosedMu.Lock()
 	defer c.recentlyClosedMu.Unlock()
 
+	c.pruneRecentlyClosedLocked(now)
 	expiresAt, ok := c.recentlyClosedStreams[streamID]
 	if !ok {
 		return false
@@ -370,11 +366,7 @@ func (c *Client) cleanupRecentlyClosedStreams(now time.Time) {
 	}
 
 	c.recentlyClosedMu.Lock()
-	for streamID, expiresAt := range c.recentlyClosedStreams {
-		if !now.Before(expiresAt) {
-			delete(c.recentlyClosedStreams, streamID)
-		}
-	}
+	c.pruneRecentlyClosedLocked(now)
 	c.recentlyClosedMu.Unlock()
 }
 
@@ -385,7 +377,38 @@ func (c *Client) clearRecentlyClosedStreams() {
 
 	c.recentlyClosedMu.Lock()
 	clear(c.recentlyClosedStreams)
+	c.recentlyClosedHeap = c.recentlyClosedHeap[:0]
 	c.recentlyClosedMu.Unlock()
+}
+
+func (c *Client) pruneRecentlyClosedLocked(now time.Time) {
+	if c == nil {
+		return
+	}
+	for len(c.recentlyClosedHeap) > 0 {
+		entry := c.recentlyClosedHeap[0]
+		expiresAt, ok := c.recentlyClosedStreams[entry.streamID]
+		if !ok || !expiresAt.Equal(entry.expires) {
+			heap.Pop(&c.recentlyClosedHeap)
+			continue
+		}
+		if now.Before(expiresAt) {
+			break
+		}
+		delete(c.recentlyClosedStreams, entry.streamID)
+		heap.Pop(&c.recentlyClosedHeap)
+	}
+}
+
+func (c *Client) evictRecentlyClosedLocked(capacity int) {
+	for len(c.recentlyClosedStreams) > capacity && len(c.recentlyClosedHeap) > 0 {
+		entry := heap.Pop(&c.recentlyClosedHeap).(recentlyClosedEntry)
+		expiresAt, ok := c.recentlyClosedStreams[entry.streamID]
+		if !ok || !expiresAt.Equal(entry.expires) {
+			continue
+		}
+		delete(c.recentlyClosedStreams, entry.streamID)
+	}
 }
 
 func (c *Client) handleMissingStreamPacket(packet VpnProto.Packet) bool {

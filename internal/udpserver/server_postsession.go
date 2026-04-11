@@ -131,6 +131,34 @@ func isStreamCreationPacketType(packetType uint8) bool {
 	}
 }
 
+func (s *Server) rejectNewStreamBecauseLimit(record *sessionRecord, vpnPacket VpnProto.Packet) bool {
+	if s == nil || record == nil || vpnPacket.StreamID == 0 {
+		return false
+	}
+
+	packetType := uint8(Enums.PACKET_STREAM_CONNECT_FAIL)
+	reason := "stream"
+	if vpnPacket.PacketType == Enums.PACKET_SOCKS5_SYN {
+		packetType = Enums.PACKET_SOCKS5_CONNECT_FAIL
+		reason = "socks5 stream"
+	}
+
+	record.enqueueOrphanReset(packetType, vpnPacket.StreamID, vpnPacket.SequenceNum)
+	_ = s.queueImmediateControlAck(record, vpnPacket)
+
+	if s.log != nil {
+		s.log.Warnf(
+			"<yellow>Rejected new %s because active stream limit was reached</yellow> <magenta>|</magenta> <blue>Session</blue>: <cyan>%d</cyan> <magenta>|</magenta> <blue>Stream</blue>: <cyan>%d</cyan> <magenta>|</magenta> <blue>Limit</blue>: <cyan>%d</cyan>",
+			reason,
+			vpnPacket.SessionID,
+			vpnPacket.StreamID,
+			record.MaxActiveStreamsPerSession,
+		)
+	}
+
+	return true
+}
+
 func (s *Server) consumeInboundStreamAck(vpnPacket VpnProto.Packet, stream *Stream_server) bool {
 	if s == nil || stream == nil || stream.ARQ == nil {
 		return false
@@ -329,10 +357,27 @@ func (s *Server) tryBeginDeferredPacket(packet VpnProto.Packet) bool {
 	if s.deferredInflight == nil {
 		s.deferredInflight = make(map[uint64]struct{}, 128)
 	}
+	if s.deferredInflightIndex == nil {
+		s.deferredInflightIndex = make(map[uint8]map[uint16]map[uint64]struct{}, 64)
+	}
 	if _, exists := s.deferredInflight[key]; exists {
 		return false
 	}
 	s.deferredInflight[key] = struct{}{}
+
+	sessionID := packet.SessionID
+	streamID := packet.StreamID
+	sessionMap, exists := s.deferredInflightIndex[sessionID]
+	if !exists {
+		sessionMap = make(map[uint16]map[uint64]struct{}, 16)
+		s.deferredInflightIndex[sessionID] = sessionMap
+	}
+	streamMap, exists := sessionMap[streamID]
+	if !exists {
+		streamMap = make(map[uint64]struct{}, 8)
+		sessionMap[streamID] = streamMap
+	}
+	streamMap[key] = struct{}{}
 	return true
 }
 
@@ -343,6 +388,7 @@ func (s *Server) finishDeferredPacket(packet VpnProto.Packet) {
 	key := deferredTrackedPacketKey(packet)
 	s.deferredInflightMu.Lock()
 	delete(s.deferredInflight, key)
+	s.removeDeferredInflightIndexLocked(packet.SessionID, packet.StreamID, key)
 	s.deferredInflightMu.Unlock()
 }
 
@@ -369,11 +415,7 @@ func (s *Server) clearDeferredInflightForSession(sessionID uint8) {
 		return
 	}
 	s.deferredInflightMu.Lock()
-	for key := range s.deferredInflight {
-		if uint8(key>>48) == sessionID {
-			delete(s.deferredInflight, key)
-		}
-	}
+	s.clearDeferredInflightForSessionLocked(sessionID)
 	s.deferredInflightMu.Unlock()
 }
 
@@ -408,12 +450,85 @@ func (s *Server) clearDeferredInflightForStream(sessionID uint8, streamID uint16
 		return
 	}
 	s.deferredInflightMu.Lock()
-	for key := range s.deferredInflight {
-		if uint8(key>>48) == sessionID && uint16(key>>32) == streamID {
+	s.clearDeferredInflightForStreamLocked(sessionID, streamID)
+	s.deferredInflightMu.Unlock()
+}
+
+func (s *Server) clearDeferredInflightForSessionLocked(sessionID uint8) {
+	if s == nil || sessionID == 0 {
+		return
+	}
+	if s.deferredInflightIndex == nil {
+		for key := range s.deferredInflight {
+			if uint8(key>>48) == sessionID {
+				delete(s.deferredInflight, key)
+			}
+		}
+		return
+	}
+
+	sessionMap, exists := s.deferredInflightIndex[sessionID]
+	if !exists {
+		return
+	}
+	for _, streamMap := range sessionMap {
+		for key := range streamMap {
 			delete(s.deferredInflight, key)
 		}
 	}
-	s.deferredInflightMu.Unlock()
+	delete(s.deferredInflightIndex, sessionID)
+}
+
+func (s *Server) clearDeferredInflightForStreamLocked(sessionID uint8, streamID uint16) {
+	if s == nil || sessionID == 0 || streamID == 0 {
+		return
+	}
+	if s.deferredInflightIndex == nil {
+		for key := range s.deferredInflight {
+			if uint8(key>>48) == sessionID && uint16(key>>32) == streamID {
+				delete(s.deferredInflight, key)
+			}
+		}
+		return
+	}
+
+	sessionMap, exists := s.deferredInflightIndex[sessionID]
+	if !exists {
+		return
+	}
+	streamMap, exists := sessionMap[streamID]
+	if !exists {
+		return
+	}
+	for key := range streamMap {
+		delete(s.deferredInflight, key)
+	}
+	delete(sessionMap, streamID)
+	if len(sessionMap) == 0 {
+		delete(s.deferredInflightIndex, sessionID)
+	}
+}
+
+func (s *Server) removeDeferredInflightIndexLocked(sessionID uint8, streamID uint16, key uint64) {
+	if s == nil || sessionID == 0 || s.deferredInflightIndex == nil {
+		return
+	}
+	sessionMap, exists := s.deferredInflightIndex[sessionID]
+	if !exists {
+		return
+	}
+	streamMap, exists := sessionMap[streamID]
+	if !exists {
+		return
+	}
+	delete(streamMap, key)
+	if len(streamMap) > 0 {
+		return
+	}
+	delete(sessionMap, streamID)
+	if len(sessionMap) == 0 {
+		delete(s.deferredInflightIndex, sessionID)
+	}
 }
 
 func (s *Server) shouldExecuteDeferredPacket(packet VpnProto.Packet) bool {
@@ -697,12 +812,16 @@ func (s *Server) handleStreamSynRequest(vpnPacket VpnProto.Packet, sessionRecord
 	if !vpnPacket.HasStreamID || vpnPacket.StreamID == 0 || sessionRecord == nil {
 		return false
 	}
+	record, ok := s.sessions.Get(vpnPacket.SessionID)
+	if !ok || record == nil {
+		return false
+	}
+
+	if !record.canCreateAdditionalStream(vpnPacket.StreamID) {
+		return s.rejectNewStreamBecauseLimit(record, vpnPacket)
+	}
 
 	if s.tryHandleImmediateConnectedStreamSyn(vpnPacket) {
-		record, ok := s.sessions.Get(vpnPacket.SessionID)
-		if !ok || record == nil {
-			return true
-		}
 		_ = s.queueImmediateControlAck(record, vpnPacket)
 		return true
 	}
@@ -716,10 +835,6 @@ func (s *Server) handleStreamSynRequest(vpnPacket VpnProto.Packet, sessionRecord
 		return false
 	}
 
-	record, ok := s.sessions.Get(vpnPacket.SessionID)
-	if !ok || record == nil {
-		return true
-	}
 	_ = s.queueImmediateControlAck(record, vpnPacket)
 	return true
 }
@@ -743,20 +858,21 @@ func (s *Server) handleSOCKS5SynRequest(vpnPacket VpnProto.Packet, sessionRecord
 	if !vpnPacket.HasStreamID || vpnPacket.StreamID == 0 || sessionRecord == nil {
 		return false
 	}
+	record, ok := s.sessions.Get(vpnPacket.SessionID)
+	if !ok || record == nil {
+		return false
+	}
+
+	if !record.canCreateAdditionalStream(vpnPacket.StreamID) {
+		return s.rejectNewStreamBecauseLimit(record, vpnPacket)
+	}
 
 	if s.tryHandleImmediateConnectedSOCKS5Syn(vpnPacket) {
-		record, ok := s.sessions.Get(vpnPacket.SessionID)
-		if !ok || record == nil {
-			return true
-		}
 		_ = s.queueImmediateControlAck(record, vpnPacket)
 		return true
 	}
+
 	if s.tryHandleImmediateRejectedSOCKS5Syn(vpnPacket) {
-		record, ok := s.sessions.Get(vpnPacket.SessionID)
-		if !ok || record == nil {
-			return true
-		}
 		_ = s.queueImmediateControlAck(record, vpnPacket)
 		return true
 	}
@@ -770,10 +886,6 @@ func (s *Server) handleSOCKS5SynRequest(vpnPacket VpnProto.Packet, sessionRecord
 		return false
 	}
 
-	record, ok := s.sessions.Get(vpnPacket.SessionID)
-	if !ok || record == nil {
-		return true
-	}
 	_ = s.queueImmediateControlAck(record, vpnPacket)
 	return true
 }

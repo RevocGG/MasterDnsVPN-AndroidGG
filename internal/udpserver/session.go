@@ -8,6 +8,7 @@
 package udpserver
 
 import (
+	"container/heap"
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
@@ -67,11 +68,13 @@ type sessionRecord struct {
 	StreamQueueCap                  int
 	StreamsMu                       sync.RWMutex
 	RecentlyClosed                  map[uint16]recentlyClosedStreamRecord
+	RecentlyClosedHeap              recentlyClosedHeap
 	RecentlyClosedTTL               time.Duration
 	RecentlyClosedCap               int
 	OrphanQueue                     *mlq.MultiLevelQueue[VpnProto.Packet]
 	LastPackedControlBlock          *VpnProto.Packet
 	LastPackedControlBlockRemaining int
+	MaxActiveStreamsPerSession      int
 	closedFlag                      uint32
 	streamCleanup                   func(uint8, uint16)
 }
@@ -79,6 +82,33 @@ type sessionRecord struct {
 type recentlyClosedStreamRecord struct {
 	ClosedAt       time.Time
 	SuppressOrphan bool
+}
+
+type recentlyClosedEntry struct {
+	streamID uint16
+	closedAt time.Time
+}
+
+type recentlyClosedHeap []recentlyClosedEntry
+
+func (h recentlyClosedHeap) Len() int { return len(h) }
+
+func (h recentlyClosedHeap) Less(i, j int) bool {
+	return h[i].closedAt.Before(h[j].closedAt)
+}
+
+func (h recentlyClosedHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+
+func (h *recentlyClosedHeap) Push(x any) {
+	*h = append(*h, x.(recentlyClosedEntry))
+}
+
+func (h *recentlyClosedHeap) Pop() any {
+	old := *h
+	n := len(old)
+	item := old[n-1]
+	*h = old[:n-1]
+	return item
 }
 
 // serverStreamTXPacket represents a queued packet pending transmission or retransmission.
@@ -177,6 +207,8 @@ type sessionStore struct {
 	recentClosed           map[uint8]closedSessionRecord
 	orphanQueueCap         int
 	streamQueueCap         int
+	maxActiveSessions      int
+	maxActiveStreams       int
 	sessionInitTTL         time.Duration
 	recentlyClosedTTL      time.Duration
 	recentlyClosedCap      int
@@ -215,13 +247,22 @@ func newSessionStore(orphanQueueCap int, streamQueueCap int, options ...any) *se
 		nextID:            1,
 		orphanQueueCap:    orphanQueueCap,
 		streamQueueCap:    streamQueueCap,
+		maxActiveSessions: maxServerSessionSlots,
+		maxActiveStreams:  1000,
 		sessionInitTTL:    sessionInitTTL,
 		recentlyClosedTTL: recentlyClosedTTL,
 		recentlyClosedCap: recentlyClosedCap,
 	}
 }
 
-func (s *sessionStore) findOrCreate(payload []byte, uploadCompressionType uint8, downloadCompressionType uint8, maxPacketsPerBatch int) (*sessionRecord, bool, error) {
+func (s *sessionStore) findOrCreate(
+	payload []byte,
+	uploadCompressionType uint8,
+	downloadCompressionType uint8,
+	maxPacketsPerBatch int,
+	maxClientUploadMTU int,
+	maxClientDownloadMTU int,
+) (*sessionRecord, bool, error) {
 	if len(payload) != sessionInitDataSize || !isValidSessionResponseMode(payload[0]) {
 		return nil, false, nil
 	}
@@ -252,18 +293,20 @@ func (s *sessionStore) findOrCreate(payload []byte, uploadCompressionType uint8,
 	}
 
 	record := &sessionRecord{
-		ID:                uint8(slot),
-		ResponseMode:      payload[0],
-		CreatedAt:         now,
-		ReuseUntil:        now.Add(s.sessionInitTTL),
-		Signature:         signature,
-		Streams:           make(map[uint16]*Stream_server),
-		ActiveStreams:     make([]uint16, 0, 8),
-		StreamQueueCap:    s.streamQueueCap,
-		RecentlyClosed:    make(map[uint16]recentlyClosedStreamRecord, 8),
-		RecentlyClosedTTL: s.recentlyClosedTTL,
-		RecentlyClosedCap: s.recentlyClosedCap,
-		OrphanQueue:       mlq.New[VpnProto.Packet](s.orphanQueueCap),
+		ID:                         uint8(slot),
+		ResponseMode:               payload[0],
+		CreatedAt:                  now,
+		ReuseUntil:                 now.Add(s.sessionInitTTL),
+		Signature:                  signature,
+		Streams:                    make(map[uint16]*Stream_server),
+		ActiveStreams:              make([]uint16, 0, 8),
+		StreamQueueCap:             s.streamQueueCap,
+		MaxActiveStreamsPerSession: s.maxActiveStreams,
+		RecentlyClosed:             make(map[uint16]recentlyClosedStreamRecord, 8),
+		RecentlyClosedHeap:         make(recentlyClosedHeap, 0, 8),
+		RecentlyClosedTTL:          s.recentlyClosedTTL,
+		RecentlyClosedCap:          s.recentlyClosedCap,
+		OrphanQueue:                mlq.New[VpnProto.Packet](s.orphanQueueCap),
 	}
 
 	// Initialize virtual Stream 0 for control packets
@@ -276,6 +319,8 @@ func (s *sessionStore) findOrCreate(payload []byte, uploadCompressionType uint8,
 		binary.BigEndian.Uint16(payload[2:4]),
 		binary.BigEndian.Uint16(payload[4:6]),
 		maxPacketsPerBatch,
+		maxClientUploadMTU,
+		maxClientDownloadMTU,
 	)
 	copy(record.VerifyCode[:], payload[6:10])
 	record.Cookie = s.randomCookieLocked()
@@ -506,7 +551,12 @@ func (s *sessionStore) SweepRecentlyClosedStreams(now time.Time) {
 }
 
 func (s *sessionStore) allocateSlotLocked() int {
-	if s.activeCount >= maxServerSessionSlots {
+	maxActiveSessions := s.maxActiveSessions
+	if maxActiveSessions <= 0 || maxActiveSessions > maxServerSessionSlots {
+		maxActiveSessions = maxServerSessionSlots
+	}
+
+	if s.activeCount >= uint16(maxActiveSessions) {
 		return -1
 	}
 
@@ -625,14 +675,42 @@ func nextSessionID(current uint8) uint8 {
 	return current + 1
 }
 
-func (r *sessionRecord) applyMTUFromSessionInit(uploadMTU uint16, downloadMTU uint16, maxPacketsPerBatch int) {
+func (r *sessionRecord) applyMTUFromSessionInit(
+	uploadMTU uint16,
+	downloadMTU uint16,
+	maxPacketsPerBatch int,
+	maxClientUploadMTU int,
+	maxClientDownloadMTU int,
+) {
 	if r == nil {
 		return
 	}
-	r.UploadMTU = clampMTU(uploadMTU)
-	r.DownloadMTU = clampMTU(downloadMTU)
+
+	effectiveUploadMax := clampSessionInitAllowedMTU(maxClientUploadMTU)
+	effectiveDownloadMax := clampSessionInitAllowedMTU(maxClientDownloadMTU)
+
+	r.UploadMTU = clampMTUToLimit(uploadMTU, effectiveUploadMax)
+	r.DownloadMTU = clampMTUToLimit(downloadMTU, effectiveDownloadMax)
 	r.DownloadMTUBytes = int(r.DownloadMTU)
 	r.MaxPackedBlocks = VpnProto.CalculateMaxPackedBlocks(r.DownloadMTUBytes, 80, maxPacketsPerBatch)
+}
+
+func clampMTUToLimit(value uint16, maxAllowed uint16) uint16 {
+	clamped := clampMTU(value)
+	if clamped > maxAllowed {
+		return maxAllowed
+	}
+	return clamped
+}
+
+func clampSessionInitAllowedMTU(value int) uint16 {
+	if value < minSessionMTU {
+		return minSessionMTU
+	}
+	if value > maxSessionMTU {
+		return maxSessionMTU
+	}
+	return uint16(value)
 }
 
 func (r *sessionRecord) runtimeView() sessionRuntimeView {
@@ -681,6 +759,7 @@ func (r *sessionRecord) getOrCreateStream(streamID uint16, arqConfig arq.Config,
 	if r == nil || r.isClosed() {
 		return nil
 	}
+
 	r.StreamsMu.Lock()
 	defer r.StreamsMu.Unlock()
 	if r.isClosed() {
@@ -689,6 +768,10 @@ func (r *sessionRecord) getOrCreateStream(streamID uint16, arqConfig arq.Config,
 
 	if s, ok := r.Streams[streamID]; ok {
 		return s
+	}
+
+	if !r.canCreateAdditionalStreamLocked(streamID) {
+		return nil
 	}
 
 	delete(r.RecentlyClosed, streamID)
@@ -719,6 +802,37 @@ func (r *sessionRecord) getOrCreateStream(streamID uint16, arqConfig arq.Config,
 	}
 
 	return s
+}
+
+func (r *sessionRecord) canCreateAdditionalStream(streamID uint16) bool {
+	if r == nil || r.isClosed() {
+		return false
+	}
+
+	r.StreamsMu.RLock()
+	defer r.StreamsMu.RUnlock()
+	return r.canCreateAdditionalStreamLocked(streamID)
+}
+
+func (r *sessionRecord) canCreateAdditionalStreamLocked(streamID uint16) bool {
+	if streamID == 0 {
+		return true
+	}
+	if _, exists := r.Streams[streamID]; exists {
+		return true
+	}
+
+	limit := r.MaxActiveStreamsPerSession
+	if limit <= 0 {
+		limit = 2000
+	}
+
+	activeStreams := len(r.Streams)
+	if _, exists := r.Streams[0]; exists {
+		activeStreams--
+	}
+
+	return activeStreams < limit
 }
 
 func shouldSuppressServerOrphanForCloseReason(reason string) bool {
@@ -758,21 +872,10 @@ func (r *sessionRecord) noteStreamClosed(streamID uint16, now time.Time, suppres
 		ClosedAt:       now,
 		SuppressOrphan: suppressOrphan,
 	}
+	heap.Push(&r.RecentlyClosedHeap, recentlyClosedEntry{streamID: streamID, closedAt: now})
 
 	// Cap the map size
-	if len(r.RecentlyClosed) > r.closedStreamRecordCap() {
-		var oldestID uint16
-		var oldestAt time.Time
-		first := true
-		for id, record := range r.RecentlyClosed {
-			if first || record.ClosedAt.Before(oldestAt) {
-				oldestID = id
-				oldestAt = record.ClosedAt
-				first = false
-			}
-		}
-		delete(r.RecentlyClosed, oldestID)
-	}
+	r.evictOldestRecentlyClosedLocked()
 }
 
 func (r *sessionRecord) pruneRecentlyClosed(now time.Time) {
@@ -789,10 +892,33 @@ func (r *sessionRecord) pruneRecentlyClosedLocked(now time.Time) {
 		return
 	}
 	expiredBefore := now.Add(-r.closedStreamRecordTTL())
-	for id, record := range r.RecentlyClosed {
-		if record.ClosedAt.Before(expiredBefore) {
-			delete(r.RecentlyClosed, id)
+	for len(r.RecentlyClosedHeap) > 0 {
+		entry := r.RecentlyClosedHeap[0]
+		record, ok := r.RecentlyClosed[entry.streamID]
+		if !ok || !record.ClosedAt.Equal(entry.closedAt) {
+			heap.Pop(&r.RecentlyClosedHeap)
+			continue
 		}
+
+		if record.ClosedAt.Before(expiredBefore) {
+			delete(r.RecentlyClosed, entry.streamID)
+			heap.Pop(&r.RecentlyClosedHeap)
+			continue
+		}
+		break
+	}
+}
+
+func (r *sessionRecord) evictOldestRecentlyClosedLocked() {
+	capacity := r.closedStreamRecordCap()
+	for len(r.RecentlyClosed) > capacity && len(r.RecentlyClosedHeap) > 0 {
+		entry := heap.Pop(&r.RecentlyClosedHeap).(recentlyClosedEntry)
+		record, ok := r.RecentlyClosed[entry.streamID]
+		if !ok || !record.ClosedAt.Equal(entry.closedAt) {
+			continue
+		}
+
+		delete(r.RecentlyClosed, entry.streamID)
 	}
 }
 
