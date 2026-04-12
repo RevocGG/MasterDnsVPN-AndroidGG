@@ -372,7 +372,13 @@ func proxyDNSDirect(ctx context.Context, src net.Conn, dstAddr string) {
 		if isHit {
 			bridgeLog("DNS cache hit for %s", dstAddr)
 		} else {
-			bridgeLog("DNS dispatched to tunnel for %s", dstAddr)
+			// Cache miss: ProcessDNSQuery dispatched the query to the tunnel but
+			// does NOT store or invoke the respond callback asynchronously.
+			// Return here so the gVisor UDP endpoint is closed (via defer
+			// conn.Close() in the caller), causing the DNS client to retry.
+			// The second attempt will find the response in cache and succeed.
+			bridgeLog("DNS cache miss for %s — closing endpoint to trigger retry", dstAddr)
+			return
 		}
 	}
 }

@@ -606,7 +606,9 @@ func (c *Client) handleSocksUDPAssociate(ctx context.Context, conn net.Conn, cli
 	defer udpConn.Close()
 
 	boundAddr := udpConn.LocalAddr().(*net.UDPAddr)
-	err = c.sendSocksReply(conn, SOCKS5_REPLY_SUCCESS, replyATYP, boundAddr.IP, uint16(boundAddr.Port))
+	// Use replyIP (the actual server address) not boundAddr.IP (which is 0.0.0.0)
+	// so that external SOCKS5 clients can reach the relay socket.
+	err = c.sendSocksReply(conn, SOCKS5_REPLY_SUCCESS, replyATYP, replyIP, uint16(boundAddr.Port))
 	if err != nil {
 		return
 	}
