@@ -109,8 +109,9 @@ SaveMTUServersToFile      bool
 MTUServersFileName        string
 MTUServersFileFormat      string
 MTUUsingSeparatorText     string
-MTURemovedServerLogFormat string
-MTUAddedServerLogFormat   string
+MTURemovedServerLogFormat        string
+MTUAddedServerLogFormat          string
+MTUReactiveAddedServerLogFormat  string
 // Misc
 LogLevel           string
 MaxPacketsPerBatch int
@@ -398,8 +399,9 @@ SaveMTUServersToFile:      c.SaveMTUServersToFile,
 MTUServersFileName:        c.MTUServersFileName,
 MTUServersFileFormat:      c.MTUServersFileFormat,
 MTUUsingSeparatorText:     c.MTUUsingSeparatorText,
-MTURemovedServerLogFormat: c.MTURemovedServerLogFormat,
-MTUAddedServerLogFormat:   c.MTUAddedServerLogFormat,
+MTURemovedServerLogFormat:        c.MTURemovedServerLogFormat,
+MTUAddedServerLogFormat:          c.MTUAddedServerLogFormat,
+MTUReactiveAddedServerLogFormat:  c.MTUReactiveAddedServerLogFormat,
 LogLevel:           c.LogLevel,
 MaxPacketsPerBatch: c.MaxPacketsPerBatch,
 ARQWindowSize:               c.ARQWindowSize,
@@ -493,8 +495,9 @@ c.SaveMTUServersToFile      = d.SaveMTUServersToFile
 c.MTUServersFileName        = d.MTUServersFileName
 c.MTUServersFileFormat      = d.MTUServersFileFormat
 c.MTUUsingSeparatorText     = d.MTUUsingSeparatorText
-c.MTURemovedServerLogFormat = d.MTURemovedServerLogFormat
-c.MTUAddedServerLogFormat   = d.MTUAddedServerLogFormat
+c.MTURemovedServerLogFormat        = d.MTURemovedServerLogFormat
+c.MTUAddedServerLogFormat          = d.MTUAddedServerLogFormat
+c.MTUReactiveAddedServerLogFormat  = d.MTUReactiveAddedServerLogFormat
 c.LogLevel           = d.LogLevel
 c.MaxPacketsPerBatch = d.MaxPacketsPerBatch
 c.ARQWindowSize               = d.ARQWindowSize

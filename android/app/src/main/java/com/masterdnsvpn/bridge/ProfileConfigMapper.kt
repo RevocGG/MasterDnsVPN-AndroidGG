@@ -117,6 +117,7 @@ object ProfileConfigMapper {
         c.setMTUUsingSeparatorText(p.mtuUsingSeparatorText)
         c.setMTURemovedServerLogFormat(p.mtuRemovedServerLogFormat)
         c.setMTUAddedServerLogFormat(p.mtuAddedServerLogFormat)
+        c.setMTUReactiveAddedServerLogFormat(p.mtuReactiveAddedServerLogFormat)
 
         // Section 12: Logging
         c.logLevel = p.logLevel

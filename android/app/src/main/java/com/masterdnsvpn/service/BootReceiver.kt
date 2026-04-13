@@ -49,6 +49,11 @@ class BootReceiver : BroadcastReceiver() {
 
             when (mode) {
                 "TUN" -> {
+                    // VpnService.prepare() returns null only if permission is already granted.
+                    // On boot there is no UI to request missing permission, so skip auto-start
+                    // silently rather than launching a service that will silently fail to
+                    // establish the TUN interface.
+                    if (android.net.VpnService.prepare(appCtx) != null) return@launch
                     val i = Intent(appCtx, DnsTunnelVpnService::class.java).apply {
                         putExtra(DnsTunnelVpnService.EXTRA_PROFILE_ID, profileId)
                         putExtra(DnsTunnelVpnService.EXTRA_PROFILE_NAME, profile.name)

@@ -199,6 +199,11 @@ val MIGRATION_10_11 = object : Migration(10, 11) {
         db.execSQL("ALTER TABLE profiles ADD COLUMN sessionInitRacingCount INTEGER NOT NULL DEFAULT 3")
     }
 }
+val MIGRATION_11_12 = object : Migration(11, 12) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE profiles ADD COLUMN mtuReactiveAddedServerLogFormat TEXT NOT NULL DEFAULT 'Resolver {IP} ({DOMAIN}) added back at {TIME} after reactive recheck (UP {UP_MTU}, DOWN {DOWN_MTU})'")
+    }
+}
 val MIGRATION_9_10 = object : Migration(9, 10) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE profiles ADD COLUMN perAppVpnMode TEXT NOT NULL DEFAULT 'ALL'")
@@ -208,7 +213,7 @@ val MIGRATION_9_10 = object : Migration(9, 10) {
 
 @Database(
     entities = [ProfileEntity::class, MetaProfileEntity::class],
-    version = 11,
+    version = 12,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {

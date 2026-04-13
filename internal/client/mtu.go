@@ -29,7 +29,8 @@ const (
 	mtuProbeCodeLength  = 4
 	mtuProbeRawResponse = 0
 	mtuProbeBase64Reply = 1
-	defaultMTUMinFloor  = 10
+	minUploadMTUFloor   = 10
+	minDownloadMTUFloor = VpnProto.SessionAcceptPayloadSize
 	defaultUploadMaxCap = 512
 )
 
@@ -375,6 +376,35 @@ func (c *Client) collectInactiveResolverHealthChecks(recheckInterval time.Durati
 	return connections
 }
 
+func (c *Client) confirmResolverDown(conn *Connection, window time.Duration) bool {
+	if c == nil || conn == nil {
+		return true
+	}
+	timeout := 2 * time.Second
+	if c.mtuTestTimeout > 0 && c.mtuTestTimeout < timeout {
+		timeout = c.mtuTestTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	transport, err := newUDPQueryTransport(conn.ResolverLabel)
+	if err != nil {
+		return true
+	}
+	defer transport.conn.Close()
+
+	for attempt := 0; attempt < 2; attempt++ {
+		if ctx.Err() != nil {
+			return true
+		}
+		passed, _, err := c.sendUploadMTUProbe(ctx, *conn, transport, c.syncedUploadMTU, timeout, mtuProbeOptions{Quiet: true, IsRetry: attempt > 0})
+		if err == nil && passed {
+			return false
+		}
+	}
+	return true
+}
+
 func (c *Client) recheckInactiveResolver(ctx context.Context, conn Connection) {
 	transport, err := newUDPQueryTransport(conn.ResolverLabel)
 	if err != nil {
@@ -494,7 +524,7 @@ func (c *Client) reactivateResolverConnection(conn Connection) bool {
 
 	conn.IsValid = true
 
-	c.appendMTUAddedServerLine(&conn)
+	c.appendMTUReactiveAddedServerLine(&conn)
 	return true
 }
 
@@ -704,13 +734,14 @@ func (c *Client) testUploadMTU(ctx context.Context, conn Connection, probeTransp
 		"upload mtu",
 		c.cfg.MinUploadMTU,
 		maxPayload,
+		minUploadMTUFloor,
 		func(candidate int, isRetry bool) (bool, time.Duration, error) {
 			return c.sendUploadMTUProbe(ctx, conn, probeTransport, candidate, c.mtuTestTimeout, mtuProbeOptions{
 				IsRetry: isRetry,
 			})
 		},
 	)
-	if best < max(defaultMTUMinFloor, c.cfg.MinUploadMTU) {
+	if best < max(minUploadMTUFloor, c.cfg.MinUploadMTU) {
 		return false, 0, 0, 0, nil
 	}
 	return true, best, c.encodedCharsForPayload(best), bestRTT, nil
@@ -725,24 +756,25 @@ func (c *Client) testDownloadMTU(ctx context.Context, conn Connection, probeTran
 		"download mtu",
 		c.cfg.MinDownloadMTU,
 		c.cfg.MaxDownloadMTU,
+		minDownloadMTUFloor,
 		func(candidate int, isRetry bool) (bool, time.Duration, error) {
 			return c.sendDownloadMTUProbe(ctx, conn, probeTransport, candidate, uploadMTU, c.mtuTestTimeout, mtuProbeOptions{
 				IsRetry: isRetry,
 			})
 		},
 	)
-	if best < max(defaultMTUMinFloor, c.cfg.MinDownloadMTU) {
+	if best < max(minDownloadMTUFloor, c.cfg.MinDownloadMTU) {
 		return false, 0, 0, nil
 	}
 	return true, best, bestRTT, nil
 }
 
-func (c *Client) binarySearchMTU(ctx context.Context, label string, minValue, maxValue int, testFn func(int, bool) (bool, time.Duration, error)) (int, time.Duration) {
+func (c *Client) binarySearchMTU(ctx context.Context, label string, minValue, maxValue int, minFloor int, testFn func(int, bool) (bool, time.Duration, error)) (int, time.Duration) {
 	if maxValue <= 0 {
 		return 0, 0
 	}
 
-	low := max(minValue, defaultMTUMinFloor)
+	low := max(minValue, minFloor)
 	high := maxValue
 	if high < low {
 		if c.log != nil && c.log.Enabled(logger.LevelDebug) {
@@ -944,7 +976,7 @@ func (c *Client) sendUploadMTUProbe(ctx context.Context, conn Connection, probeT
 }
 
 func (c *Client) sendDownloadMTUProbe(ctx context.Context, conn Connection, probeTransport *udpQueryTransport, mtuSize int, uploadMTU int, timeout time.Duration, options mtuProbeOptions) (bool, time.Duration, error) {
-	if mtuSize < defaultMTUMinFloor {
+	if mtuSize < minDownloadMTUFloor {
 		return false, 0, nil
 	}
 	if err := ctx.Err(); err != nil {
@@ -959,7 +991,7 @@ func (c *Client) sendDownloadMTUProbe(ctx context.Context, conn Connection, prob
 	)
 
 	effectiveDownloadSize := effectiveDownloadMTUProbeSize(mtuSize)
-	if effectiveDownloadSize < defaultMTUMinFloor {
+	if effectiveDownloadSize < minDownloadMTUFloor {
 		return false, 0, nil
 	}
 	requestLen := max(1+mtuProbeCodeLength+2, uploadMTU)

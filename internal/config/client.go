@@ -95,6 +95,7 @@ type ClientConfig struct {
 	MTUUsingSeparatorText                 string            `toml:"MTU_USING_SECTION_SEPARATOR_TEXT"`
 	MTURemovedServerLogFormat             string            `toml:"MTU_REMOVED_SERVER_LOG_FORMAT"`
 	MTUAddedServerLogFormat               string            `toml:"MTU_ADDED_SERVER_LOG_FORMAT"`
+	MTUReactiveAddedServerLogFormat       string            `toml:"MTU_REACTIVE_ADDED_SERVER_LOG_FORMAT"`
 	LogLevel                              string            `toml:"LOG_LEVEL"`
 	MaxPacketsPerBatch                    int               `toml:"MAX_PACKETS_PER_BATCH"`
 	ARQWindowSize                         int               `toml:"ARQ_WINDOW_SIZE"`
@@ -158,7 +159,7 @@ func defaultClientConfig() ClientConfig {
 		CompressionMinSize:                    compression.DefaultMinSize,
 		DataEncryptionMethod:                  1,
 		EncryptionKey:                         "",
-		MinUploadMTU:                          40,
+		MinUploadMTU:                          38,
 		MinDownloadMTU:                        100,
 		MaxUploadMTU:                          64,
 		MaxDownloadMTU:                        140,
@@ -193,6 +194,7 @@ func defaultClientConfig() ClientConfig {
 		MTUUsingSeparatorText:                 "",
 		MTURemovedServerLogFormat:             "Resolver {IP} ({DOMAIN}) removed at {TIME} due to {CAUSE}",
 		MTUAddedServerLogFormat:               "Resolver {IP} ({DOMAIN}) added back at {TIME} (UP {UP_MTU}, DOWN {DOWN_MTU})",
+		MTUReactiveAddedServerLogFormat:       "Resolver {IP} ({DOMAIN}) added back at {TIME} after reactive recheck (UP {UP_MTU}, DOWN {DOWN_MTU})",
 		LogLevel:                              "INFO",
 		MaxPacketsPerBatch:                    8,
 		ARQWindowSize:                         2000,
@@ -461,6 +463,7 @@ func finalizeClientConfig(cfg ClientConfig) (ClientConfig, error) {
 	cfg.MTUUsingSeparatorText = strings.TrimSpace(cfg.MTUUsingSeparatorText)
 	cfg.MTURemovedServerLogFormat = strings.TrimSpace(cfg.MTURemovedServerLogFormat)
 	cfg.MTUAddedServerLogFormat = strings.TrimSpace(cfg.MTUAddedServerLogFormat)
+	cfg.MTUReactiveAddedServerLogFormat = strings.TrimSpace(cfg.MTUReactiveAddedServerLogFormat)
 
 	cfg.EncryptionKey = strings.TrimSpace(cfg.EncryptionKey)
 	if cfg.EncryptionKey == "" {

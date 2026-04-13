@@ -111,6 +111,7 @@ object TomlConfigMapper {
             mtuUsingSeparatorText = str("MTU_USING_SECTION_SEPARATOR_TEXT") ?: base.mtuUsingSeparatorText,
             mtuRemovedServerLogFormat = str("MTU_REMOVED_SERVER_LOG_FORMAT") ?: base.mtuRemovedServerLogFormat,
             mtuAddedServerLogFormat = str("MTU_ADDED_SERVER_LOG_FORMAT") ?: base.mtuAddedServerLogFormat,
+            mtuReactiveAddedServerLogFormat = str("MTU_REACTIVE_ADDED_SERVER_LOG_FORMAT") ?: base.mtuReactiveAddedServerLogFormat,
             // Section 7 Workers
             rxTxWorkers = int("RX_TX_WORKERS") ?: maxOf(int("TUNNEL_READER_WORKERS") ?: 0, int("TUNNEL_WRITER_WORKERS") ?: 0).takeIf { it > 0 } ?: base.rxTxWorkers,
             tunnelProcessWorkers = int("TUNNEL_PROCESS_WORKERS") ?: base.tunnelProcessWorkers,
@@ -312,6 +313,7 @@ object TomlConfigMapper {
             appendLine("MTU_USING_SECTION_SEPARATOR_TEXT = ${q(p.mtuUsingSeparatorText)}")
             appendLine("MTU_REMOVED_SERVER_LOG_FORMAT = ${q(p.mtuRemovedServerLogFormat)}")
             appendLine("MTU_ADDED_SERVER_LOG_FORMAT = ${q(p.mtuAddedServerLogFormat)}")
+            appendLine("MTU_REACTIVE_ADDED_SERVER_LOG_FORMAT = ${q(p.mtuReactiveAddedServerLogFormat)}")
             appendLine()
             appendLine("# ------------------------------------------------------------------------------")
             appendLine("# 7) Runtime Workers, Queues, and Timers")

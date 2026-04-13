@@ -82,6 +82,7 @@ MTUServersFileFormat  string
 MTUUsingSeparatorText string
 MTURemovedServerLogFormat string
 MTUAddedServerLogFormat   string
+MTUReactiveAddedServerLogFormat string
 LogLevel string
 MaxPacketsPerBatch            int
 ARQWindowSize                 int
@@ -116,7 +117,7 @@ RecheckServerIntervalSeconds: 3.0, RecheckBatchSize: 5,
 AutoDisableTimeoutServers: true, AutoDisableTimeoutWindowSeconds: 180.0,
 AutoDisableMinObservations: 6, AutoDisableCheckIntervalSeconds: 3.0,
 BaseEncodeData: false, UploadCompressionType: 0, DownloadCompressionType: 0, CompressionMinSize: 100,
-MinUploadMTU: 40, MinDownloadMTU: 100, MaxUploadMTU: 64, MaxDownloadMTU: 140,
+MinUploadMTU: 38, MinDownloadMTU: 100, MaxUploadMTU: 64, MaxDownloadMTU: 140,
 MTUTestRetries: 2, MTUTestTimeout: 4.0, MTUTestParallelism: 16,
 RxTxWorkers: 6, TunnelProcessWorkers: 4,
 TunnelPacketTimeoutSec: 8.0, DispatcherIdlePollIntervalSeconds: 0.020,
@@ -137,6 +138,7 @@ MTUServersFileName: "masterdnsvpn_success_{time}.log",
 MTUServersFileFormat: "{IP} ({DOMAIN}) - UP: {UP_MTU} DOWN: {DOWN-MTU}", MTUUsingSeparatorText: "",
 MTURemovedServerLogFormat: "Resolver {IP} ({DOMAIN}) removed at {TIME} due to {CAUSE}",
 MTUAddedServerLogFormat: "Resolver {IP} ({DOMAIN}) added back at {TIME} (UP {UP_MTU}, DOWN {DOWN_MTU})",
+MTUReactiveAddedServerLogFormat: "Resolver {IP} ({DOMAIN}) added back at {TIME} after reactive recheck (UP {UP_MTU}, DOWN {DOWN_MTU})",
 LogLevel: "INFO", MaxPacketsPerBatch: 8,
 ARQWindowSize: 2000, ARQInitialRTOSeconds: 1.0, ARQMaxRTOSeconds: 8.0,
 ARQControlInitialRTOSeconds: 1.0, ARQControlMaxRTOSeconds: 8.0,
@@ -215,6 +217,7 @@ tpl := "DOMAINS = %s\nDATA_ENCRYPTION_METHOD = %d\nENCRYPTION_KEY = %q\n" +
 "SESSION_INIT_RACING_COUNT = %d\n" +
 "SAVE_MTU_SERVERS_TO_FILE = %t\nMTU_SERVERS_FILE_NAME = %q\nMTU_SERVERS_FILE_FORMAT = %q\n" +
 "MTU_USING_SECTION_SEPARATOR_TEXT = %q\nMTU_REMOVED_SERVER_LOG_FORMAT = %q\nMTU_ADDED_SERVER_LOG_FORMAT = %q\n" +
+"MTU_REACTIVE_ADDED_SERVER_LOG_FORMAT = %q\n" +
 "LOG_LEVEL = %q\n" +
 "MAX_PACKETS_PER_BATCH = %d\nARQ_WINDOW_SIZE = %d\n" +
 "ARQ_INITIAL_RTO_SECONDS = %g\nARQ_MAX_RTO_SECONDS = %g\n" +
@@ -252,6 +255,7 @@ cfg.SessionInitRetryLinearAfter, cfg.SessionInitRetryMaxSeconds, cfg.SessionInit
 cfg.SessionInitRacingCount,
 cfg.SaveMTUServersToFile, cfg.MTUServersFileName, cfg.MTUServersFileFormat,
 cfg.MTUUsingSeparatorText, cfg.MTURemovedServerLogFormat, cfg.MTUAddedServerLogFormat,
+cfg.MTUReactiveAddedServerLogFormat,
 cfg.LogLevel, cfg.MaxPacketsPerBatch, cfg.ARQWindowSize,
 cfg.ARQInitialRTOSeconds, cfg.ARQMaxRTOSeconds, cfg.ARQControlInitialRTOSeconds, cfg.ARQControlMaxRTOSeconds,
 cfg.ARQMaxControlRetries, cfg.ARQInactivityTimeoutSeconds,

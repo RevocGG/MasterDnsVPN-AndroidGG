@@ -26,7 +26,7 @@ android {
         buildConfigField(
             "String",
             "UPSTREAM_VERSION",
-            "\"${project.findProperty("upstreamVersion") as? String ?: "v2026.04.11.044523-0639f8b"}\""
+            "\"${project.findProperty("upstreamVersion") as? String ?: "v2026.04.12.234117-978faee"}\""
         )
 
         // Include all ABIs in universal APK

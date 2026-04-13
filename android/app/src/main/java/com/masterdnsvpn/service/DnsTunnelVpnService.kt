@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
@@ -70,8 +71,16 @@ class DnsTunnelVpnService : VpnService() {
     private val connectivityManager by lazy { getSystemService(ConnectivityManager::class.java) }
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
+            // Ignore the VPN network itself — when our own VPN establishes, Android
+            // fires onAvailable for the VPN network asynchronously, potentially AFTER
+            // the bridge is already running.  Bouncing on our own VPN would kill the
+            // bridge immediately and cause it to never stay connected.
+            val caps = connectivityManager.getNetworkCapabilities(network)
+            // null caps = network info temporarily unavailable (transitioning state) — unsafe to bounce.
+            // VPN transport = our own VPN network — must never bounce on self.
+            if (caps == null || caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return
             if (!intentionalStop && bridge.isTunBridgeRunning()) {
-                logManager.appendSystem(LogLevel.INFO, "Network changed — bouncing TUN bridge for new interface")
+                logManager.appendSystem(LogLevel.INFO, "Underlying network changed — bouncing TUN bridge for new interface")
                 scope.launch { bridge.stopTunBridge() }
             }
         }
@@ -131,7 +140,7 @@ class DnsTunnelVpnService : VpnService() {
                 }
 
                 // Use first profile for TUN interface settings
-                val primary = profiles.first()
+                val primary = normalizeProfileForTun(profiles.first())
                 val tunFd = buildTunInterface(primary) ?: run {
                     tunnelStateManager.onMetaStopped(metaId)
                     stopSelf()
@@ -141,7 +150,8 @@ class DnsTunnelVpnService : VpnService() {
 
                 // Start ALL sub-profile Go instances
                 val upstreamAddrs = mutableListOf<String>()
-                for (p in profiles) {
+                for (rawP in profiles) {
+                    val p = normalizeProfileForTun(rawP)
                     try {
                         val dir = "${filesDir.absolutePath}/profiles/${p.id}"
                         java.io.File(dir).mkdirs()
@@ -196,23 +206,41 @@ class DnsTunnelVpnService : VpnService() {
 
                 // Attach TUN bridge to the balancer (or single upstream) with auto-reconnect.
                 if (!isActive) return@launch  // Service was stopped while starting sub-profiles
-                var bridgeAttempt = 0
+                var bridgeErrorAttempt = 0
+                var bridgeStarted = false
+                // Limit retries so a permanent failure (bad fd, revoked permission, bad config)
+                // doesn't keep the service spinning indefinitely draining battery.
+                val maxBridgeAttempts = 20
                 while (isActive && !intentionalStop) {
-                    bridgeAttempt++
+                    var cleanExit = false
                     try {
-                        if (bridgeAttempt == 1) {
+                        if (!bridgeStarted) {
                             logManager.append(LogEntry(level = LogLevel.INFO, timestamp = "system", message = "TUN bridge started → $balancerAddr (meta, ${profiles.size} profiles)"))
+                            bridgeStarted = true
                         }
                         bridge.startTunBridge(tunFd.fd, TUN_INTERFACE_MTU, balancerAddr)
+                        // No exception = context.Canceled = clean stop (network bounce or explicit stop)
+                        cleanExit = true
                     } catch (e: kotlinx.coroutines.CancellationException) {
                         throw e
                     } catch (e: Exception) {
                         logManager.appendSystem(LogLevel.ERROR, "TUN bridge error: ${e.message}")
                     }
                     if (intentionalStop || !isActive) break
-                    // Unexpected exit — back-off and retry
-                    val backoff = (2000L * bridgeAttempt).coerceAtMost(15_000L)
-                    logManager.appendSystem(LogLevel.WARN, "TUN bridge (meta) exited — retry #$bridgeAttempt in ${backoff}ms")
+                    if (cleanExit) {
+                        // Network bounce: bridge was stopped intentionally by networkCallback.
+                        // Restart immediately — no delay, no error counter.
+                        bridgeErrorAttempt = 0
+                        continue
+                    }
+                    bridgeErrorAttempt++
+                    if (bridgeErrorAttempt >= maxBridgeAttempts) {
+                        logManager.appendSystem(LogLevel.ERROR, "TUN bridge (meta) gave up after $maxBridgeAttempts errors")
+                        break
+                    }
+                    // Unexpected error exit — back-off and retry
+                    val backoff = (2000L * bridgeErrorAttempt).coerceAtMost(15_000L)
+                    logManager.appendSystem(LogLevel.WARN, "TUN bridge (meta) error — retry #$bridgeErrorAttempt in ${backoff}ms")
                     delay(backoff)
                 }
                 if (!intentionalStop) {
@@ -227,11 +255,12 @@ class DnsTunnelVpnService : VpnService() {
 
             scope.launch {
                 try {
-                    val profile = repo.getProfileForTunnel(singleProfileId) ?: run {
+                    val rawProfile = repo.getProfileForTunnel(singleProfileId) ?: run {
                         tunnelStateManager.onTunnelStopped(singleProfileId)
                         stopSelf()
                         return@launch
                     }
+                    val profile = normalizeProfileForTun(rawProfile)
 
                     val tunFd = buildTunInterface(profile) ?: run {
                         tunnelStateManager.onTunnelStopped(singleProfileId)
@@ -273,19 +302,35 @@ class DnsTunnelVpnService : VpnService() {
                     }
                     logManager.appendSystem(LogLevel.INFO, "TUN bridge started → $socksAddr")
                     // Auto-reconnect loop: restart bridge after unexpected exits.
-                    var bridgeAttempt = 0
+                    var bridgeErrorAttempt = 0
+                    // Limit retries so a permanent failure (bad fd, revoked permission, bad config)
+                    // doesn't keep the service spinning indefinitely draining battery.
+                    val maxBridgeAttempts = 20
                     while (isActive && !intentionalStop) {
-                        bridgeAttempt++
+                        var cleanExit = false
                         try {
                             bridge.startTunBridge(tunFd.fd, TUN_INTERFACE_MTU, socksAddr)
+                            // No exception = context.Canceled = clean stop (network bounce or explicit stop)
+                            cleanExit = true
                         } catch (e: kotlinx.coroutines.CancellationException) {
                             throw e
                         } catch (e: Exception) {
                             logManager.appendSystem(LogLevel.ERROR, "TUN bridge error: ${e.message}")
                         }
                         if (intentionalStop || !isActive) break
-                        val backoff = (2000L * bridgeAttempt).coerceAtMost(15_000L)
-                        logManager.appendSystem(LogLevel.WARN, "TUN bridge exited — retry #$bridgeAttempt in ${backoff}ms")
+                        if (cleanExit) {
+                            // Network bounce: bridge was stopped intentionally by networkCallback.
+                            // Restart immediately — no delay, no error counter.
+                            bridgeErrorAttempt = 0
+                            continue
+                        }
+                        bridgeErrorAttempt++
+                        if (bridgeErrorAttempt >= maxBridgeAttempts) {
+                            logManager.appendSystem(LogLevel.ERROR, "TUN bridge gave up after $maxBridgeAttempts errors")
+                            break
+                        }
+                        val backoff = (2000L * bridgeErrorAttempt).coerceAtMost(15_000L)
+                        logManager.appendSystem(LogLevel.WARN, "TUN bridge error — retry #$bridgeErrorAttempt in ${backoff}ms")
                         delay(backoff)
                     }
                     if (!intentionalStop) {
@@ -408,8 +453,16 @@ class DnsTunnelVpnService : VpnService() {
 
     private fun buildTunInterface(profile: ProfileEntity): ParcelFileDescriptor? {
         return try {
-            val dnsServer = if (profile.localDnsEnabled && profile.localDnsIP.isNotBlank())
-                profile.localDnsIP else "8.8.8.8"
+            // In TUN mode, gVisor (via proxyDNSDirect) intercepts ALL UDP port-53 packets
+            // regardless of the DNS server advertised to Android here.
+            // Android's addDnsServer() rejects loopback addresses (127.x.x.x / ::1) with
+            // IllegalArgumentException — so we must never pass localDnsIP directly.
+            // Instead we advertise the TUN interface's own address (10.89.0.1) when local
+            // DNS is enabled: packets destined to it will arrive at the gVisor NIC and be
+            // handled by the DNS forwarder.  When local DNS is disabled we fall back to
+            // 8.8.8.8 as a plausible value (gVisor intercepts the packet before it leaves
+            // the device anyway, so the actual value only affects Android's resolver hint).
+            val dnsServer = if (profile.localDnsEnabled) "10.89.0.1" else "8.8.8.8"
 
             val builder = Builder()
                 .setSession("MasterDnsVPN")
@@ -418,8 +471,13 @@ class DnsTunnelVpnService : VpnService() {
                 .addDnsServer(dnsServer)
                 .setMtu(TUN_INTERFACE_MTU)
                 .addRoute("0.0.0.0", 0)
-                .addRoute("::", 0)
                 .setBlocking(true)  // gVisor fdbased requires blocking fd
+
+            // IPv6 default route — some OEM ROMs throw IllegalArgumentException when
+            // adding a ::/0 route on devices where IPv6 is not configured at the kernel
+            // level.  We add it best-effort; gVisor will still handle any IPv6 packets
+            // that the kernel does deliver if the route is absent.
+            try { builder.addRoute("::", 0) } catch (_: Exception) {}
 
             // Per-app VPN filtering — reads from the profile's own settings so each
             // profile can have an independent filter.
@@ -462,7 +520,21 @@ class DnsTunnelVpnService : VpnService() {
 
             builder.establish()
         } catch (e: Exception) {
+            logManager.appendSystem(LogLevel.ERROR, "TUN interface setup failed: ${e.javaClass.simpleName}: ${e.message}")
             null
         }
+    }
+
+    /**
+     * In TUN mode, gVisor intercepts UDP port 53 at the virtual NIC level.
+     * The Go engine's DNS listener port is irrelevant for this path, but the engine
+     * still tries to bind to it — port 53 requires root on Android and will fail.
+     * Silently remap to 5353 at runtime without persisting the change to the database.
+     */
+    private fun normalizeProfileForTun(profile: ProfileEntity): ProfileEntity {
+        return if (profile.localDnsEnabled && profile.localDnsPort == 53)
+            profile.copy(localDnsPort = 5353)
+        else
+            profile
     }
 }

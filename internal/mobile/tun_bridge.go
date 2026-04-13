@@ -332,12 +332,6 @@ func proxyTCPDirect(ctx context.Context, src net.Conn, dstAddr string, socksAddr
 // is dispatched to the DNS tunnel and the function returns — the browser's
 // resolver will retry after its timeout and the second attempt hits cache.
 func proxyDNSDirect(ctx context.Context, src net.Conn, dstAddr string) {
-	cl := getAnyClient()
-	if cl == nil {
-		bridgeErr("DNS no engine client available for %s", dstAddr)
-		return
-	}
-
 	buf := make([]byte, 4096)
 	for {
 		if ctx.Err() != nil {
@@ -362,17 +356,79 @@ func proxyDNSDirect(ctx context.Context, src net.Conn, dstAddr string) {
 		query := make([]byte, n)
 		copy(query, buf[:n])
 
-		isHit := cl.ProcessDNSQuery(query, nil, func(resp []byte) {
+		// Resolve the engine client on every packet so we handle the case
+		// where the instance starts up after this goroutine is already running.
+		// Calling getAnyClient() once at goroutine start (outside the loop)
+		// means a nil return permanently closes the UDP session — all
+		// subsequent DNS queries from the same browser socket get no response.
+		cl := getAnyClient()
+		if cl == nil {
+			// Engine not ready yet — drop this packet, browser will retry.
+			tunBytesUp.Add(int64(n))
+			continue
+		}
+
+		// Drop queries when the tunnel session is not yet established.
+		// ProcessDNSQuery would dispatch to the tunnel only when SessionReady=true.
+		// If we call it while SessionReady=false, it creates a StatusPending cache
+		// entry and then silently skips dispatch.  The cache entry then blocks any
+		// re-dispatch for the full pendingTimeout window (default 300 s), meaning
+		// the poll loop below (30 s) can NEVER succeed — DNS always times out.
+		// DNS clients retry every 1–2 s automatically; by the second or third
+		// retry the session is ready and the query dispatches normally.
+		if !cl.SessionReady() {
+			tunBytesUp.Add(int64(n))
+			bridgeLog("DNS drop (session not ready) for %s — client will retry", dstAddr)
+			continue
+		}
+
+		// shared write-once flag + callback — no mutex needed: everything runs
+		// in this single goroutine (ProcessDNSQuery calls the callback synchronously).
+		var responseWritten bool
+		writeResp := func(resp []byte) {
 			_, _ = src.Write(resp)
 			tunBytesDown.Add(int64(len(resp)))
-		})
+			responseWritten = true
+		}
 
+		isHit := cl.ProcessDNSQuery(query, nil, writeResp)
 		tunBytesUp.Add(int64(n))
 
 		if isHit {
 			bridgeLog("DNS cache hit for %s", dstAddr)
 		} else {
-			bridgeLog("DNS dispatched to tunnel for %s", dstAddr)
+			// Cache miss: query dispatched to the tunnel (fire-and-forget).
+			// Poll ProcessDNSQuery every 20 ms until HandleDNSQueryRes fills the
+			// cache entry (StatusReady), at which point the call hits the cache and
+			// invokes writeResp.  Calls while StatusPending do NOT re-dispatch
+			// (guarded by pendingTimeout in the cache), so each tick is just a cheap
+			// read-locked cache lookup.
+			// Use a Ticker (created once) instead of time.After (creates a new
+			// timer object on every iteration — ~1500 per query miss).
+			deadline := time.Now().Add(30 * time.Second)
+			pollTicker := time.NewTicker(20 * time.Millisecond)
+		pollLoop:
+			for !responseWritten {
+				select {
+				case <-ctx.Done():
+					break pollLoop
+				case <-pollTicker.C:
+					if time.Now().After(deadline) {
+						break pollLoop
+					}
+					// Re-fetch client on each tick in case the instance restarted.
+					// Also guard against a client that lost its session mid-poll.
+					if cl = getAnyClient(); cl != nil && cl.SessionReady() {
+						_ = cl.ProcessDNSQuery(query, nil, writeResp)
+					}
+				}
+			}
+			pollTicker.Stop()
+			if responseWritten {
+				bridgeLog("DNS tunnel response for %s", dstAddr)
+			} else {
+				bridgeLog("DNS timeout (no tunnel response) for %s", dstAddr)
+			}
 		}
 	}
 }

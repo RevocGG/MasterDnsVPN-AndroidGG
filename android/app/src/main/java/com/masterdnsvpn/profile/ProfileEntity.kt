@@ -77,13 +77,13 @@ data class ProfileEntity(
     val compressionMinSize: Int = 120,
 
     // Section 7: MTU
-    val minUploadMTU: Int = 40,
+    val minUploadMTU: Int = 38,
     val minDownloadMTU: Int = 100,
     val maxUploadMTU: Int = 150,
     val maxDownloadMTU: Int = 500,
     val mtuTestRetries: Int = 2,
     val mtuTestTimeout: Double = 2.0,
-    val mtuTestParallelism: Int = 32,
+    val mtuTestParallelism: Int = 16,
 
     // Section 8: Workers & Timeouts
     val rxTxWorkers: Int = 4,
@@ -125,6 +125,7 @@ data class ProfileEntity(
     val mtuUsingSeparatorText: String = "",
     val mtuRemovedServerLogFormat: String = "Resolver {IP} ({DOMAIN}) removed at {TIME} due to {CAUSE}",
     val mtuAddedServerLogFormat: String = "Resolver {IP} ({DOMAIN}) added back at {TIME} (UP {UP_MTU}, DOWN {DOWN_MTU})",
+    val mtuReactiveAddedServerLogFormat: String = "Resolver {IP} ({DOMAIN}) added back at {TIME} after reactive recheck (UP {UP_MTU}, DOWN {DOWN_MTU})",
 
     // Section 12: Logging
     val logLevel: String = "INFO",

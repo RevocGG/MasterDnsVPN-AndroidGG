@@ -383,3 +383,10 @@ func (c *Client) appendMTUAddedServerLine(conn *Connection) {
 	}
 	c.appendMTULogLine(c.mtuAddedServerLogFormat, conn, "")
 }
+
+func (c *Client) appendMTUReactiveAddedServerLine(conn *Connection) {
+	if c == nil || c.mtuReactiveAddedServerLogFormat == "" {
+		return
+	}
+	c.appendMTULogLine(c.mtuReactiveAddedServerLogFormat, conn, "")
+}

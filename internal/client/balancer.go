@@ -103,6 +103,7 @@ type Balancer struct {
 
 	autoDisableEnabled       bool
 	autoDisableTimeoutWindow time.Duration
+	confirmResolverDown     func(*Connection, time.Duration) bool
 }
 
 type connectionStats struct {
@@ -159,6 +160,15 @@ func (b *Balancer) SetAutoDisableConfig(enabled bool, window time.Duration) {
 	b.mu.Lock()
 	b.autoDisableEnabled = enabled
 	b.autoDisableTimeoutWindow = window
+	b.mu.Unlock()
+}
+
+func (b *Balancer) SetResolverDownConfirmHandler(fn func(*Connection, time.Duration) bool) {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	b.confirmResolverDown = fn
 	b.mu.Unlock()
 }
 
@@ -350,15 +360,16 @@ func (b *Balancer) ReportTimeout(serverKey string, now time.Time, window time.Du
 	totalTimedOut, totalSent := stats.recordWindowTimeout(now, window)
 
 	b.mu.Lock()
-	defer b.mu.Unlock()
 
 	conn, ok := b.connectionByKeyLocked(serverKey)
 	if !ok || !conn.IsValid {
+		b.mu.Unlock()
 		return false
 	}
 
-	minObservations := autoDisableMinObservationsForActiveCount(len(b.activeIDs))
+	minObservations := autoDisableMinObservationsForActiveCount(len(b.activeIDs), window)
 	if int(totalSent) < minObservations || totalTimedOut != totalSent {
+		b.mu.Unlock()
 		return false
 	}
 
@@ -371,6 +382,23 @@ func (b *Balancer) ReportTimeout(serverKey string, now time.Time, window time.Du
 	}
 
 	if len(b.activeIDs) <= minActive {
+		b.mu.Unlock()
+		return false
+	}
+
+	confirmFn := b.confirmResolverDown
+	connCopy := *conn
+	b.mu.Unlock()
+
+	if confirmFn != nil && !confirmFn(&connCopy, window) {
+		return false
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	conn, ok = b.connectionByKeyLocked(serverKey)
+	if !ok || !conn.IsValid {
 		return false
 	}
 
@@ -390,35 +418,53 @@ func (b *Balancer) ReportTimeout(serverKey string, now time.Time, window time.Du
 	return true
 }
 
-func autoDisableMinObservationsForActiveCount(active int) int {
+func autoDisableMinObservationsForActiveCount(active int, window time.Duration) int {
+	var base int
 	switch {
 	case active <= 3:
-		return 1000000
+		base = 1000000
 	case active <= 5:
-		return 48
+		base = 48
 	case active <= 8:
-		return 40
+		base = 40
 	case active <= 10:
-		return 34
+		base = 34
 	case active <= 15:
-		return 26
+		base = 26
 	case active <= 20:
-		return 22
+		base = 22
 	case active <= 30:
-		return 18
+		base = 18
 	case active <= 40:
-		return 15
+		base = 15
 	case active <= 50:
-		return 13
+		base = 13
 	case active <= 75:
-		return 10
+		base = 10
 	case active <= 100:
-		return 8
+		base = 8
 	case active <= 150:
-		return 7
+		base = 7
 	default:
-		return 6
+		base = 6
 	}
+	return scaleAutoDisableMinObservations(base, window)
+}
+
+func scaleAutoDisableMinObservations(base int, window time.Duration) int {
+	const referenceWindow = 180 * time.Second
+	if window <= referenceWindow || base <= 0 {
+		return base
+	}
+	ratio := float64(window) / float64(referenceWindow)
+	if ratio > 4.0 {
+		ratio = 4.0
+	}
+	scaled := int(float64(base) * ratio)
+	if scaled < base {
+		return base
+	}
+	return scaled
 }
 
 func autoDisableCheckIntervalForActiveCount(active int, window time.Duration) time.Duration {
@@ -429,8 +475,12 @@ func autoDisableCheckIntervalForActiveCount(active int, window time.Duration) ti
 	if interval < time.Second {
 		interval = time.Second
 	}
-	if interval > 5*time.Second {
-		interval = 5 * time.Second
+	maxInterval := 5 * time.Second
+	if window >= 60*time.Second {
+		maxInterval = 10 * time.Second
+	}
+	if interval > maxInterval {
+		interval = maxInterval
 	}
 
 	switch {

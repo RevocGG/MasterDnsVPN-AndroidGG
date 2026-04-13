@@ -85,7 +85,10 @@ class DnsTunnelProxyService : Service() {
                     val upstreamAddrs = mutableListOf<String>()
                     for (pid in metaProfileIds) {
                         if (!isActive) break
-                        val profile = repo.getProfileForTunnel(pid) ?: continue
+                        val rawProfile = repo.getProfileForTunnel(pid) ?: continue
+                        // Port 53 cannot be bound without root on Android; remap silently at runtime.
+                        val profile = if (rawProfile.localDnsEnabled && rawProfile.localDnsPort == 53)
+                            rawProfile.copy(localDnsPort = 5353) else rawProfile
                         val dir = "${filesDir.absolutePath}/profiles/${profile.id}"
                         java.io.File(dir).mkdirs()
                         try {
@@ -130,11 +133,14 @@ class DnsTunnelProxyService : Service() {
 
             scope.launch {
                 try {
-                    val profile = repo.getProfileForTunnel(singleProfileId) ?: run {
+                    val rawProfile = repo.getProfileForTunnel(singleProfileId) ?: run {
                         tunnelStateManager.onTunnelStopped(singleProfileId)
                         stopSelf()
                         return@launch
                     }
+                    // Port 53 cannot be bound without root on Android; remap silently at runtime.
+                    val profile = if (rawProfile.localDnsEnabled && rawProfile.localDnsPort == 53)
+                        rawProfile.copy(localDnsPort = 5353) else rawProfile
                     val profileDir = "${filesDir.absolutePath}/profiles/${profile.id}"
                     java.io.File(profileDir).mkdirs()
                     logManager.appendSystem(LogLevel.INFO, "Proxy service starting: ${profile.name}")

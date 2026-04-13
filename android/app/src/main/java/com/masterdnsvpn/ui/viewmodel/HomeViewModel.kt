@@ -4,6 +4,8 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.net.VpnService
+import android.os.Build
+import android.provider.Settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.masterdnsvpn.bridge.GoMobileBridge
@@ -124,16 +126,31 @@ class HomeViewModel @Inject constructor(
     }
 
     /** Returns a non-null error message if local DNS settings are incompatible with the requested mode. */
-    private fun validateLocalDns(profile: ProfileEntity, isTun: Boolean): String? {
+    private fun validateLocalDns(profile: ProfileEntity, isTun: Boolean, ctx: Context): String? {
         if (!profile.localDnsEnabled) return null
-        if (isTun) return "Local DNS is not supported in TUN mode. Disable Local DNS in profile settings or switch to SOCKS5 mode."
-        if (profile.localDnsPort == LOCAL_DNS_ROOT_PORT) return "Port 53 requires root access on Android. Change Local DNS port to 5353 in profile settings."
+
+        if (isTun) {
+            // In TUN mode, port 53 is auto-corrected to 5353 at service start — not a hard block.
+            // Check for Android Private DNS in Strict (hostname) mode: it routes all DNS over
+            // TLS to an external server, bypassing our gVisor DNS interception entirely.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val privateDnsMode = Settings.Global.getString(
+                    ctx.contentResolver, "private_dns_mode"
+                )
+                if (privateDnsMode == "hostname") {
+                    return "Android Private DNS (Strict mode) is active and will bypass Local DNS " +
+                        "in TUN mode.\n\nTo fix: go to Settings → Network & Internet → Private DNS → " +
+                        "select Off, then reconnect."
+                }
+            }
+        }
+        // Port 53 is auto-corrected to 5353 at runtime in both TUN and SOCKS5 modes.
         return null
     }
 
     private fun doConnect(ctx: Context, profile: ProfileEntity) {
         val isTun = profile.tunnelMode == "TUN"
-        val error = validateLocalDns(profile, isTun)
+        val error = validateLocalDns(profile, isTun, ctx)
         if (error != null) {
             _startError.tryEmit(error)
             return
@@ -225,7 +242,7 @@ class HomeViewModel @Inject constructor(
             val profileIds = meta.profileIds.split(",").filter { it.isNotBlank() }
             for (pid in profileIds) {
                 val sub = repo.getProfileForTunnel(pid) ?: continue
-                val error = validateLocalDns(sub, isTun)
+                val error = validateLocalDns(sub, isTun, ctx)
                 if (error != null) {
                     _startError.emit(error)
                     return@launch

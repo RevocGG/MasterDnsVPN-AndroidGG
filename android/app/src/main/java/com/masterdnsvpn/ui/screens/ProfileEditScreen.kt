@@ -454,6 +454,9 @@ fun ProfileEditScreen(
                     ProfileTextField("MTU_ADDED_SERVER_LOG_FORMAT", profile.mtuAddedServerLogFormat) {
                         vm.update { copy(mtuAddedServerLogFormat = it) }
                     }
+                    ProfileTextField("MTU_REACTIVE_ADDED_SERVER_LOG_FORMAT", profile.mtuReactiveAddedServerLogFormat) {
+                        vm.update { copy(mtuReactiveAddedServerLogFormat = it) }
+                    }
                 }
             }
 
