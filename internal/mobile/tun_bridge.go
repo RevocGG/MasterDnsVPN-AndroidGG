@@ -67,8 +67,10 @@ const (
 	// tcpDialTimeout — timeout for dialling the local SOCKS5 proxy.
 	tcpDialTimeout = 5 * time.Second
 
-	// socks5HandshakeTimeout — deadline for the entire SOCKS5 handshake.
-	socks5HandshakeTimeout = 30 * time.Second
+// socks5HandshakeTimeout — deadline for the entire SOCKS5 handshake.
+	// 10s is generous for a loopback connection; 30s would leave each stalled
+	// goroutine blocking for far too long on a busy or weak device.
+	socks5HandshakeTimeout = 10 * time.Second
 
 	// udpReadTimeout is the per-iteration deadline on the UDP relay socket
 	// (allows ctx.Done detection without blocking forever).
@@ -173,9 +175,11 @@ func runTunBridge(ctx context.Context, tunFd int, mtu int, socksAddr string) err
 		FDs:            []int{tunFd},
 		MTU:            uint32(mtu),
 		EthernetHeader: false, // TUN (raw IP), not TAP
-		GSOMaxSize:       65535,
-		GVisorGSOEnabled: true,
-		GRO:              true,
+		// GSOMaxSize, GVisorGSOEnabled and GRO are intentionally NOT set.
+		// VpnService on Android does NOT support IFF_VNET_HDR, so gVisor GSO
+		// superframes are silently dropped by the kernel — causing near-zero
+		// throughput.  RXChecksumOffload is safe because gVisor validates
+		// checksums internally before passing to the stack regardless.
 		RXChecksumOffload: true,
 	})
 	if err != nil {
@@ -222,13 +226,20 @@ func runTunBridge(ctx context.Context, tunFd int, mtu int, socksAddr string) err
 		conn := gonet.NewTCPConn(&wq, ep)
 
 		// Backpressure: wait up to 2s for a slot. Log if dropping.
+		// Use NewTimer (not time.After) so the timer is stopped immediately
+		// when a slot is available or ctx is cancelled — time.After leaves
+		// the underlying timer live for the full 2s on every fast-path
+		// connection, accumulating thousands of leaked timers under load.
+		bpTimer := time.NewTimer(2 * time.Second)
 		select {
 		case sem <- struct{}{}:
-		case <-time.After(2 * time.Second):
+			bpTimer.Stop()
+		case <-bpTimer.C:
 			bridgeErr("TCP backpressure: dropping %s (>%d concurrent)", dstAddr, tcpMaxInFlight)
 			_ = conn.Close()
 			return
 		case <-ctx.Done():
+			bpTimer.Stop()
 			_ = conn.Close()
 			return
 		}

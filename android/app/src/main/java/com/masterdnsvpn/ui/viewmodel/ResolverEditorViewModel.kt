@@ -60,6 +60,23 @@ class ResolverEditorViewModel @Inject constructor(
         _manualText.value = ""   // clear paste box so file content never appears there
     }
 
+    /**
+     * Called when user picks multiple files simultaneously.
+     * All files are merged, duplicate resolver lines are removed, and order is preserved
+     * (first occurrence wins).  Blank lines between entries are collapsed.
+     */
+    fun loadFromFiles(texts: List<String>) {
+        val merged = texts
+            .flatMap { it.lines() }
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .joinToString("\n")
+        fileText = merged
+        _fileResolverCount.value = merged.lines().count { it.isNotBlank() }
+        _manualText.value = ""   // clear paste box so file content never appears there
+    }
+
     /** Discards the file-imported resolvers. */
     fun clearFile() {
         fileText = ""

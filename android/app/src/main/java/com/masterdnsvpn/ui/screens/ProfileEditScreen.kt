@@ -37,7 +37,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.masterdnsvpn.profile.ProfileEntity
-import com.masterdnsvpn.ui.Screen
 import com.masterdnsvpn.ui.viewmodel.ProfileEditViewModel
 
 /**
@@ -263,11 +262,11 @@ fun ProfileEditScreen(
             Divider()
             OutlinedButton(
                 onClick = {
-                    if (profileId == Screen.ProfileEdit.NEW) {
-                        vm.saveForResolver()
-                    } else {
-                        onEditResolvers(profile.id)
-                    }
+                    // saveForResolver() saves in-memory state to DB first, then
+                    // emits the correct profileId (from SavedStateHandle) via
+                    // resolverNavId.  Using profile.id directly would race against
+                    // the async init coroutine and could reference the wrong UUID.
+                    vm.saveForResolver()
                 },
                 modifier = Modifier.fillMaxWidth(),
             ) {

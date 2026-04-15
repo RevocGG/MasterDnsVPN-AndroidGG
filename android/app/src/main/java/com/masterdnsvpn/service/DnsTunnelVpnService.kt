@@ -429,8 +429,13 @@ class DnsTunnelVpnService : VpnService() {
     }
 
     override fun onDestroy() {
-        // Go cleanup is done in performStop() before onDestroy() is reached.
-        // vpnInterface is already closed in performStop() — guard against double-close.
+        // Normal path: performStop() already ran — these are no-ops.
+        // Force-kill path (Android OOM killer / Settings force-stop): performStop()
+        // was never called, so the Go bridge is still running on a fd that Android
+        // is about to close.  Stop the bridge FIRST so Go drains and exits cleanly
+        // before the fd is closed; otherwise fdbased.Read() returns EBADF and the
+        // goroutine logs a spurious error on every remaining packet.
+        try { bridge.stopTunBridge() } catch (_: Exception) {}
         try { connectivityManager.unregisterNetworkCallback(networkCallback) } catch (_: Exception) {}
         bridge.registerProtectCallback(null)
         stopForeground(STOP_FOREGROUND_REMOVE)

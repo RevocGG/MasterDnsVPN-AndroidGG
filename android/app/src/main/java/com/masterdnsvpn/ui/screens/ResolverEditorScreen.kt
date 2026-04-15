@@ -36,13 +36,14 @@ fun ResolverEditorScreen(
     LaunchedEffect(saved) { if (saved) onNavigateUp() }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
-        uri ?: return@rememberLauncherForActivityResult
-        try {
-            val text = ctx.contentResolver.openInputStream(uri)?.bufferedReader()?.readText() ?: ""
-            vm.loadFromFile(text)
-        } catch (_: Exception) { }
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris: List<Uri> ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        val texts = uris.mapNotNull { uri ->
+            try { ctx.contentResolver.openInputStream(uri)?.bufferedReader()?.readText() }
+            catch (_: Exception) { null }
+        }
+        if (texts.isNotEmpty()) vm.loadFromFiles(texts)
     }
 
     // Total displayed in title: file count + manual line count
@@ -64,7 +65,7 @@ fun ResolverEditorScreen(
                         }
                     },
                     actions = {
-                        IconButton(onClick = { filePickerLauncher.launch(arrayOf("text/*", "*/*")) }) {
+                        IconButton(onClick = { filePickerLauncher.launch(arrayOf("text/*", "*/*", "application/octet-stream")) }) {
                             Icon(Icons.Default.FileOpen, "Import file", tint = CyanAccent)
                         }
                         IconButton(onClick = { vm.save() }) {

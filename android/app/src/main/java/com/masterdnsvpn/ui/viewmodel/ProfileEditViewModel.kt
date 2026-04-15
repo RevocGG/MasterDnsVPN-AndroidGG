@@ -96,19 +96,28 @@ class ProfileEditViewModel @Inject constructor(
         }
     }
 
-    /** Save profile to DB first (for new profiles), then signal navigation to resolver editor. */
+    /** Save profile to DB (required for new profiles), then signal navigation to resolver editor. */
     fun saveForResolver() {
         if (saveMutex.isLocked) return
         viewModelScope.launch {
             saveMutex.withLock {
-                val current = repo.getProfile(_profile.value.id)
-                val merged = if (current != null) {
-                    _profile.value.copy(resolversText = current.resolversText)
+                if (profileId == Screen.ProfileEdit.NEW) {
+                    // New profile: must persist to DB first so the resolver editor
+                    // can find it.  The profile was never saved, current == null.
+                    val current = repo.getProfile(_profile.value.id)
+                    val merged = if (current != null) {
+                        _profile.value.copy(resolversText = current.resolversText)
+                    } else {
+                        _profile.value
+                    }
+                    repo.saveProfile(merged)
+                    _resolverNavId.value = _profile.value.id
                 } else {
-                    _profile.value
+                    // Existing profile: already in DB.  Navigate directly with the
+                    // authoritative nav-arg id — avoids any race with the async init
+                    // coroutine that loads _profile.value.
+                    _resolverNavId.value = profileId
                 }
-                repo.saveProfile(merged)
-                _resolverNavId.value = _profile.value.id
             }
         }
     }
@@ -133,16 +142,20 @@ class ProfileEditViewModel @Inject constructor(
     /**
      * Parse [toml] text and apply all recognised keys to the current profile.
      * Preserves: id, name, createdAt, updatedAt, resolversText.
+     * Also preserves domains/encryptionKey when the TOML omits them (partial config).
      */
     fun importFromToml(toml: String) {
         try {
             val imported = TomlConfigMapper.fromToml(toml, _profile.value.name)
             _profile.value = imported.copy(
-                id           = _profile.value.id,
-                name         = _profile.value.name,
-                createdAt    = _profile.value.createdAt,
-                updatedAt    = System.currentTimeMillis(),
+                id            = _profile.value.id,
+                name          = _profile.value.name,
+                createdAt     = _profile.value.createdAt,
+                updatedAt     = System.currentTimeMillis(),
                 resolversText = _profile.value.resolversText,
+                // Keep existing identity fields if the imported TOML doesn't specify them
+                domains       = imported.domains.ifBlank { _profile.value.domains },
+                encryptionKey = imported.encryptionKey.ifBlank { _profile.value.encryptionKey },
             )
         } catch (e: Exception) {
             _importError.value = e.message ?: "Failed to parse .toml file"
