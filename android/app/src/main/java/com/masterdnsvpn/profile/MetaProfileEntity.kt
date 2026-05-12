@@ -17,6 +17,8 @@ data class MetaProfileEntity(
     val tunnelMode: String = "SOCKS5",
     /** Port the SOCKS5 balancer/proxy listens on. 0 = auto-assign. */
     val socksPort: Int = 0,
+    /** IP address the SOCKS5 listener binds to. Defaults to loopback. */
+    val socksBindAddress: String = "127.0.0.1",
     val enabled: Boolean = true,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),

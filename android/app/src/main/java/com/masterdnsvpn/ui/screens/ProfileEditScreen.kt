@@ -397,6 +397,9 @@ fun ProfileEditScreen(
                 ProfileIntField("MIN_DOWNLOAD_MTU", profile.minDownloadMTU) { vm.update { copy(minDownloadMTU = it) } }
                 ProfileIntField("MAX_UPLOAD_MTU", profile.maxUploadMTU) { vm.update { copy(maxUploadMTU = it) } }
                 ProfileIntField("MAX_DOWNLOAD_MTU", profile.maxDownloadMTU) { vm.update { copy(maxDownloadMTU = it) } }
+                SwitchRow("AUTO_REMOVE_LOW_MTU_SERVERS", profile.autoRemoveLowMtuServers) {
+                    vm.update { copy(autoRemoveLowMtuServers = it) }
+                }
                 ProfileIntField("MTU_TEST_RETRIES", profile.mtuTestRetries) { vm.update { copy(mtuTestRetries = it) } }
                 ProfileDoubleField("MTU_TEST_TIMEOUT", profile.mtuTestTimeout) { vm.update { copy(mtuTestTimeout = it) } }
                 ProfileIntField("MTU_TEST_PARALLELISM", profile.mtuTestParallelism) { vm.update { copy(mtuTestParallelism = it) } }

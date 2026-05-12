@@ -66,6 +66,7 @@ object ProfileConfigMapper {
         c.minDownloadMTU = p.minDownloadMTU.toLong()
         c.maxUploadMTU = p.maxUploadMTU.toLong()
         c.maxDownloadMTU = p.maxDownloadMTU.toLong()
+        c.autoRemoveLowMtuServers = p.autoRemoveLowMtuServers
         c.setMTUTestRetries(p.mtuTestRetries.toLong())
         c.setMTUTestTimeout(p.mtuTestTimeout)
         c.setMTUTestParallel(p.mtuTestParallelism.toLong())

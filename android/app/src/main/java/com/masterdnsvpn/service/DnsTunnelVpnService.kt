@@ -22,6 +22,7 @@ import com.masterdnsvpn.settings.AppSelectionPrefs
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -69,6 +70,7 @@ class DnsTunnelVpnService : VpnService() {
     // connections inside the gVisor bridge stall.  We detect the transition and
     // bounce the TUN bridge so it reconnects on the new interface.
     private val connectivityManager by lazy { getSystemService(ConnectivityManager::class.java) }
+    private var networkBounceJob: Job? = null
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             // Ignore the VPN network itself — when our own VPN establishes, Android
@@ -80,8 +82,18 @@ class DnsTunnelVpnService : VpnService() {
             // VPN transport = our own VPN network — must never bounce on self.
             if (caps == null || caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return
             if (!intentionalStop && bridge.isTunBridgeRunning()) {
-                logManager.appendSystem(LogLevel.INFO, "Underlying network changed — bouncing TUN bridge for new interface")
-                scope.launch { bridge.stopTunBridge() }
+                // Debounce: cancel any pending bounce and restart the 1.5s timer.
+                // Prevents reconnect storms from WiFi signal fluctuations, IPv6
+                // probing, dual-SIM transitions, or captive portal checks firing
+                // multiple onAvailable events in quick succession.
+                networkBounceJob?.cancel()
+                networkBounceJob = scope.launch {
+                    delay(1_500)
+                    if (!intentionalStop && bridge.isTunBridgeRunning()) {
+                        logManager.appendSystem(LogLevel.INFO, "Underlying network changed — bouncing TUN bridge for new interface")
+                        bridge.stopTunBridge()
+                    }
+                }
             }
         }
     }
@@ -197,7 +209,8 @@ class DnsTunnelVpnService : VpnService() {
                         logManager.append(LogEntry(level = LogLevel.INFO, timestamp = "system", message = "SOCKS balancer started on $addr (strategy=$strategy, upstreams=${upstreamAddrs.size})"))
                         addr
                     } else {
-                        // Fallback to primary if balancer fails
+                        // Balancer failed to start — fall back to primary upstream
+                        logManager.appendSystem(LogLevel.ERROR, "SOCKS balancer failed to start (port conflict?), falling back to primary upstream without load balancing")
                         upstreamAddrs.first()
                     }
                 } else {
@@ -430,12 +443,21 @@ class DnsTunnelVpnService : VpnService() {
 
     override fun onDestroy() {
         // Normal path: performStop() already ran — these are no-ops.
-        // Force-kill path (Android OOM killer / Settings force-stop): performStop()
-        // was never called, so the Go bridge is still running on a fd that Android
-        // is about to close.  Stop the bridge FIRST so Go drains and exits cleanly
-        // before the fd is closed; otherwise fdbased.Read() returns EBADF and the
-        // goroutine logs a spurious error on every remaining packet.
+        // Force-kill / onRevoke path: performStop() launched a coroutine that may not
+        // have finished (scope.cancel() below kills it). We must explicitly stop the
+        // bridge and all Go instances here so no goroutines leak after destroy.
         try { bridge.stopTunBridge() } catch (_: Exception) {}
+        try { bridge.stopSocksBalancer() } catch (_: Exception) {}
+        // Stop meta sub-profiles if active
+        for (subId in activeSubProfileIds) {
+            try { bridge.stopInstance(subId) } catch (_: Exception) {}
+            bridge.clearLockedDomains(subId)
+        }
+        // Stop single profile if active
+        activeProfileId?.let { pid ->
+            try { bridge.stopInstance(pid) } catch (_: Exception) {}
+            bridge.clearLockedDomains(pid)
+        }
         try { connectivityManager.unregisterNetworkCallback(networkCallback) } catch (_: Exception) {}
         bridge.registerProtectCallback(null)
         stopForeground(STOP_FOREGROUND_REMOVE)

@@ -5,10 +5,17 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.core.view.WindowCompat
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -17,6 +24,7 @@ import androidx.navigation.navArgument
 import com.masterdnsvpn.ui.BottomNavBar
 import com.masterdnsvpn.ui.Screen
 import com.masterdnsvpn.ui.screens.*
+import com.masterdnsvpn.ui.theme.DarkBg
 import com.masterdnsvpn.ui.theme.MasterDnsVpnTheme
 import dagger.hilt.android.AndroidEntryPoint
 
@@ -34,7 +42,22 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             MasterDnsVpnTheme {
-                MainNavHost()
+                // Full-screen background drawn here (behind system bars) so it
+                // extends under the status bar and navigation bar on all screens.
+                Box(modifier = Modifier.fillMaxSize()) {
+                    Image(
+                        painter = painterResource(id = R.drawable.app_background),
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop,
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(DarkBg.copy(alpha = 0.55f)),
+                    )
+                    MainNavHost()
+                }
             }
         }
     }
@@ -45,6 +68,7 @@ private fun MainNavHost() {
     val navController = rememberNavController()
 
     Scaffold(
+        containerColor = Color.Transparent,
         bottomBar = {
             BottomNavBar(
                 navController = navController,

@@ -3,7 +3,6 @@ package com.masterdnsvpn.ui.screens
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.os.VibrationEffect
@@ -17,7 +16,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.animation.AnimatedVisibility
@@ -40,8 +38,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
@@ -123,16 +121,8 @@ fun HomeScreen(
         }
     }
 
-    // Load logo bitmap
-    val logoBitmap = remember {
-        try {
-            val stream = ctx.assets?.open("masterdnsvpn.png")
-                ?: ctx.resources.openRawResource(
-                    ctx.resources.getIdentifier("ic_launcher", "mipmap", ctx.packageName)
-                )
-            BitmapFactory.decodeStream(stream)?.asImageBitmap()
-        } catch (_: Exception) { null }
-    }
+    // Load logo from drawable
+    val logoPainter = androidx.compose.ui.res.painterResource(id = com.masterdnsvpn.R.drawable.app_logo)
 
     GlassBackground {
         // ── About / Welcome dialog ─────────────────────────────────────
@@ -141,18 +131,16 @@ fun HomeScreen(
                 onDismissRequest = { showAboutDialog = false },
                 containerColor = DarkSurface,
                 icon = {
-                    logoBitmap?.let {
-                        Image(
-                            bitmap = it,
-                            contentDescription = "Logo",
-                            modifier = Modifier.size(72.dp).clip(CircleShape),
-                        )
-                    }
+                    Image(
+                        painter = logoPainter,
+                        contentDescription = "Logo",
+                        modifier = Modifier.size(88.dp),
+                    )
                 },
                 title = {
                     Text(
                         "Welcome to MasterDnsVPN-GG",
-                        color = TealLight,
+                        color = GoldPrimary,
                         fontWeight = FontWeight.Bold,
                         fontSize = 18.sp,
                     )
@@ -321,18 +309,16 @@ fun HomeScreen(
                 TopAppBar(
                     title = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            logoBitmap?.let {
-                                Image(
-                                    bitmap = it,
-                                    contentDescription = "Logo",
-                                    modifier = Modifier.size(36.dp).clip(CircleShape),
-                                )
-                                Spacer(Modifier.width(10.dp))
-                            }
+                            Image(
+                                painter = logoPainter,
+                                contentDescription = "Logo",
+                                modifier = Modifier.size(36.dp),
+                            )
+                            Spacer(Modifier.width(10.dp))
                             Text(
                                 "MasterDnsVPN-GG",
                                 fontWeight = FontWeight.Bold,
-                                color = TealLight,
+                                color = GoldPrimary,
                                 fontSize = 15.sp,
                             )
                         }
@@ -343,10 +329,10 @@ fun HomeScreen(
                     ),
                     actions = {
                         IconButton(onClick = { showAboutDialog = true }) {
-                            Icon(Icons.Default.Info, "About", tint = CyanAccent)
+                            Icon(Icons.Default.Info, "About", tint = GoldPrimary)
                         }
                         IconButton(onClick = onNewMetaProfile) {
-                            Icon(Icons.Default.AccountTree, "Meta Profile", tint = CyanAccent)
+                            Icon(Icons.Default.AccountTree, "Meta Profile", tint = GoldPrimary)
                         }
                     },
                 )
@@ -694,7 +680,7 @@ private fun StatusDashboard(
                 Box(
                     modifier = Modifier
                         .size(10.dp)
-                        .clip(CircleShape)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
                         .background(if (connected) GreenOnline else TextSecondary.copy(alpha = 0.3f)),
                 )
                 Spacer(Modifier.width(10.dp))

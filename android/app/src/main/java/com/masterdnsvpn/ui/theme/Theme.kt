@@ -25,14 +25,14 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 
-private val GlassDarkScheme = darkColorScheme(
-    primary = TealPrimary,
-    onPrimary = Color.White,
-    primaryContainer = TealDark,
-    onPrimaryContainer = TealLight,
-    secondary = CyanAccent,
-    onSecondary = Color.Black,
-    tertiary = Color(0xFFFFD54F),
+private val BrandColorScheme = darkColorScheme(
+    primary = GoldPrimary,
+    onPrimary = TealDeep,
+    primaryContainer = GoldDark,
+    onPrimaryContainer = GoldLight,
+    secondary = TealLight,
+    onSecondary = TealDeep,
+    tertiary = GoldAccent,
     background = DarkBg,
     onBackground = TextPrimary,
     surface = DarkSurface,
@@ -42,7 +42,7 @@ private val GlassDarkScheme = darkColorScheme(
     error = RedError,
     onError = Color.White,
     outline = GlassBorder,
-    outlineVariant = Color(0x2200E5FF),
+    outlineVariant = Color(0x33C49A1A),
 )
 
 @Composable
@@ -51,14 +51,14 @@ fun MasterDnsVpnTheme(
     dynamicColor: Boolean = false,
     content: @Composable () -> Unit,
 ) {
-    val colorScheme = GlassDarkScheme
+    val colorScheme = BrandColorScheme
 
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
-            window.statusBarColor = DarkBg.toArgb()
-            window.navigationBarColor = DarkBg.toArgb()
+            window.statusBarColor = android.graphics.Color.TRANSPARENT
+            window.navigationBarColor = android.graphics.Color.TRANSPARENT
             WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = false
         }
     }
@@ -84,7 +84,7 @@ fun GlassCard(
                 brush = Brush.verticalGradient(
                     colors = listOf(
                         GlassBg,
-                        DarkCard.copy(alpha = 0.7f),
+                        DarkCard.copy(alpha = 0.75f),
                     )
                 )
             )
@@ -101,18 +101,8 @@ fun GlassCard(
 fun GlassBackground(
     content: @Composable BoxScope.() -> Unit,
 ) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(
-                brush = Brush.verticalGradient(
-                    colors = listOf(
-                        DarkBg,
-                        Color(0xFF0D1F3C),
-                        DarkBg,
-                    )
-                )
-            ),
-        content = content,
-    )
+    // Background image is rendered at the root level in MainActivity so it
+    // extends behind status bar and navigation bar. This composable is now
+    // a transparent pass-through used by screens for structural consistency.
+    Box(modifier = Modifier.fillMaxSize(), content = content)
 }

@@ -37,6 +37,7 @@ fun MetaProfileEditScreen(
 
     val selectedIds = meta.profileIds.split(",").filter { it.isNotBlank() }.toSet()
     var socksPortText by remember(meta.id) { mutableStateOf(if (meta.socksPort == 0) "" else meta.socksPort.toString()) }
+    var socksBindAddressText by remember(meta.id) { mutableStateOf(meta.socksBindAddress) }
 
     val strategies = listOf(
         0 to "RR Default",
@@ -44,6 +45,10 @@ fun MetaProfileEditScreen(
         2 to "Round-Robin",
         3 to "Least-Loss",
         4 to "Lowest-Latency",
+        5 to "Hybrid Score",
+        6 to "Loss Then Latency",
+        7 to "Least Loss Top Random",
+        8 to "Least Loss Top Round Robin",
     )
 
     GlassBackground {
@@ -138,6 +143,23 @@ fun MetaProfileEditScreen(
                         singleLine = true,
                         textStyle = MaterialTheme.typography.bodyLarge.copy(color = TextPrimary),
                         supportingText = { Text("Leave 0 to let the OS assign a port automatically", color = TextSecondary) },
+                    )
+                }
+
+                item {
+                    Spacer(Modifier.height(4.dp))
+                    OutlinedTextField(
+                        value = socksBindAddressText,
+                        onValueChange = { v ->
+                            socksBindAddressText = v
+                            vm.update { copy(socksBindAddress = v.trim()) }
+                        },
+                        label = { Text("SOCKS Bind Address") },
+                        placeholder = { Text("e.g. 127.0.0.1 or 0.0.0.0") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(color = TextPrimary),
+                        supportingText = { Text("IP address for the SOCKS5 listener to bind to", color = TextSecondary) },
                     )
                 }
 

@@ -49,11 +49,19 @@ class TunnelController @Inject constructor() {
     /** Stop the VPN service. */
     fun stopVpn(ctx: Context) {
         // Send ACTION_STOP so the service can do graceful Go cleanup before stopping.
-        // stopService() alone is not reliable for foreground VpnService.
+        // Must use startService (NOT startForegroundService) here: the service is already
+        // running as a foreground service, and startForegroundService would require a new
+        // startForeground() call within 5 seconds — which never happens because we are
+        // stopping, causing ForegroundServiceDidNotStartInTimeException crash.
         val intent = Intent(ctx, DnsTunnelVpnService::class.java).apply {
             action = DnsTunnelVpnService.ACTION_STOP
         }
-        ctx.startService(intent)
+        try {
+            ctx.startService(intent)
+        } catch (_: Exception) {
+            // Last-resort fallback: let Android destroy the service directly.
+            ctx.stopService(Intent(ctx, DnsTunnelVpnService::class.java))
+        }
     }
 
     /** Stop whichever service is running. */

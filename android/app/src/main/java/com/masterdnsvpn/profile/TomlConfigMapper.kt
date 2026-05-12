@@ -102,6 +102,7 @@ object TomlConfigMapper {
             minDownloadMTU = int("MIN_DOWNLOAD_MTU") ?: base.minDownloadMTU,
             maxUploadMTU = int("MAX_UPLOAD_MTU") ?: base.maxUploadMTU,
             maxDownloadMTU = int("MAX_DOWNLOAD_MTU") ?: base.maxDownloadMTU,
+            autoRemoveLowMtuServers = bool("AUTO_REMOVE_LOW_MTU_SERVERS") ?: base.autoRemoveLowMtuServers,
             mtuTestRetries = int("MTU_TEST_RETRIES") ?: base.mtuTestRetries,
             mtuTestTimeout = dbl("MTU_TEST_TIMEOUT") ?: base.mtuTestTimeout,
             mtuTestParallelism = int("MTU_TEST_PARALLELISM") ?: base.mtuTestParallelism,
@@ -301,6 +302,7 @@ object TomlConfigMapper {
             appendLine()
             appendLine("MAX_UPLOAD_MTU = ${p.maxUploadMTU}")
             appendLine("MAX_DOWNLOAD_MTU = ${p.maxDownloadMTU}")
+            appendLine("AUTO_REMOVE_LOW_MTU_SERVERS = ${p.autoRemoveLowMtuServers}")
             appendLine()
             appendLine("MTU_TEST_RETRIES = ${p.mtuTestRetries}")
             appendLine("MTU_TEST_TIMEOUT = ${d(p.mtuTestTimeout)}")

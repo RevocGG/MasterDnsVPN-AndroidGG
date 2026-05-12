@@ -28,7 +28,7 @@ fun BottomNavBar(navController: NavHostController, onNewProfile: () -> Unit) {
     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
 
     NavigationBar(
-        containerColor = DarkSurface.copy(alpha = 0.9f),
+        containerColor = DarkBg.copy(alpha = 0.92f),
         contentColor = TextPrimary,
     ) {
         NavigationBarItem(
@@ -44,11 +44,11 @@ fun BottomNavBar(navController: NavHostController, onNewProfile: () -> Unit) {
             icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
             label = { Text("Home") },
             colors = NavigationBarItemDefaults.colors(
-                selectedIconColor = TealLight,
-                selectedTextColor = TealLight,
+                selectedIconColor = GoldPrimary,
+                selectedTextColor = GoldPrimary,
                 unselectedIconColor = TextSecondary,
                 unselectedTextColor = TextSecondary,
-                indicatorColor = TealPrimary.copy(alpha = 0.15f),
+                indicatorColor = GoldPrimary.copy(alpha = 0.15f),
             ),
         )
 
@@ -62,11 +62,11 @@ fun BottomNavBar(navController: NavHostController, onNewProfile: () -> Unit) {
             icon = { Icon(Icons.Default.List, contentDescription = "Logs") },
             label = { Text("Logs") },
             colors = NavigationBarItemDefaults.colors(
-                selectedIconColor = TealLight,
-                selectedTextColor = TealLight,
+                selectedIconColor = GoldPrimary,
+                selectedTextColor = GoldPrimary,
                 unselectedIconColor = TextSecondary,
                 unselectedTextColor = TextSecondary,
-                indicatorColor = TealPrimary.copy(alpha = 0.15f),
+                indicatorColor = GoldPrimary.copy(alpha = 0.15f),
             ),
         )
 
@@ -77,7 +77,7 @@ fun BottomNavBar(navController: NavHostController, onNewProfile: () -> Unit) {
             icon = {
                 Surface(
                     shape = CircleShape,
-                    color = TealPrimary,
+                    color = GoldPrimary,
                     modifier = Modifier.size(40.dp),
                 ) {
                     Box(contentAlignment = Alignment.Center) {
@@ -92,8 +92,8 @@ fun BottomNavBar(navController: NavHostController, onNewProfile: () -> Unit) {
             },
             label = { Text("Add") },
             colors = NavigationBarItemDefaults.colors(
-                selectedIconColor = TealLight,
-                selectedTextColor = TealLight,
+                selectedIconColor = GoldPrimary,
+                selectedTextColor = GoldPrimary,
                 unselectedIconColor = TextSecondary,
                 unselectedTextColor = TextSecondary,
                 indicatorColor = Color.Transparent,
@@ -110,11 +110,11 @@ fun BottomNavBar(navController: NavHostController, onNewProfile: () -> Unit) {
             icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
             label = { Text("Settings") },
             colors = NavigationBarItemDefaults.colors(
-                selectedIconColor = TealLight,
-                selectedTextColor = TealLight,
+                selectedIconColor = GoldPrimary,
+                selectedTextColor = GoldPrimary,
                 unselectedIconColor = TextSecondary,
                 unselectedTextColor = TextSecondary,
-                indicatorColor = TealPrimary.copy(alpha = 0.15f),
+                indicatorColor = GoldPrimary.copy(alpha = 0.15f),
             ),
         )
     }

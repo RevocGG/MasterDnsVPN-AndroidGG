@@ -41,3 +41,11 @@ android/signing.properties
 .bench/
 .github/copilot-instructions.md
 client_config.toml.simple
+android/app/src/main/assets/background.png
+android/app/src/main/assets/logo.png
+android/app/src/main/assets/notif.png
+android/app/src/main/assets/res/drawable-hdpi/ic_stat_notif_removebg_preview.png
+android/app/src/main/assets/res/drawable-mdpi/ic_stat_notif_removebg_preview.png
+android/app/src/main/assets/res/drawable-xhdpi/ic_stat_notif_removebg_preview.png
+android/app/src/main/assets/res/drawable-xxhdpi/ic_stat_notif_removebg_preview.png
+android/app/src/main/assets/res/drawable-xxxhdpi/ic_stat_notif_removebg_preview.png

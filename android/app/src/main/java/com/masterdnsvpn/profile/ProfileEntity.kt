@@ -54,7 +54,7 @@ data class ProfileEntity(
     val localDnsCacheFlushSec: Double = 60.0,
 
     // Section 4: Balancing & Duplication
-    val resolverBalancingStrategy: Int = 2,
+    val resolverBalancingStrategy: Int = 3,
     val packetDuplicationCount: Int = 2,
     val setupPacketDuplicationCount: Int = 2,
     val streamResolverFailoverResendThreshold: Int = 2,
@@ -81,6 +81,7 @@ data class ProfileEntity(
     val minDownloadMTU: Int = 100,
     val maxUploadMTU: Int = 150,
     val maxDownloadMTU: Int = 500,
+    val autoRemoveLowMtuServers: Boolean = true,
     val mtuTestRetries: Int = 2,
     val mtuTestTimeout: Double = 2.0,
     val mtuTestParallelism: Int = 16,
@@ -131,7 +132,7 @@ data class ProfileEntity(
     val logLevel: String = "INFO",
 
     // Section 13: ARQ
-    val maxPacketsPerBatch: Int = 5,
+    val maxPacketsPerBatch: Int = 8,
     val arqWindowSize: Int = 600,
     val arqInitialRtoSeconds: Double = 1.0,
     val arqMaxRtoSeconds: Double = 5.0,
