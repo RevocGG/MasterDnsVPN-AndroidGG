@@ -45,8 +45,9 @@ CompressionMinSize    int
 MinUploadMTU      int
 MinDownloadMTU    int
 MaxUploadMTU      int
-MaxDownloadMTU    int
-MTUTestRetries    int
+MaxDownloadMTU           int
+AutoRemoveLowMTUServers  bool
+MTUTestRetries           int
 MTUTestTimeout    float64
 MTUTestParallelism int
 RxTxWorkers                       int
@@ -118,6 +119,7 @@ AutoDisableTimeoutServers: true, AutoDisableTimeoutWindowSeconds: 180.0,
 AutoDisableMinObservations: 6, AutoDisableCheckIntervalSeconds: 3.0,
 BaseEncodeData: false, UploadCompressionType: 0, DownloadCompressionType: 0, CompressionMinSize: 100,
 MinUploadMTU: 38, MinDownloadMTU: 100, MaxUploadMTU: 64, MaxDownloadMTU: 140,
+AutoRemoveLowMTUServers: true,
 MTUTestRetries: 2, MTUTestTimeout: 4.0, MTUTestParallelism: 16,
 RxTxWorkers: 6, TunnelProcessWorkers: 4,
 TunnelPacketTimeoutSec: 8.0, DispatcherIdlePollIntervalSeconds: 0.020,
@@ -200,6 +202,7 @@ tpl := "DOMAINS = %s\nDATA_ENCRYPTION_METHOD = %d\nENCRYPTION_KEY = %q\n" +
 "BASE_ENCODE_DATA = %t\nUPLOAD_COMPRESSION_TYPE = %d\nDOWNLOAD_COMPRESSION_TYPE = %d\n" +
 "COMPRESSION_MIN_SIZE = %d\n" +
 "MIN_UPLOAD_MTU = %d\nMIN_DOWNLOAD_MTU = %d\nMAX_UPLOAD_MTU = %d\nMAX_DOWNLOAD_MTU = %d\n" +
+"AUTO_REMOVE_LOW_MTU_SERVERS = %t\n" +
 "MTU_TEST_RETRIES = %d\nMTU_TEST_TIMEOUT = %g\nMTU_TEST_PARALLELISM = %d\n" +
 "RX_TX_WORKERS = %d\nTUNNEL_PROCESS_WORKERS = %d\n" +
 "TUNNEL_PACKET_TIMEOUT_SECONDS = %g\nDISPATCHER_IDLE_POLL_INTERVAL_SECONDS = %g\n" +
@@ -239,6 +242,7 @@ cfg.AutoDisableTimeoutServers, cfg.AutoDisableTimeoutWindowSeconds,
 cfg.AutoDisableMinObservations, cfg.AutoDisableCheckIntervalSeconds,
 cfg.BaseEncodeData, cfg.UploadCompressionType, cfg.DownloadCompressionType, cfg.CompressionMinSize,
 cfg.MinUploadMTU, cfg.MinDownloadMTU, cfg.MaxUploadMTU, cfg.MaxDownloadMTU,
+cfg.AutoRemoveLowMTUServers,
 cfg.MTUTestRetries, cfg.MTUTestTimeout, cfg.MTUTestParallelism,
 cfg.RxTxWorkers, cfg.TunnelProcessWorkers,
 cfg.TunnelPacketTimeoutSec, cfg.DispatcherIdlePollIntervalSeconds,

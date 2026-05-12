@@ -344,6 +344,7 @@ func proxyTCPDirect(ctx context.Context, src net.Conn, dstAddr string, socksAddr
 // resolver will retry after its timeout and the second attempt hits cache.
 func proxyDNSDirect(ctx context.Context, src net.Conn, dstAddr string) {
 	buf := make([]byte, 4096)
+	var idleTimeouts int
 	for {
 		if ctx.Err() != nil {
 			return
@@ -356,10 +357,15 @@ func proxyDNSDirect(ctx context.Context, src net.Conn, dstAddr string) {
 		n, readErr := src.Read(buf)
 		if readErr != nil {
 			if netErr, ok := readErr.(net.Error); ok && netErr.Timeout() {
+				idleTimeouts++
+				if idleTimeouts >= 3 { // 3×5s = 15s idle — exit goroutine
+					return
+				}
 				continue
 			}
 			return
 		}
+		idleTimeouts = 0
 		if n == 0 {
 			continue
 		}
@@ -415,8 +421,8 @@ func proxyDNSDirect(ctx context.Context, src net.Conn, dstAddr string) {
 			// (guarded by pendingTimeout in the cache), so each tick is just a cheap
 			// read-locked cache lookup.
 			// Use a Ticker (created once) instead of time.After (creates a new
-			// timer object on every iteration — ~1500 per query miss).
-			deadline := time.Now().Add(30 * time.Second)
+			// timer object on every iteration — ~250 per query miss at 5s/20ms).
+			deadline := time.Now().Add(5 * time.Second)
 			pollTicker := time.NewTicker(20 * time.Millisecond)
 		pollLoop:
 			for !responseWritten {
@@ -459,8 +465,14 @@ func socks5ConnectTCP(conn net.Conn, host string, port uint16) error {
 	if _, err := io.ReadFull(conn, authResp); err != nil {
 		return fmt.Errorf("auth read: %w", err)
 	}
-	if authResp[0] != 0x05 || authResp[1] != 0x00 {
-		return fmt.Errorf("unexpected auth response %v", authResp)
+	if authResp[0] != 0x05 {
+		return fmt.Errorf("SOCKS5: unexpected version in auth response: %d", authResp[0])
+	}
+	if authResp[1] == 0xff {
+		return fmt.Errorf("SOCKS5: proxy rejected all auth methods (no acceptable method)")
+	}
+	if authResp[1] != 0x00 {
+		return fmt.Errorf("SOCKS5: unexpected auth method selected: %d", authResp[1])
 	}
 
 	// CONNECT request

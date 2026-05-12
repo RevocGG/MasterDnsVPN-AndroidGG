@@ -69,8 +69,9 @@ CompressionMinSize      int
 MinUploadMTU    int
 MinDownloadMTU  int
 MaxUploadMTU    int
-MaxDownloadMTU  int
-MTUTestRetries  int
+MaxDownloadMTU          int
+AutoRemoveLowMtuServers bool
+MTUTestRetries          int
 MTUTestTimeout  float64
 MTUTestParallel int
 // Workers & Timeouts
@@ -364,8 +365,9 @@ CompressionMinSize:      c.CompressionMinSize,
 MinUploadMTU:       c.MinUploadMTU,
 MinDownloadMTU:     c.MinDownloadMTU,
 MaxUploadMTU:       c.MaxUploadMTU,
-MaxDownloadMTU:     c.MaxDownloadMTU,
-MTUTestRetries:     c.MTUTestRetries,
+MaxDownloadMTU:          c.MaxDownloadMTU,
+AutoRemoveLowMTUServers: c.AutoRemoveLowMtuServers,
+MTUTestRetries:          c.MTUTestRetries,
 MTUTestTimeout:     c.MTUTestTimeout,
 MTUTestParallelism: c.MTUTestParallel,
 RxTxWorkers:                         c.RxTxWorkers,
@@ -460,8 +462,9 @@ c.CompressionMinSize      = d.CompressionMinSize
 c.MinUploadMTU    = d.MinUploadMTU
 c.MinDownloadMTU  = d.MinDownloadMTU
 c.MaxUploadMTU    = d.MaxUploadMTU
-c.MaxDownloadMTU  = d.MaxDownloadMTU
-c.MTUTestRetries  = d.MTUTestRetries
+c.MaxDownloadMTU          = d.MaxDownloadMTU
+c.AutoRemoveLowMtuServers = d.AutoRemoveLowMTUServers
+c.MTUTestRetries          = d.MTUTestRetries
 c.MTUTestTimeout  = d.MTUTestTimeout
 c.MTUTestParallel = d.MTUTestParallelism
 c.RxTxWorkers          = d.RxTxWorkers

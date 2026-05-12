@@ -384,7 +384,13 @@ func NewARQ(streamID uint16, sessionID uint8, enqueuer PacketEnqueuer, localConn
 			if cfg.InboundQueueSize > 0 {
 				return cfg.InboundQueueSize
 			}
-			return windowSize * 4
+
+			if windowSize <= 512 {
+				return windowSize * 4
+			} else if windowSize <= 2048 {
+				return windowSize * 3
+			}
+			return windowSize * 2
 		}()),
 	}
 

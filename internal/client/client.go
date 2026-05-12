@@ -318,6 +318,9 @@ func New(cfg config.ClientConfig, log *logger.Logger, codec *security.Codec) *Cl
 	c.balancer.SetResolverDownConfirmHandler(func(conn *Connection, window time.Duration) bool {
 		return c.confirmResolverDown(conn, window)
 	})
+	c.balancer.SetResolverDisabledHandler(func(conn *Connection, cause string) {
+		c.appendMTURemovedServerLine(conn, cause)
+	})
 	c.pingManager = newPingManager(c)
 	return c
 }
