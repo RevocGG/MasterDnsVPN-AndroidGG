@@ -214,6 +214,12 @@ val MIGRATION_13_14 = object : Migration(13, 14) {
         db.execSQL("ALTER TABLE profiles ADD COLUMN autoRemoveLowMtuServers INTEGER NOT NULL DEFAULT 1")
     }
 }
+val MIGRATION_14_15 = object : Migration(14, 15) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        // "Disable IPv6" toggle (app setting, default ON = 1).
+        db.execSQL("ALTER TABLE profiles ADD COLUMN disableIPv6 INTEGER NOT NULL DEFAULT 1")
+    }
+}
 val MIGRATION_9_10 = object : Migration(9, 10) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE profiles ADD COLUMN perAppVpnMode TEXT NOT NULL DEFAULT 'ALL'")
@@ -221,12 +227,30 @@ val MIGRATION_9_10 = object : Migration(9, 10) {
     }
 }
 
+val MIGRATION_15_16 = object : Migration(15, 16) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        // User-managed named resolver lists (incl. the auto "Best Match" list).
+        db.execSQL("""
+            CREATE TABLE IF NOT EXISTS `resolver_lists` (
+                `id` TEXT NOT NULL,
+                `name` TEXT NOT NULL,
+                `resolversText` TEXT NOT NULL,
+                `isBestMatch` INTEGER NOT NULL DEFAULT 0,
+                `createdAt` INTEGER NOT NULL,
+                `updatedAt` INTEGER NOT NULL,
+                PRIMARY KEY(`id`)
+            )
+        """.trimIndent())
+    }
+}
+
 @Database(
-    entities = [ProfileEntity::class, MetaProfileEntity::class],
-    version = 14,
+    entities = [ProfileEntity::class, MetaProfileEntity::class, ResolverListEntity::class],
+    version = 16,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun profileDao(): ProfileDao
     abstract fun metaProfileDao(): MetaProfileDao
+    abstract fun resolverListDao(): ResolverListDao
 }

@@ -5,7 +5,9 @@ import android.content.Context
 import android.content.Intent
 import android.net.VpnService
 import android.os.Build
+import android.os.Environment
 import android.provider.Settings
+import com.masterdnsvpn.BuildConfig
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.masterdnsvpn.bridge.GoMobileBridge
@@ -40,9 +42,17 @@ class HomeViewModel @Inject constructor(
     private val controller: TunnelController,
     private val tunnelStateManager: TunnelStateManager,
     private val metaBalancer: MetaProfileBalancer,
+    private val resolverSelectionPrefs: com.masterdnsvpn.settings.ResolverSelectionPrefs,
 ) : ViewModel() {
 
     private val _vpnPermissionIntent = MutableStateFlow<Intent?>(null)
+
+    /**
+     * Raised when the user hits Start with no resolver list selected on the
+     * Home resolver card. The UI shows a dialog guiding them to the card.
+     */
+    private val _needResolverSelection = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val needResolverSelection: kotlinx.coroutines.flow.SharedFlow<Unit> = _needResolverSelection.asSharedFlow()
 
     // ── Hardware warning state ────────────────────────────────────────────────────
     private val _pendingWarnings = MutableStateFlow<List<ProfileWarning>?>(null)
@@ -149,6 +159,14 @@ class HomeViewModel @Inject constructor(
     }
 
     private fun doConnect(ctx: Context, profile: ProfileEntity) {
+        // Resolver gate: profiles use the Home-card selected lists; refuse to
+        // start when the user has not picked any list yet.
+        if (resolverSelectionPrefs.selectedIds.isEmpty()) {
+            viewModelScope.launch {
+                _needResolverSelection.emit(Unit)
+            }
+            return
+        }
         val isTun = profile.tunnelMode == "TUN"
         val error = validateLocalDns(profile, isTun, ctx)
         if (error != null) {
@@ -174,7 +192,12 @@ class HomeViewModel @Inject constructor(
     fun onVpnPermissionResult(ctx: Context, profileId: String, granted: Boolean) {
         _vpnPermissionIntent.value = null
         if (!granted) {
+            val deniedMetaId = pendingMetaVpn?.id
             pendingMetaVpn = null
+            // B5 fix: the profile/meta was marked busy before the VPN permission
+            // dialog appeared. If the user denies, clear the busy flag, otherwise
+            // the connect button stays dead until app restart.
+            tunnelStateManager.clearBusy(deniedMetaId ?: profileId)
             return
         }
         // Check if this was a meta profile VPN permission request
@@ -222,6 +245,46 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch { repo.saveProfile(profile) }
     }
 
+    /**
+     * DEBUG-ONLY auto-import for adb-driven device testing.
+     *
+     * Reads `New_Profile.toml` (config) and `DnsResolver.txt` (resolvers) from the
+     * app's own external files dir (`/sdcard/Android/data/<pkg>/files/`, pushable via
+     * adb without any permission) and creates a profile from them. Falls back to the
+     * public Downloads folder. Runs once per app launch; skipped when a profile named
+     * "New Profile" already exists. Never runs in release builds ([BuildConfig.DEBUG]).
+     */
+    fun debugAutoImportFromDownloads(ctx: Context) {
+        if (!BuildConfig.DEBUG) return
+        viewModelScope.launch {
+            try {
+                if (repo.allProfiles().first().any { it.name == "New Profile" }) return@launch
+                val candidates = sequence {
+                    ctx.getExternalFilesDir(null)?.let { yield(it) }
+                    yield(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS))
+                }
+                var tomlFile: java.io.File? = null
+                var resolverFile: java.io.File? = null
+                for (dir in candidates) {
+                    val t = java.io.File(dir, "New_Profile.toml")
+                    val r = java.io.File(dir, "DnsResolver.txt")
+                    if (tomlFile == null && t.exists() && t.canRead()) tomlFile = t
+                    if (resolverFile == null && r.exists() && r.canRead()) resolverFile = r
+                }
+                val toml = tomlFile?.readText() ?: return@launch
+                var entity = com.masterdnsvpn.profile.TomlConfigMapper.fromToml(toml, "New Profile")
+                if (resolverFile != null) {
+                    val resolverText = resolverFile.readText().lines()
+                        .map { it.trim() }.filter { it.isNotEmpty() }.joinToString("\n")
+                    if (resolverText.isNotBlank()) entity = entity.copy(resolversText = resolverText)
+                }
+                repo.saveProfile(entity)
+            } catch (_: Exception) {
+                // Silent: debug helper only.
+            }
+        }
+    }
+
     fun deleteMetaProfile(metaId: String) {
         viewModelScope.launch { repo.deleteMetaProfile(metaId) }
     }
@@ -238,6 +301,10 @@ class HomeViewModel @Inject constructor(
         val profileIds = meta.profileIds.split(",").filter { it.isNotBlank() }
         if (profileIds.isEmpty()) return
         viewModelScope.launch {
+            if (resolverSelectionPrefs.selectedIds.isEmpty()) {
+                _needResolverSelection.emit(Unit)
+                return@launch
+            }
             val isTun = meta.tunnelMode == "TUN"
             val profileIds = meta.profileIds.split(",").filter { it.isNotBlank() }
             for (pid in profileIds) {

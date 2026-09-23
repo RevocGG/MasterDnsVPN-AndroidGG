@@ -1,0 +1,203 @@
+<resources>
+    <string name="state_connected">已连接</string>
+    <string name="state_connecting">连接中…</string>
+    <string name="state_disconnected">未连接</string>
+    <string name="state_error">错误</string>
+
+    <string name="mode_socks5_proxy">SOCKS5 代理</string>
+    <string name="mode_tun_vpn">TUN / VPN</string>
+
+    <string name="nav_home">配置文件</string>
+    <string name="nav_log">日志</string>
+    <string name="nav_dashboard">仪表板</string>
+
+    <string name="profile_new">新建配置</string>
+    <string name="profile_edit">编辑配置</string>
+    <string name="profile_name">配置名称</string>
+    <string name="profile_delete_confirm">删除此配置？</string>
+    <string name="profile_export">导出配置</string>
+    <string name="profile_import">导入配置</string>
+    <string name="profile_export_warning">此文件包含您的加密密钥，请妥善保管。</string>
+
+    <string name="section_identity">隧道身份</string>
+    <string name="section_proxy">代理 / 监听</string>
+    <string name="section_dns">本地 DNS</string>
+    <string name="section_balancing">负载均衡与复制</string>
+    <string name="section_health">解析器健康状态</string>
+    <string name="section_encoding">编码与压缩</string>
+    <string name="section_mtu">MTU</string>
+    <string name="section_workers">工作线程与超时</string>
+    <string name="section_arq">ARQ</string>
+    <string name="section_advanced">高级</string>
+
+    <string name="resolver_editor_title">解析器列表</string>
+    <string name="resolver_editor_hint">每行一个解析器。\n格式：IP、IP:端口、CIDR、CIDR:端口、[IPv6]、[IPv6]:端口</string>
+
+    <string name="log_viewer_title">日志</string>
+    <string name="log_filter_all">全部</string>
+    <string name="log_filter_debug">DEBUG</string>
+    <string name="log_filter_info">INFO</string>
+    <string name="log_filter_warn">WARN</string>
+    <string name="log_filter_error">ERROR</string>
+    <string name="log_export">导出日志</string>
+    <string name="log_clear">清空</string>
+
+    <string name="dashboard_title">仪表板</string>
+    <string name="dashboard_streams">活动流</string>
+    <string name="dashboard_resolvers">解析器</string>
+    <string name="dashboard_session_id">会话 ID</string>
+    <string name="dashboard_listen_addr">监听地址</string>
+
+    <string name="meta_profile_title">元配置</string>
+    <string name="meta_profile_new">新建元配置</string>
+    <string name="meta_strategy_rr_default">轮询（默认）</string>
+    <string name="meta_strategy_random">随机</string>
+    <string name="meta_strategy_rr">轮询</string>
+    <string name="meta_strategy_least_loss">最低丢包</string>
+    <string name="meta_strategy_lowest_latency">最低延迟</string>
+
+    <string name="notif_channel_tunnel">VPN 隧道</string>
+    <string name="notif_connected">MasterDnsVPN-GG 正在运行</string>
+    <string name="notif_connecting">连接中…</string>
+    <string name="notif_action_disconnect">断开连接</string>
+
+    <string name="btn_connect">连接</string>
+    <string name="btn_disconnect">断开</string>
+    <string name="btn_save">保存</string>
+    <string name="btn_cancel">取消</string>
+    <string name="btn_delete">删除</string>
+    <string name="btn_ok">确定</string>
+
+    <string name="err_vpn_permission">使用 TUN 模式需要 VPN 权限。</string>
+    <string name="err_already_running">另一个隧道已在运行。</string>
+    <string name="err_start_failed">隧道启动失败。</string>
+
+    <string name="nav_add">添加</string>
+    <string name="nav_logs">日志</string>
+    <string name="nav_settings">设置</string>
+
+    <string name="settings_title">设置</string>
+    <string name="settings_per_app_vpn">应用级 VPN</string>
+    <string name="settings_per_app_vpn_sub">选择哪些应用通过 VPN 隧道连接</string>
+    <string name="settings_language">语言</string>
+    <string name="settings_language_sub">应用显示语言 — 默认为英语</string>
+    <string name="settings_disable_ipv6">禁用 IPv6</string>
+    <string name="settings_disable_ipv6_sub">拦截 IPv6（AAAA）解析与连接 — 服务器无 IPv6 时建议开启</string>
+
+    <!-- 主页解析器卡片 -->
+    <string name="resolver_card_title">解析器</string>
+    <string name="resolver_add">添加</string>
+    <string name="resolver_add_title">新建解析器列表</string>
+    <string name="resolver_edit_title">编辑解析器列表</string>
+    <string name="resolver_refresh_best">刷新最佳匹配</string>
+    <string name="resolver_best_empty">Best Match 会在配置运行期间自动填充 — 表现最佳的解析器会被保存。</string>
+    <string name="resolver_count">%1$d 个解析器</string>
+    <string name="resolver_count_zero">空</string>
+    <string name="resolver_export">导出</string>
+    <string name="resolver_edit">编辑</string>
+    <string name="resolver_delete">删除</string>
+    <string name="resolver_delete_title">删除列表？</string>
+    <string name="resolver_delete_msg">解析器列表“%1$s”将被移除。</string>
+    <string name="resolver_cancel">取消</string>
+    <string name="resolver_name_label">列表名称</string>
+    <string name="resolver_text_label">解析器（每行一个）</string>
+    <string name="resolver_import_files">从文件导入…</string>
+    <string name="resolver_imported_count">已导入 %1$d 个文件 ✓</string>
+    <string name="resolver_save">保存</string>
+    <string name="settings_updates">检查更新</string>
+    <string name="settings_updates_sub">从 GitHub 下载并安装最新版本</string>
+
+    <string name="home_ok">确定</string>
+    <string name="home_hotspot_sharing">热点共享</string>
+    <string name="home_hotspot_error">错误：%1$s</string>
+    <string name="home_starting_hotspot">正在启动热点代理…</string>
+    <string name="home_stop">停止</string>
+    <string name="home_close">关闭</string>
+    <string name="home_dismiss">关闭</string>
+    <string name="home_skip">跳过</string>
+    <string name="home_apply">应用</string>
+    <string name="home_scanning">扫描中</string>
+    <string name="home_delete_profile">删除配置？</string>
+    <string name="home_delete_profile_msg">\"%1$s\" 将被永久移除。</string>
+    <string name="home_delete">删除</string>
+    <string name="home_cancel">取消</string>
+    <string name="home_delete_meta">删除元配置？</string>
+    <string name="home_status">状态</string>
+    <string name="home_resolvers">解析器</string>
+    <string name="home_listen">监听</string>
+    <string name="home_start">启动</string>
+    <string name="home_profiles_active">%1$d 个配置文件运行中</string>
+    <string name="home_processing">处理中…</string>
+    <string name="home_ready">就绪</string>
+    <string name="home_init">初始化…</string>
+    <string name="home_active">活动中</string>
+    <string name="home_locked">已锁定</string>
+    <string name="home_edit">编辑</string>
+    <string name="home_no_resolver_title">未选择解析器</string>
+
+    <!-- Hardware compatibility warnings -->
+    <string name="warn_title">硬件兼容性警告</string>
+    <string name="warn_label_rx_tx_workers">RX/TX 工作线程</string>
+    <string name="warn_label_tunnel_workers">隧道处理线程</string>
+    <string name="warn_label_tx_buffer">TX 通道缓冲区</string>
+    <string name="warn_label_rx_buffer">RX 通道缓冲区</string>
+    <string name="warn_label_arq_window">ARQ 窗口大小</string>
+    <string name="warn_label_dns_cache">本地 DNS 缓存最大记录数</string>
+    <string name="warn_label_udp_pool">UDP 连接池大小</string>
+    <string name="warn_label_ping_interval">高频 Ping 间隔</string>
+    <string name="warn_label_upload_zlib">上传压缩（ZLIB）</string>
+    <string name="warn_label_download_zlib">下载压缩（ZLIB）</string>
+    <string name="warn_label_log_level">日志级别</string>
+    <string name="warn_reason_workers">当前值（%1$s）在 %2$s 核设备上会将 CPU 占用推到 70%% 以上，导致过热降频和电池消耗。此设备的安全最大值为 %3$s。</string>
+    <string name="warn_reason_buffer_ram">大缓冲区在内存有限的设备（%1$sMB）上浪费内存。</string>
+    <string name="warn_reason_arq_ram">在途数据包会占用内存。减小此值可降低设备（%1$sMB）的内存压力。</string>
+    <string name="warn_reason_dns_cache_ram">每条 DNS 记录都存储在内存中。对您的设备（%2$sMB 内存）来说 %1$s 条已足够。</string>
+    <string name="warn_reason_udp_pool">每个连接都占用一个系统套接字。减小此值可降低文件描述符和内存压力。</string>
+    <string name="warn_reason_ping_interval">%1$s 秒的间隔意味着每秒超过 %2$s 个 ping，会给弱 CPU 带来压力。</string>
+    <string name="warn_reason_zlib">ZLIB 对每个数据包消耗大量 CPU，不建议在少于 4 核的设备上使用。</string>
+    <string name="warn_reason_log_level">%1$s 级别会为每个数据包生成并写入大字符串，严重消耗设备 CPU 和 I/O。</string>
+    <string name="home_no_resolver_msg">启动前请先选择解析器列表。打开“解析器”卡片，添加或选择一个列表 — 配置将使用所选列表。</string>
+    <string name="perapp_sel_count">已选 %1$d 个</string>
+    <string name="perapp_saved">已保存 ✓</string>
+    <string name="perapp_save">保存</string>
+    <string name="perapp_all_apps">所有应用（不过滤）</string>
+    <string name="perapp_include">仅所选应用使用 VPN</string>
+    <string name="perapp_exclude">除所选外的所有应用</string>
+    <string name="perapp_selected_section">已选应用</string>
+    <string name="monitor_title">系统监控</string>
+    <string name="monitor_none">暂无活动配置</string>
+    <string name="meta_name_label">元配置名称</string>
+    <string name="meta_tunnel_mode">隧道模式</string>
+    <string name="meta_socks_port">SOCKS 输出端口（0 = 自动）</string>
+    <string name="meta_socks_port_hint">如 1080</string>
+    <string name="meta_socks_port_support">留 0 让系统自动分配端口</string>
+    <string name="meta_bind_label">SOCKS 绑定地址</string>
+    <string name="meta_bind_hint">如 127.0.0.1 或 0.0.0.0</string>
+    <string name="meta_bind_support">SOCKS5 监听绑定的 IP 地址</string>
+    <string name="meta_balancing">负载均衡策略</string>
+    <string name="meta_subprofiles">子配置</string>
+    <string name="meta_none_yet">尚未创建配置。请先创建配置。</string>
+    <string name="meta_new_title">新建元配置</string>
+    <string name="meta_edit_title">编辑元配置</string>
+    <string name="meta_name_required">请输入名称</string>
+    <string name="update_checking">正在检查 GitHub 最新版本…</string>
+    <string name="update_uptodate">已是最新版本！</string>
+    <string name="update_latest">版本 %1$s 已是最新。</string>
+    <string name="update_recheck">重新检查</string>
+    <string name="update_downloading">下载中…</string>
+    <string name="update_complete">下载完成！</string>
+    <string name="update_install">安装更新</string>
+    <string name="update_error">错误</string>
+    <string name="update_try_again">重试</string>
+    <string name="update_download">下载</string>
+
+    <string name="dashboard_not_running">未运行</string>
+    <string name="perapp_mode">模式</string>
+    <string name="perapp_search">搜索应用…</string>
+    <string name="perapp_system">系统</string>
+    <string name="perapp_all">全选</string>
+    <string name="perapp_none">清除</string>
+    <string name="update_check">检查更新</string>
+    <string name="update_installed_version">已安装版本</string>
+    <string name="update_title">更新</string>
+</resources>

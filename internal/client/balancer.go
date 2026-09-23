@@ -33,12 +33,17 @@ const (
 )
 
 type Connection struct {
-	Domain            string
-	Resolver          string
-	ResolverPort      int
-	ResolverLabel     string
-	Key               string
-	IsValid           bool
+	Domain        string
+	Resolver      string
+	ResolverPort  int
+	ResolverLabel string
+	Key           string
+	IsValid       bool
+	// Probed marks that this connection completed its initial MTU/health
+	// probe, valid OR rejected. Rejected probes zero out MTUResolveTime, so
+	// without this flag the UI scan progress (CheckedCount) could never reach
+	// 100% when a large share of resolvers is correctly rejected.
+	Probed            bool
 	UploadMTUBytes    int
 	UploadMTUChars    int
 	DownloadMTUBytes  int
@@ -103,8 +108,8 @@ type Balancer struct {
 
 	autoDisableEnabled       bool
 	autoDisableTimeoutWindow time.Duration
-	confirmResolverDown     func(*Connection, time.Duration) bool
-	onResolverDisabled      func(*Connection, string)
+	confirmResolverDown      func(*Connection, time.Duration) bool
+	onResolverDisabled       func(*Connection, string)
 }
 
 type connectionStats struct {
@@ -217,6 +222,7 @@ func (b *Balancer) SetConnections(connections []*Connection) {
 		}
 		copied := *conn
 		copied.IsValid = false
+		copied.Probed = false
 		copied.UploadMTUBytes = 0
 		copied.UploadMTUChars = 0
 		copied.DownloadMTUBytes = 0
@@ -241,6 +247,23 @@ func (b *Balancer) TotalCount() int {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return len(b.connections)
+}
+
+// CheckedCount returns how many connections have completed their initial
+// MTU/health probe — valid OR rejected. A connection counts once its probe
+// verdict was applied (the Probed flag, set by ApplyMTUProbeResult) or it is
+// valid. Connections still queued for their first probe are NOT counted, so
+// checked/total is a true 0→100% scan progress signal for the UI.
+func (b *Balancer) CheckedCount() int {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	n := 0
+	for i := range b.connections {
+		if b.connections[i].Probed || b.connections[i].IsValid {
+			n++
+		}
+	}
+	return n
 }
 
 func (b *Balancer) GetConnectionByKey(key string) (Connection, bool) {
@@ -318,6 +341,7 @@ func (b *Balancer) ApplyMTUProbeResult(key string, uploadBytes int, uploadChars 
 	conn.UploadMTUChars = uploadChars
 	conn.DownloadMTUBytes = downloadBytes
 	conn.MTUResolveTime = resolveTime
+	conn.Probed = true
 	wasValid := conn.IsValid
 	conn.IsValid = active
 	if active {
@@ -854,6 +878,55 @@ func (b *Balancer) AllConnections() []Connection {
 
 	result := make([]Connection, len(b.connections))
 	copy(result, b.connections)
+	return result
+}
+
+// ResolverQuality is a read-only snapshot of a single resolver's observed
+// performance. Populated from the same counters the balancer uses for its
+// selection strategies (sent/acked/lost + rolling RTT).
+type ResolverQuality struct {
+	Resolver string
+	Port     int
+	IsValid  bool
+	Sent     uint64
+	Acked    uint64
+	Lost     uint64
+	AvgRTTms float64
+}
+
+// GetResolverQuality returns a read-only snapshot of per-resolver quality
+// counters. Additive read-only accessor (Android glue needs it for the app's
+// "Best Match" resolver-list feature); mirrors LocalSocksCredentials in
+// client_utils.go — no existing core logic is touched.
+func (b *Balancer) GetResolverQuality() []ResolverQuality {
+	if b == nil {
+		return nil
+	}
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	result := make([]ResolverQuality, 0, len(b.connections))
+	for i, conn := range b.connections {
+		q := ResolverQuality{
+			Resolver: conn.Resolver,
+			Port:     conn.ResolverPort,
+			IsValid:  conn.IsValid,
+		}
+		var rttSum, rttN, sent, acked, lost uint64
+		if i < len(b.stats) && b.stats[i] != nil {
+			s := b.stats[i]
+			rttSum = s.rttMicrosSum.Load()
+			rttN = s.rttCount.Load()
+			sent = s.sent.Load()
+			acked = s.acked.Load()
+			lost = s.lost.Load()
+		}
+		q.Sent, q.Acked, q.Lost = sent, acked, lost
+		if rttN > 0 {
+			q.AvgRTTms = float64(rttSum) / float64(rttN) / 1000.0
+		}
+		result = append(result, q)
+	}
 	return result
 }
 

@@ -50,10 +50,8 @@ class ProfileEditViewModel @Inject constructor(
      */
     private suspend fun validateProfile(): String? {
         val p = _profile.value
-        val resolvers = repo.getProfile(p.id)?.resolversText ?: p.resolversText
-        if (resolvers.isBlank() || resolvers.lines().none { it.isNotBlank() }) {
-            return "Resolver list is empty. Add at least one resolver before saving."
-        }
+        // NOTE: resolver validation removed — resolver lists are now managed
+        // globally on the Home card and are checked at profile START, not save.
         if (p.domains.isBlank()) {
             return "DOMAINS is required. Enter at least one domain."
         }

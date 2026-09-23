@@ -34,8 +34,10 @@ import androidx.compose.runtime.*
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.masterdnsvpn.R
 import com.masterdnsvpn.profile.ProfileEntity
 import com.masterdnsvpn.ui.viewmodel.ProfileEditViewModel
 
@@ -50,7 +52,6 @@ import com.masterdnsvpn.ui.viewmodel.ProfileEditViewModel
 fun ProfileEditScreen(
     profileId: String,
     onNavigateUp: () -> Unit,
-    onEditResolvers: (String) -> Unit,
     vm: ProfileEditViewModel = hiltViewModel(),
 ) {
     val profile by vm.profile.collectAsState()
@@ -145,19 +146,12 @@ fun ProfileEditScreen(
             onNavigateUp()
         }
     }
-    // When a new profile was pre-saved, navigate to resolver editor with the real ID
-    LaunchedEffect(resolverNavId) {
-        resolverNavId?.let {
-            vm.clearResolverNav()
-            onEditResolvers(it)
-        }
-    }
 
     // ── Export options dialog ───────────────────────────────────────────────
     if (showExportDialog) {
         AlertDialog(
             onDismissRequest = { showExportDialog = false },
-            title = { Text("Export Profile") },
+            title = { Text(stringResource(R.string.profile_export)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Choose export options:")
@@ -186,7 +180,7 @@ fun ProfileEditScreen(
                 }) { Text("Export") }
             },
             dismissButton = {
-                TextButton(onClick = { showExportDialog = false }) { Text("Cancel") }
+                TextButton(onClick = { showExportDialog = false }) { Text(stringResource(R.string.btn_cancel)) }
             },
         )
     }
@@ -258,24 +252,8 @@ fun ProfileEditScreen(
             // Tunnel mode selector
             TunnelModeSelector(profile.tunnelMode) { vm.update { copy(tunnelMode = it) } }
 
-            // Resolver list — at the top for quick access
-            Divider()
-            OutlinedButton(
-                onClick = {
-                    // saveForResolver() saves in-memory state to DB first, then
-                    // emits the correct profileId (from SavedStateHandle) via
-                    // resolverNavId.  Using profile.id directly would race against
-                    // the async init coroutine and could reference the wrong UUID.
-                    vm.saveForResolver()
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Icon(Icons.Default.Edit, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Edit Resolver List")
-            }
-
-            Divider()
+            // NOTE: per-profile resolver editing was removed — all profiles now
+            // use the resolver lists managed on the Home-screen Resolvers card.
 
             // ── Section 1: Tunnel Identity & Security ─────────────────────────
             ExpandableSection("1. Tunnel Identity & Security", expanded = true) {

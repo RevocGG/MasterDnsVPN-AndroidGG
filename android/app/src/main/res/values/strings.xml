@@ -85,4 +85,137 @@
     <string name="err_vpn_permission">VPN permission is required to use TUN mode.</string>
     <string name="err_already_running">Another tunnel is already running.</string>
     <string name="err_start_failed">Failed to start tunnel.</string>
+
+    <!-- Bottom navigation -->
+    <string name="nav_add">Add</string>
+    <string name="nav_logs">Logs</string>
+    <string name="nav_settings">Settings</string>
+
+    <!-- Settings screen -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_per_app_vpn">Per-App VPN</string>
+    <string name="settings_per_app_vpn_sub">Choose which apps are routed through the VPN tunnel</string>
+    <string name="settings_language">Language</string>
+    <string name="settings_language_sub">App display language — default is English</string>
+    <string name="settings_disable_ipv6">Disable IPv6</string>
+    <string name="settings_disable_ipv6_sub">Block IPv6 (AAAA) answers and connections — recommended for servers without IPv6</string>
+
+    <!-- Home resolver card -->
+    <string name="resolver_card_title">Resolvers</string>
+    <string name="resolver_add">Add</string>
+    <string name="resolver_add_title">New resolver list</string>
+    <string name="resolver_edit_title">Edit resolver list</string>
+    <string name="resolver_refresh_best">Refresh Best Match</string>
+    <string name="resolver_best_empty">Best Match fills up automatically while a profile is running — best-performing resolvers are saved.</string>
+    <string name="resolver_count">%1$d resolvers</string>
+    <string name="resolver_count_zero">empty</string>
+    <string name="resolver_export">Export</string>
+    <string name="resolver_edit">Edit</string>
+    <string name="resolver_delete">Delete</string>
+    <string name="resolver_delete_title">Delete list?</string>
+    <string name="resolver_delete_msg">Resolver list “%1$s” will be removed.</string>
+    <string name="resolver_cancel">Cancel</string>
+    <string name="resolver_name_label">List name</string>
+    <string name="resolver_text_label">Resolvers (one per line)</string>
+    <string name="resolver_import_files">Import from file…</string>
+    <string name="resolver_imported_count">%1$d file(s) imported ✓</string>
+    <string name="resolver_save">Save</string>
+    <string name="settings_updates">Check for Updates</string>
+    <string name="settings_updates_sub">Download and install the latest release from GitHub</string>
+
+    <!-- Home screen -->
+    <string name="home_ok">OK</string>
+    <string name="home_profiles_active">%1$d profile(s) active</string>
+    <string name="home_processing">Processing…</string>
+    <string name="home_ready">Ready</string>
+    <string name="home_init">Init…</string>
+    <string name="home_active">Active</string>
+    <string name="home_locked">Locked</string>
+    <string name="home_edit">Edit</string>
+    <string name="home_no_resolver_title">No resolver selected</string>
+
+    <!-- Hardware compatibility warnings -->
+    <string name="warn_title">Hardware Compatibility Warning</string>
+    <string name="warn_label_rx_tx_workers">RX/TX Workers</string>
+    <string name="warn_label_tunnel_workers">Tunnel Process Workers</string>
+    <string name="warn_label_tx_buffer">TX Channel Buffer</string>
+    <string name="warn_label_rx_buffer">RX Channel Buffer</string>
+    <string name="warn_label_arq_window">ARQ Window Size</string>
+    <string name="warn_label_dns_cache">Local DNS Cache Max Records</string>
+    <string name="warn_label_udp_pool">UDP Connection Pool Size</string>
+    <string name="warn_label_ping_interval">Aggressive Ping Interval</string>
+    <string name="warn_label_upload_zlib">Upload Compression (ZLIB)</string>
+    <string name="warn_label_download_zlib">Download Compression (ZLIB)</string>
+    <string name="warn_label_log_level">Log Level</string>
+    <string name="warn_reason_workers">Current value (%1$s) will push CPU usage well above 70%% on a %2$s-core device, causing thermal throttling and battery drain. Max safe value for this device is %3$s.</string>
+    <string name="warn_reason_buffer_ram">Large buffer wastes memory on devices with limited RAM (%1$sMB).</string>
+    <string name="warn_reason_arq_ram">In-flight packets are held in RAM. Reducing this value lowers RAM pressure on your device (%1$sMB).</string>
+    <string name="warn_reason_dns_cache_ram">Each DNS record is stored in RAM. %1$s records is sufficient for your device (%2$sMB RAM).</string>
+    <string name="warn_reason_udp_pool">Each connection occupies a system socket. Reducing this value lowers file descriptor and RAM pressure.</string>
+    <string name="warn_reason_ping_interval">Interval of %1$ss means more than %2$s pings/sec, stressing a weak CPU.</string>
+    <string name="warn_reason_zlib">ZLIB consumes significant CPU per packet and is not recommended on devices with fewer than 4 cores.</string>
+    <string name="warn_reason_log_level">%1$s level generates and writes large strings per packet, heavily consuming device CPU and I/O.</string>
+    <string name="home_no_resolver_msg">Pick a resolver list before starting. Open the Resolvers card and add a list or select one — profiles use the selected lists.</string>
+    <string name="perapp_sel_count">%1$d selected</string>
+    <string name="perapp_saved">Saved ✓</string>
+    <string name="perapp_save">Save</string>
+    <string name="perapp_all_apps">All apps (no filter)</string>
+    <string name="perapp_include">Only selected apps use VPN</string>
+    <string name="perapp_exclude">All apps EXCEPT selected</string>
+    <string name="perapp_selected_section">Selected apps</string>
+    <string name="monitor_title">System Monitor</string>
+    <string name="monitor_none">No active profiles</string>
+    <string name="meta_name_label">Meta Profile Name</string>
+    <string name="meta_tunnel_mode">Tunnel Mode</string>
+    <string name="meta_socks_port">SOCKS Output Port (0 = auto-assign)</string>
+    <string name="meta_socks_port_hint">e.g. 1080</string>
+    <string name="meta_socks_port_support">Leave 0 to let the OS assign a port automatically</string>
+    <string name="meta_bind_label">SOCKS Bind Address</string>
+    <string name="meta_bind_hint">e.g. 127.0.0.1 or 0.0.0.0</string>
+    <string name="meta_bind_support">IP address for the SOCKS5 listener to bind to</string>
+    <string name="meta_balancing">Balancing Strategy</string>
+    <string name="meta_subprofiles">Sub-Profiles</string>
+    <string name="meta_none_yet">No profiles created yet. Create profiles first.</string>
+    <string name="meta_new_title">New Meta Profile</string>
+    <string name="meta_edit_title">Edit Meta Profile</string>
+    <string name="meta_name_required">Please enter a name</string>
+    <string name="update_checking">Checking GitHub for latest release…</string>
+    <string name="update_uptodate">You’re up to date!</string>
+    <string name="update_latest">Version %1$s is the latest.</string>
+    <string name="update_recheck">Re-check</string>
+    <string name="update_downloading">Downloading…</string>
+    <string name="update_complete">Download complete!</string>
+    <string name="update_install">Install Update</string>
+    <string name="update_error">Error</string>
+    <string name="update_try_again">Try Again</string>
+    <string name="update_download">Download</string>
+    <string name="home_hotspot_sharing">Hotspot Sharing</string>
+    <string name="home_hotspot_error">Error: %1$s</string>
+    <string name="home_starting_hotspot">Starting hotspot proxy…</string>
+    <string name="home_stop">Stop</string>
+    <string name="home_close">Close</string>
+    <string name="home_dismiss">Dismiss</string>
+    <string name="home_skip">Skip</string>
+    <string name="home_apply">Apply</string>
+    <string name="home_scanning">Scanning</string>
+    <string name="home_delete_profile">Delete profile?</string>
+    <string name="home_delete_profile_msg">\"%1$s\" will be permanently removed.</string>
+    <string name="home_delete">Delete</string>
+    <string name="home_cancel">Cancel</string>
+    <string name="home_delete_meta">Delete meta profile?</string>
+    <string name="home_status">Status</string>
+    <string name="home_resolvers">Resolvers</string>
+    <string name="home_listen">Listen</string>
+    <string name="home_start">Start</string>
+
+    <!-- Dashboard / Log / Per-app / Update -->
+    <string name="dashboard_not_running">Not running</string>
+    <string name="perapp_mode">Mode</string>
+    <string name="perapp_search">Search apps…</string>
+    <string name="perapp_system">System</string>
+    <string name="perapp_all">All</string>
+    <string name="perapp_none">None</string>
+    <string name="update_check">Check for Updates</string>
+    <string name="update_installed_version">Installed Version</string>
+    <string name="update_title">Update</string>
 </resources>

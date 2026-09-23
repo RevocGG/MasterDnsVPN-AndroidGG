@@ -16,8 +16,11 @@ import com.masterdnsvpn.profile.MIGRATION_10_11
 import com.masterdnsvpn.profile.MIGRATION_11_12
 import com.masterdnsvpn.profile.MIGRATION_12_13
 import com.masterdnsvpn.profile.MIGRATION_13_14
+import com.masterdnsvpn.profile.MIGRATION_14_15
+import com.masterdnsvpn.profile.MIGRATION_15_16
 import com.masterdnsvpn.profile.MetaProfileDao
 import com.masterdnsvpn.profile.ProfileDao
+import com.masterdnsvpn.profile.ResolverListDao
 import com.google.gson.Gson
 import dagger.Module
 import dagger.Provides
@@ -37,7 +40,7 @@ object DatabaseModule {
             ctx,
             AppDatabase::class.java,
             "masterdnsvpn.db",
-        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14).fallbackToDestructiveMigration().build()
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16).fallbackToDestructiveMigration().build()
     }
 
     @Provides
@@ -45,6 +48,9 @@ object DatabaseModule {
 
     @Provides
     fun provideMetaProfileDao(db: AppDatabase): MetaProfileDao = db.metaProfileDao()
+
+    @Provides
+    fun provideResolverListDao(db: AppDatabase): ResolverListDao = db.resolverListDao()
 
     @Provides
     @Singleton

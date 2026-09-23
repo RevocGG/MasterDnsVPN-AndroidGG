@@ -1,7 +1,8 @@
 package com.masterdnsvpn.bridge
 
-import com.masterdnsvpn.profile.ProfileEntity
+import com.masterdnsvpn.gomobile.mobile.Mobile
 import com.masterdnsvpn.gomobile.mobile.MobileConfig
+import com.masterdnsvpn.profile.ProfileEntity
 
 /**
  * Maps a [ProfileEntity] (stored in Room) to the gomobile [MobileConfig]
@@ -14,6 +15,18 @@ import com.masterdnsvpn.gomobile.mobile.MobileConfig
 object ProfileConfigMapper {
 
     fun toMobileConfig(p: ProfileEntity): MobileConfig {
+        // A2 fix (existing profiles): profiles created before the new defaults
+        // keep the old pathological ARQ lifetimes (2400 s TTL / 1200 retries /
+        // 1800 s inactivity) in their Room rows. Clamp them at the mapper layer —
+        // no core-Go changes, no migration needed. Users can still set higher
+        // values explicitly in the editor; the clamp only bounds the legacy
+        // extreme values that cause hours of orphan-stream retransmission.
+        val arqInactivity = if (p.arqInactivityTimeoutSeconds > 600.0) 300.0 else p.arqInactivityTimeoutSeconds
+        val arqDataTtl = if (p.arqDataPacketTtlSeconds > 300.0) 180.0 else p.arqDataPacketTtlSeconds
+        val arqMaxRetries = if (p.arqMaxDataRetries > 200) 80 else p.arqMaxDataRetries
+        val arqDrain = if (p.arqTerminalDrainTimeoutSec > 60.0) 30.0 else p.arqTerminalDrainTimeoutSec
+        val arqAckWait = if (p.arqTerminalAckWaitTimeoutSec > 60.0) 30.0 else p.arqTerminalAckWaitTimeoutSec
+
         val c = MobileConfig()
         // Section 1: Identity
         c.domains = p.domains
@@ -131,15 +144,15 @@ object ProfileConfigMapper {
         c.setARQControlInitialRTOSec(p.arqControlInitialRtoSeconds)
         c.setARQControlMaxRTOSec(p.arqControlMaxRtoSeconds)
         c.setARQMaxControlRetries(p.arqMaxControlRetries.toLong())
-        c.setARQInactivityTimeoutSec(p.arqInactivityTimeoutSeconds)
-        c.setARQDataPacketTTLSec(p.arqDataPacketTtlSeconds)
+        c.setARQInactivityTimeoutSec(arqInactivity)
+        c.setARQDataPacketTTLSec(arqDataTtl)
         c.setARQControlPacketTTLSec(p.arqControlPacketTtlSeconds)
-        c.setARQMaxDataRetries(p.arqMaxDataRetries.toLong())
+        c.setARQMaxDataRetries(arqMaxRetries.toLong())
         c.setARQDataNackMaxGap(p.arqDataNackMaxGap.toLong())
         c.setARQDataNackInitialDelaySec(p.arqDataNackInitialDelaySeconds)
         c.setARQDataNackRepeatSec(p.arqDataNackRepeatSeconds)
-        c.setARQTerminalDrainTimeoutSec(p.arqTerminalDrainTimeoutSec)
-        c.setARQTerminalAckWaitTimeoutSec(p.arqTerminalAckWaitTimeoutSec)
+        c.setARQTerminalDrainTimeoutSec(arqDrain)
+        c.setARQTerminalAckWaitTimeoutSec(arqAckWait)
 
         return c
     }

@@ -16,6 +16,7 @@ import com.masterdnsvpn.bridge.SocketProtector
 import com.masterdnsvpn.log.LogEntry
 import com.masterdnsvpn.log.LogLevel
 import com.masterdnsvpn.log.LogManager
+import com.masterdnsvpn.profile.BEST_MATCH_LIST_ID
 import com.masterdnsvpn.profile.ProfileEntity
 import com.masterdnsvpn.profile.ProfileRepository
 import com.masterdnsvpn.settings.AppSelectionPrefs
@@ -55,8 +56,39 @@ class DnsTunnelVpnService : VpnService() {
     @Inject lateinit var tunnelStateManager: TunnelStateManager
     @Inject lateinit var logManager: LogManager
     @Inject lateinit var appSelectionPrefs: AppSelectionPrefs
+    @Inject lateinit var appLanguagePrefs: com.masterdnsvpn.settings.AppLanguagePrefs
+    @Inject lateinit var resolverSelectionPrefs: com.masterdnsvpn.settings.ResolverSelectionPrefs
+    @Inject lateinit var profileListSource: com.masterdnsvpn.profile.ProfileRepository
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * Resolver override: when the user selected one or more resolver lists on
+     * the Home card, merge them (deduplicated) and use that instead of the
+     * profile's own resolversText. Falls back to the profile's own text.
+     */
+    private suspend fun effectiveResolvers(profile: ProfileEntity): String {
+        val ids = resolverSelectionPrefs.selectedIds
+        if (ids.isEmpty()) return profile.resolversText
+        val texts = ids.mapNotNull { id ->
+            if (id == BEST_MATCH_LIST_ID) {
+                // Best Match lives in the SHARED _best_match dir (kept fresh by
+                // the engine across all profiles) — NOT profiles/best-match/.
+                // Reading the per-profile path returned empty and the engine
+                // silently fell back to the profile's own (Cloudflare default)
+                // resolvers.
+                try {
+                    com.masterdnsvpn.gomobile.mobile.Mobile.readBestMatchGlobalText(filesDir.absolutePath)
+                        .takeIf { it.isNotBlank() }
+                } catch (_: Exception) { null }
+            } else {
+                profileListSource.getResolverList(id)?.resolversText?.takeIf { it.isNotBlank() }
+            }
+        }
+        val merged = com.masterdnsvpn.settings.ResolverSelectionPrefs.mergeResolverTexts(texts)
+        return merged.ifBlank { profile.resolversText }
+    }
+
     private var vpnInterface: ParcelFileDescriptor? = null
     /** Set to true before intentional stops so crash detection doesn't fire. */
     @Volatile private var intentionalStop = false
@@ -71,6 +103,12 @@ class DnsTunnelVpnService : VpnService() {
     // bounce the TUN bridge so it reconnects on the new interface.
     private val connectivityManager by lazy { getSystemService(ConnectivityManager::class.java) }
     private var networkBounceJob: Job? = null
+    /** A9 fix: the very first onAvailable callback arrives right after registration
+     *  for the network we are ALREADY using — bouncing on it restarts the bridge and
+     *  every app's TCP connections for no reason. Ignore callbacks until the bridge
+     *  has been up for at least this long (the bounce timer's 1.5 s delay already
+     *  covers the registration case; this adds a hard floor). */
+    @Volatile private var bridgeStartedAt: Long = 0L
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             // Ignore the VPN network itself — when our own VPN establishes, Android
@@ -81,6 +119,9 @@ class DnsTunnelVpnService : VpnService() {
             // null caps = network info temporarily unavailable (transitioning state) — unsafe to bounce.
             // VPN transport = our own VPN network — must never bounce on self.
             if (caps == null || caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return
+            // A9: ignore the initial registration callback — the bridge just started
+            // on this very network, bouncing would be a no-op that kills all flows.
+            if (android.os.SystemClock.elapsedRealtime() - bridgeStartedAt < 5_000) return
             if (!intentionalStop && bridge.isTunBridgeRunning()) {
                 // Debounce: cancel any pending bounce and restart the 1.5s timer.
                 // Prevents reconnect storms from WiFi signal fluctuations, IPv6
@@ -110,8 +151,35 @@ class DnsTunnelVpnService : VpnService() {
         val singleProfileId = intent?.getStringExtra(EXTRA_PROFILE_ID)
         val profileName = intent?.getStringExtra(EXTRA_PROFILE_NAME) ?: "VPN"
 
-        // Must have either a single profile or a meta profile
-        if (singleProfileId == null && metaId == null) return START_NOT_STICKY
+        // B3 fix: a fresh start must clear the intentionalStop flag. After
+        // performStop()+stopSelf(), a new startForegroundService can re-deliver
+        // to the SAME instance before onDestroy — with the flag still true the
+        // bridge loop never runs, leaving a "connected" VPN with no traffic.
+        intentionalStop = false
+
+        // B1 fix: system restarts (Always-on VPN, boot) deliver a null intent.
+        // We must still show the foreground notification, otherwise Android
+        // kills us and, with "Block connections without VPN" enabled, the user
+        // loses ALL connectivity. We cannot safely auto-start the tunnel here
+        // (no profile extras), so notify + stop and let the boot receiver or
+        // Always-on mechanism re-launch with proper extras.
+        if (singleProfileId == null && metaId == null) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                ServiceCompat.startForeground(
+                    this,
+                    TunnelNotification.NOTIFICATION_ID,
+                    TunnelNotification.build(this, profileName, "TUN"),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
+                )
+            } else {
+                startForeground(
+                    TunnelNotification.NOTIFICATION_ID,
+                    TunnelNotification.build(this, profileName, "TUN"),
+                )
+            }
+            performStop()
+            return START_NOT_STICKY
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             ServiceCompat.startForeground(
@@ -169,7 +237,7 @@ class DnsTunnelVpnService : VpnService() {
                         java.io.File(dir).mkdirs()
                         val cfg = ProfileConfigMapper.toMobileConfig(p)
                         if (p.identityLocked) bridge.setLockedDomains(p.id, p.domains.split(","))
-                        bridge.startInstance(p.id, dir, cfg, p.resolversText)
+                        bridge.startInstance(p.id, dir, cfg, effectiveResolvers(p))
                         tunnelStateManager.onTunnelStarted(p.id)
                         upstreamAddrs.add("${cfg.listenIP}:${cfg.listenPort}")
                         logManager.appendSystem(LogLevel.INFO, "Meta sub-profile started: ${p.name} on ${cfg.listenIP}:${cfg.listenPort}")
@@ -231,7 +299,13 @@ class DnsTunnelVpnService : VpnService() {
                             logManager.append(LogEntry(level = LogLevel.INFO, timestamp = "system", message = "TUN bridge started → $balancerAddr (meta, ${profiles.size} profiles)"))
                             bridgeStarted = true
                         }
-                        bridge.startTunBridge(tunFd.fd, TUN_INTERFACE_MTU, balancerAddr)
+                        // Pass the primary sub-profile id so the Go bridge can resolve
+                        // the local SOCKS5 credentials when profiles use SOCKS5 auth.
+                        bridge.startTunBridge(
+                            profiles.first().id, tunFd.fd, TUN_INTERFACE_MTU, balancerAddr,
+                            disableIPv6 = appLanguagePrefs.disableIPv6,
+                        )
+                        bridgeStartedAt = android.os.SystemClock.elapsedRealtime()
                         // No exception = context.Canceled = clean stop (network bounce or explicit stop)
                         cleanExit = true
                     } catch (e: kotlinx.coroutines.CancellationException) {
@@ -292,7 +366,7 @@ class DnsTunnelVpnService : VpnService() {
                         profileId = profile.id,
                         profileDir = profileDir,
                         config = cfg,
-                        resolversText = profile.resolversText,
+                        resolversText = effectiveResolvers(profile),
                     )
                     // Poll until SOCKS proxy is reachable (max 10 s), abort early if stopped
                     val socksAddr = "${cfg.listenIP}:${cfg.listenPort}"
@@ -322,7 +396,13 @@ class DnsTunnelVpnService : VpnService() {
                     while (isActive && !intentionalStop) {
                         var cleanExit = false
                         try {
-                            bridge.startTunBridge(tunFd.fd, TUN_INTERFACE_MTU, socksAddr)
+                            // Pass the profile id so the Go bridge can resolve the
+                            // local SOCKS5 credentials when the profile uses SOCKS5 auth.
+                            bridge.startTunBridge(
+                                profile.id, tunFd.fd, TUN_INTERFACE_MTU, socksAddr,
+                                disableIPv6 = appLanguagePrefs.disableIPv6,
+                            )
+                            bridgeStartedAt = android.os.SystemClock.elapsedRealtime()
                             // No exception = context.Canceled = clean stop (network bounce or explicit stop)
                             cleanExit = true
                         } catch (e: kotlinx.coroutines.CancellationException) {

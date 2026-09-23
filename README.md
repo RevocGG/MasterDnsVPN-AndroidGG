@@ -16,9 +16,9 @@
 
 | APK | Architecture | Use case |
 |-----|-------------|----------|
-| `...-arm64-v8a.apk` | ARM 64-bit | Most modern Android phones |
-| `...-armeabi-v7a.apk` | ARM 32-bit | Older Android phones |
-| `...-universal.apk` | Universal | When unsure |
+| [**...-arm64-v8a.apk**](https://github.com/RevocGG/MasterDnsVPN-AndroidGG/releases/download/v1.1.1/MasterDnsVPN-GG-1.1.1-arm64-v8a.apk) | ARM 64-bit | Most modern Android phones |
+| [**...-armeabi-v7a.apk**](https://github.com/RevocGG/MasterDnsVPN-AndroidGG/releases/download/v1.1.1/MasterDnsVPN-GG-1.1.1-armeabi-v7a.apk) | ARM 32-bit | Older Android phones |
+| [**...-universal.apk**](https://github.com/RevocGG/MasterDnsVPN-AndroidGG/releases/download/v1.1.1/MasterDnsVPN-GG-1.1.1-universal.apk) | Universal | When unsure |
 
 ---
 

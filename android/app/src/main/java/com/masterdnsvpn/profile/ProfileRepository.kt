@@ -18,6 +18,7 @@ import javax.inject.Singleton
 class ProfileRepository @Inject constructor(
     private val profileDao: ProfileDao,
     private val metaDao: MetaProfileDao,
+    private val resolverListDao: ResolverListDao,
     @EncryptedPrefs private val securePrefs: SharedPreferences,
     private val gson: Gson = Gson(),
 ) {
@@ -84,6 +85,20 @@ class ProfileRepository @Inject constructor(
         )
         return saveProfile(newProfile)
     }
+
+    // ------------------------------------------------------------------
+    // Resolver lists (user-managed, incl. Best Match)
+    // ------------------------------------------------------------------
+
+    fun allResolverLists(): Flow<List<ResolverListEntity>> = resolverListDao.getAll()
+
+    suspend fun getResolverList(id: String): ResolverListEntity? = resolverListDao.getById(id)
+
+    suspend fun getBestMatchList(): ResolverListEntity? = resolverListDao.getBestMatch()
+
+    suspend fun saveResolverList(list: ResolverListEntity) = resolverListDao.upsert(list)
+
+    suspend fun deleteResolverList(id: String) = resolverListDao.deleteById(id)
 
     // ------------------------------------------------------------------
     // Meta-profile CRUD

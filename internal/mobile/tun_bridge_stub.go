@@ -1,11 +1,5 @@
 //go:build !linux && !android
 
-// ==============================================================================
-// MasterDnsVPN
-// Author: MasterkinG32
-// Github: https://github.com/masterking32
-// Year: 2026
-// ==============================================================================
 // Package mobile — tun_bridge_stub.go
 //
 // Stub implementations for platforms where gVisor fdbased is not available.

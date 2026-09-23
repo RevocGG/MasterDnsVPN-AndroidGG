@@ -29,6 +29,13 @@ data class ProfileEntity(
     // Connection mode
     val tunnelMode: String = "SOCKS5", // "SOCKS5" or "TUN"
 
+    // "Disable IPv6" toggle (user request). The DNS tunnel has no IPv6 egress:
+    // with AAAA answers present, dual-stack apps (YouTube/Cronet etc.) first try
+    // IPv6 and get "SOCKS5 connect refused code 3" timeouts. ON (default) strips
+    // AAAA records and RSTs IPv6 CONNECTs in the TUN bridge so apps fall back to
+    // IPv4 instantly. Only disable it when the server actually has IPv6 egress.
+    val disableIPv6: Boolean = true,
+
     // Section 1: Identity
     val domains: String = "",
     val dataEncryptionMethod: Int = 1,
@@ -48,14 +55,18 @@ data class ProfileEntity(
     val localDnsPort: Int = 5353,
     val localDnsCacheMaxRecords: Int = 10000,
     val localDnsCacheTtlSeconds: Double = 14400.0,
-    val localDnsPendingTimeoutSec: Double = 300.0,
+    // A8 fix: 300 s locked a failed domain's cache entry for 5 minutes even
+    // after the tunnel recovered. 20 s matches typical browser retry loops.
+    val localDnsPendingTimeoutSec: Double = 20.0,
     val dnsResponseFragmentTimeoutSeconds: Double = 60.0,
     val localDnsCachePersist: Boolean = true,
     val localDnsCacheFlushSec: Double = 60.0,
 
     // Section 4: Balancing & Duplication
     val resolverBalancingStrategy: Int = 3,
-    val packetDuplicationCount: Int = 2,
+    // A6 fix: default duplication 2 doubled upload volume and server load on
+    // healthy tunnels. Recheck/auto-disable health logic handles real loss.
+    val packetDuplicationCount: Int = 1,
     val setupPacketDuplicationCount: Int = 2,
     val streamResolverFailoverResendThreshold: Int = 2,
     val streamResolverFailoverCooldownSec: Double = 2.5,
@@ -90,10 +101,12 @@ data class ProfileEntity(
     val rxTxWorkers: Int = 4,
     val tunnelProcessWorkers: Int = 6,
     val tunnelPacketTimeoutSec: Double = 10.0,
-    val dispatcherIdlePollIntervalSeconds: Double = 0.020,
+    // A7 fix: 20 ms polling = 50 CPU wakeups/s per profile for nothing.
+    val dispatcherIdlePollIntervalSeconds: Double = 0.050,
 
     // Section 9: Ping
-    val pingAggressiveIntervalSeconds: Double = 0.100,
+    // A7 fix: 10 pings/s per resolver was hostile to battery and the server.
+    val pingAggressiveIntervalSeconds: Double = 0.250,
     val pingLazyIntervalSeconds: Double = 0.750,
     val pingCooldownIntervalSeconds: Double = 2.0,
     val pingColdIntervalSeconds: Double = 15.0,
@@ -139,15 +152,19 @@ data class ProfileEntity(
     val arqControlInitialRtoSeconds: Double = 0.5,
     val arqControlMaxRtoSeconds: Double = 3.0,
     val arqMaxControlRetries: Int = 400,
-    val arqInactivityTimeoutSeconds: Double = 1800.0,
-    val arqDataPacketTtlSeconds: Double = 2400.0,
+    // A2 fix: old defaults (1800 s inactivity, 2400 s TTL, 1200 retries) kept a
+    // dead stream retransmitting to the server for 40–100 minutes. 300 s / 180 s
+    // / 80 retries (core floors: 120 s, 120 s, 60) bound a stalled stream to
+    // ~3 minutes while leaving healthy slow uploads untouched.
+    val arqInactivityTimeoutSeconds: Double = 300.0,
+    val arqDataPacketTtlSeconds: Double = 180.0,
     val arqControlPacketTtlSeconds: Double = 1200.0,
-    val arqMaxDataRetries: Int = 1200,
+    val arqMaxDataRetries: Int = 80,
     val arqDataNackMaxGap: Int = 16,
     val arqDataNackInitialDelaySeconds: Double = 0.1,
     val arqDataNackRepeatSeconds: Double = 1.0,
-    val arqTerminalDrainTimeoutSec: Double = 120.0,
-    val arqTerminalAckWaitTimeoutSec: Double = 90.0,
+    val arqTerminalDrainTimeoutSec: Double = 30.0,
+    val arqTerminalAckWaitTimeoutSec: Double = 30.0,
 
     // Resolver list (stored inline for simplicity; moved to separate table for large lists)
     val resolversText: String = "",

@@ -13,6 +13,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import com.masterdnsvpn.R
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
@@ -37,7 +39,7 @@ fun PerAppVpnScreen(
             containerColor = androidx.compose.ui.graphics.Color.Transparent,
             topBar = {
                 TopAppBar(
-                    title = { Text("Per-App VPN", fontWeight = FontWeight.Bold, color = TealLight) },
+                    title = { Text(stringResource(R.string.settings_per_app_vpn), fontWeight = FontWeight.Bold, color = TealLight) },
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = androidx.compose.ui.graphics.Color.Transparent,
                     ),
@@ -58,7 +60,7 @@ fun PerAppVpnScreen(
                 // ── Mode selector ───────────────────────────────────────────────
                 GlassCard {
                     Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
-                        Text("Mode", color = TealLight, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        Text(stringResource(R.string.perapp_mode), color = TealLight, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                         Spacer(Modifier.height(2.dp))
                         AppSelectionPrefs.Mode.entries.forEach { mode ->
                             Row(
@@ -76,9 +78,9 @@ fun PerAppVpnScreen(
                                 )
                                 Text(
                                     when (mode) {
-                                        AppSelectionPrefs.Mode.ALL -> "All Apps (no filter)"
-                                        AppSelectionPrefs.Mode.INCLUDE -> "Only selected apps use VPN"
-                                        AppSelectionPrefs.Mode.EXCLUDE -> "All apps EXCEPT selected"
+                                        AppSelectionPrefs.Mode.ALL -> stringResource(R.string.perapp_all_apps)
+                                        AppSelectionPrefs.Mode.INCLUDE -> stringResource(R.string.perapp_include)
+                                        AppSelectionPrefs.Mode.EXCLUDE -> stringResource(R.string.perapp_exclude)
                                     },
                                     color = TextPrimary,
                                     fontSize = 13.sp,
@@ -94,7 +96,7 @@ fun PerAppVpnScreen(
                 OutlinedTextField(
                     value = state.searchQuery,
                     onValueChange = { vm.setSearchQuery(it) },
-                    placeholder = { Text("Search apps...", color = TextHint, fontSize = 13.sp) },
+                    placeholder = { Text(stringResource(R.string.perapp_search), color = TextHint, fontSize = 13.sp) },
                     leadingIcon = { Icon(Icons.Default.Search, null, tint = TextSecondary, modifier = Modifier.size(18.dp)) },
                     trailingIcon = {
                         if (state.searchQuery.isNotBlank()) {
@@ -136,9 +138,13 @@ fun PerAppVpnScreen(
                             ),
                             modifier = Modifier.size(32.dp),
                         )
-                        Text("System", color = TextSecondary, fontSize = 12.sp)
+                        Text(stringResource(R.string.perapp_system), color = TextSecondary, fontSize = 12.sp)
                     }
-                    Text("${state.apps.count { it.selected }} sel.", color = TealLight, fontSize = 12.sp)
+                    Text(
+                        stringResource(R.string.perapp_sel_count, state.apps.count { it.selected }),
+                        color = TealLight,
+                        fontSize = 12.sp,
+                    )
                     Spacer(Modifier.weight(1f))
                     OutlinedButton(
                         onClick = { vm.selectAll() },
@@ -150,7 +156,7 @@ fun PerAppVpnScreen(
                         border = androidx.compose.foundation.BorderStroke(
                             1.dp, if (enabled) CyanAccent else TextSecondary.copy(alpha = 0.3f),
                         ),
-                    ) { Text("All", fontSize = 12.sp) }
+                    ) { Text(stringResource(R.string.perapp_all), fontSize = 12.sp) }
                     OutlinedButton(
                         onClick = { vm.deselectAll() },
                         enabled = enabled,
@@ -161,18 +167,28 @@ fun PerAppVpnScreen(
                         border = androidx.compose.foundation.BorderStroke(
                             1.dp, if (enabled) TextSecondary else TextSecondary.copy(alpha = 0.3f),
                         ),
-                    ) { Text("None", fontSize = 12.sp) }
+                    ) { Text(stringResource(R.string.perapp_none), fontSize = 12.sp) }
+                    // Save turns BRIGHT when there are unsaved changes so the
+                    // user can tell at a glance they must save. When saved it
+                    // dims down but stays tappable (re-save is harmless).
+                    val hasUnsavedChanges = !state.savedToPrefs
                     Button(
                         onClick = { vm.save() },
+                        enabled = true,
                         modifier = Modifier.height(30.dp),
+                        border = if (hasUnsavedChanges) {
+                            androidx.compose.foundation.BorderStroke(1.dp, CyanAccent)
+                        } else null,
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = if (state.savedToPrefs) TealPrimary.copy(alpha = 0.5f) else TealPrimary,
+                            containerColor = if (hasUnsavedChanges) CyanAccent else TealPrimary.copy(alpha = 0.3f),
+                            contentColor = if (hasUnsavedChanges) DarkBg else TextSecondary,
                         ),
                         shape = RoundedCornerShape(6.dp),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                     ) {
                         Text(
-                            if (state.savedToPrefs) "Saved \u2713" else "Save",
+                            if (state.savedToPrefs) stringResource(R.string.perapp_saved)
+                            else stringResource(R.string.perapp_save),
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
                         )
@@ -190,11 +206,27 @@ fun PerAppVpnScreen(
                         CircularProgressIndicator(color = TealPrimary)
                     }
                 } else {
+                    // Selected apps float to the top of the list so the user
+                    // immediately sees (and can unselect) what is routed.
+                    val orderedApps = remember(state.apps, state.searchQuery) {
+                        state.apps.sortedByDescending { it.selected }
+                    }
                     LazyColumn(
                         modifier = Modifier.weight(1f),
                         verticalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
-                        items(state.apps, key = { it.packageName }) { app ->
+                        if (orderedApps.any { it.selected }) {
+                            item(key = "selected_header") {
+                                Text(
+                                    stringResource(R.string.perapp_selected_section),
+                                    color = TealLight,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.padding(vertical = 4.dp),
+                                )
+                            }
+                        }
+                        items(orderedApps, key = { it.packageName }) { app ->
                             AppRowItem(
                                 app = app,
                                 iconCache = vm.iconCache,

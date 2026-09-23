@@ -48,6 +48,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.compose.ui.res.stringResource
+import com.masterdnsvpn.R
 import com.masterdnsvpn.BuildConfig
 import com.masterdnsvpn.hardware.ProfileWarning
 import com.masterdnsvpn.profile.MetaProfileEntity
@@ -83,6 +85,14 @@ fun HomeScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
     var startErrorMessage by remember { mutableStateOf<String?>(null) }
+    var showResolverGate by remember { mutableStateOf(false) }
+    // Count of resolvers in the user's selected Home-card lists (0 = none
+    // selected). Feeds the "valid/total" chip before the engine reports stats
+    // so the card shows the real selected count instead of a stale 0/1.
+    var selectedResolverCount by remember { mutableStateOf(0) }
+    LaunchedEffect(monitorState.activeProfiles.size) {
+        selectedResolverCount = try { monitorVm.countSelectedResolvers() } catch (_: Exception) { 0 }
+    }
 
     // Nearby Wi-Fi Devices permission (Android 13+) — needed for hotspot AP interface detection
     val nearbyWifiPermissionLauncher = rememberLauncherForActivityResult(
@@ -98,10 +108,34 @@ fun HomeScreen(
             startErrorMessage = msg
         }
     }
+    LaunchedEffect(Unit) {
+        vm.needResolverSelection.collect {
+            showResolverGate = true
+        }
+    }
+
+    // DEBUG-ONLY: adb-driven auto-import of New_Profile.toml + DnsResolver.txt from Downloads
+    LaunchedEffect(Unit) {
+        vm.debugAutoImportFromDownloads(ctx)
+    }
 
     // Show welcome dialog on first launch
     val prefs = ctx.getSharedPreferences("masterdnsvpn_prefs", android.content.Context.MODE_PRIVATE)
     var showWelcome by remember { mutableStateOf(!prefs.getBoolean("welcome_shown", false)) }
+    // Resolver gate: user pressed Start with no resolver list selected.
+    if (showResolverGate) {
+        AlertDialog(
+            onDismissRequest = { showResolverGate = false },
+            title = { Text(stringResource(R.string.home_no_resolver_title), color = TextPrimary) },
+            text = { Text(stringResource(R.string.home_no_resolver_msg), color = TextSecondary) },
+            confirmButton = {
+                TextButton(onClick = { showResolverGate = false }) {
+                    Text(stringResource(R.string.home_ok))
+                }
+            },
+        )
+    }
+
     if (showWelcome) {
         showAboutDialog = true
         prefs.edit().putBoolean("welcome_shown", true).apply()
@@ -184,7 +218,7 @@ fun HomeScreen(
                 },
                 confirmButton = {
                     TextButton(onClick = { showAboutDialog = false }) {
-                        Text("OK", color = TealLight)
+                        Text(stringResource(R.string.home_ok), color = TealLight)
                     }
                 },
             )
@@ -204,7 +238,7 @@ fun HomeScreen(
                             modifier = Modifier.size(22.dp),
                         )
                         Spacer(Modifier.width(8.dp))
-                        Text("Hotspot Sharing", color = TextPrimary, fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.home_hotspot_sharing), color = TextPrimary, fontWeight = FontWeight.Bold)
                     }
                 },
                 text = {
@@ -216,7 +250,7 @@ fun HomeScreen(
                                 fontSize = 14.sp,
                             )
                         } else if (hotspotState.error != null) {
-                            Text("Error: ${hotspotState.error}", color = Color(0xFFFF5252), fontSize = 13.sp)
+                            Text(stringResource(R.string.home_hotspot_error, hotspotState.error ?: ""), color = Color(0xFFFF5252), fontSize = 13.sp)
                         } else if (hotspotState.isRunning && hotspotState.shareAddress != null) {
                             Text(
                                 "Hotspot proxy is running.\nConfigure this SOCKS5 proxy on other devices:",
@@ -264,7 +298,7 @@ fun HomeScreen(
                                 }
                             }
                         } else {
-                            Text("Starting hotspot proxy...", color = TextSecondary, fontSize = 13.sp)
+                            Text(stringResource(R.string.home_starting_hotspot), color = TextSecondary, fontSize = 13.sp)
                         }
                     }
                 },
@@ -274,17 +308,17 @@ fun HomeScreen(
                             hotspotVm.toggle(ctx)
                             showHotspotDialog = false
                         }) {
-                            Text("Stop", color = Color(0xFFFF5252))
+                            Text(stringResource(R.string.home_stop), color = Color(0xFFFF5252))
                         }
                     } else {
                         TextButton(onClick = { showHotspotDialog = false }) {
-                            Text("Close", color = TealLight)
+                            Text(stringResource(R.string.home_close), color = TealLight)
                         }
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { showHotspotDialog = false }) {
-                        Text("Dismiss", color = TextSecondary)
+                        Text(stringResource(R.string.home_dismiss), color = TextSecondary)
                     }
                 },
             )
@@ -396,6 +430,7 @@ fun HomeScreen(
                             isRunning = uiState.runningMetaIds.contains(meta.id),
                             isBusy = uiState.busyIds.contains(meta.id),
                             isReady = metaIsReady,
+                            gateRefused = showResolverGate,
                             onStart = { vm.connectMetaProfile(ctx, meta) },
                             onStop = { vm.disconnectMetaProfile(ctx, meta.id) },
                             onEdit = { onEditMetaProfile(meta.id) },
@@ -423,6 +458,8 @@ fun HomeScreen(
                         isBusy = uiState.busyIds.contains(profile.id),
                         monitorInfo = monitorInfo,
                         hasError = startErrorMessage != null,
+                        gateRefused = showResolverGate,
+                        selectedResolverCount = selectedResolverCount,
                         totalUsageBytes = totalBytes,
                         wireTotalBytes = wireTotalBytes,
                         onConnect = {
@@ -458,6 +495,22 @@ fun HomeScreen(
         }
     }
 }
+
+/**
+ * Formats a warning reason safely: if the localized pattern contains a malformed
+ * conversion (e.g. a raw "%" followed by a letter, like "70% on"), fall back to
+ * plain substitution instead of crashing with IllegalFormatConversionException.
+ */
+private fun safeFormatWarning(pattern: String, args: List<String>): String =
+    try {
+        if (args.isEmpty()) pattern else String.format(pattern, *args.toTypedArray())
+    } catch (_: Exception) {
+        var out = pattern
+        args.forEachIndexed { i, a ->
+            out = out.replace("%${i + 1}\$s", a).replace("%${i + 1}\$d", a)
+        }
+        out
+    }
 
 @Composable
 private fun ErrorGlassCard(message: String, onDismiss: () -> Unit) {
@@ -571,7 +624,7 @@ private fun HardwareWarningPanel(
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    "Hardware Compatibility Warning",
+                    stringResource(R.string.warn_title),
                     color = amber,
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp,
@@ -587,7 +640,7 @@ private fun HardwareWarningPanel(
                 warnings.forEach { w ->
                     Column {
                         Text(
-                            "• ${w.fieldLabel}",
+                            "• " + stringResource(w.labelRes),
                             color = TextPrimary,
                             fontWeight = FontWeight.SemiBold,
                             fontSize = 13.sp,
@@ -620,7 +673,8 @@ private fun HardwareWarningPanel(
                             }
                         }
                         Text(
-                            w.reason,
+                            // Safe formatting: a malformed translation must never crash the app.
+                            safeFormatWarning(stringResource(w.reasonRes), w.reasonArgs),
                             color = TextSecondary,
                             fontSize = 11.sp,
                             modifier = Modifier.padding(start = 10.dp, top = 3.dp),
@@ -645,7 +699,7 @@ private fun HardwareWarningPanel(
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary),
                     border = androidx.compose.foundation.BorderStroke(1.dp, TextSecondary.copy(alpha = 0.4f)),
                 ) {
-                    Text("Skip", fontSize = 13.sp)
+                    Text(stringResource(R.string.home_skip), fontSize = 13.sp)
                 }
                 Button(
                     onClick = onApply,
@@ -657,7 +711,7 @@ private fun HardwareWarningPanel(
                 ) {
                     Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(15.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Apply", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.home_apply), fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -669,6 +723,7 @@ private fun StatusDashboard(
     monitorState: com.masterdnsvpn.ui.viewmodel.MonitorUiState,
     runningCount: Int,
 ) {
+    // Resolver card VM scoped to this screen — provides lists + Best Match
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         // Connection status banner
         GlassCard {
@@ -685,7 +740,8 @@ private fun StatusDashboard(
                 )
                 Spacer(Modifier.width(10.dp))
                 Text(
-                    if (connected) "$runningCount profile(s) active" else "Disconnected",
+                    if (connected) stringResource(R.string.home_profiles_active, runningCount)
+                    else stringResource(R.string.state_disconnected),
                     color = if (connected) GreenOnline else TextSecondary,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 14.sp,
@@ -713,6 +769,9 @@ private fun StatusDashboard(
                 color = TealLight,
             )
         }
+
+        // ── Resolver lists card (collapsible drawer) ──────────────────
+        com.masterdnsvpn.ui.components.ResolverCard()
     }
 }
 
@@ -807,7 +866,7 @@ private fun ScanningStatusText(prefix: String, color: Color, style: TextStyle, f
         label = "scan_dots_idx",
     )
     val dots = (raw.toInt() % 3) + 1
-    Text("$prefix - Scanning" + ".".repeat(dots), style = style, color = color, fontSize = fontSize)
+    Text("$prefix - " + stringResource(R.string.home_scanning) + ".".repeat(dots), style = style, color = color, fontSize = fontSize)
 }
 
 @Composable
@@ -817,6 +876,8 @@ private fun ProfileCard(
     isBusy: Boolean,
     monitorInfo: com.masterdnsvpn.ui.viewmodel.ProfileMonitorInfo?,
     hasError: Boolean = false,
+    gateRefused: Boolean = false,
+    selectedResolverCount: Int = 0,
     totalUsageBytes: Long = 0L,
     wireTotalBytes: Long = 0L,
     onConnect: () -> Unit,
@@ -831,6 +892,9 @@ private fun ProfileCard(
     LaunchedEffect(isRunning, isBusy) { localBusy = false }
     // If a start error was emitted (e.g. local DNS validation failed), unblock the button.
     LaunchedEffect(hasError) { if (hasError) localBusy = false }
+    // Start refused by the resolver gate — the tunnel never started, so the
+    // button must not stay stuck in its loading spinner.
+    LaunchedEffect(gateRefused) { if (gateRefused) localBusy = false }
     val effectiveBusy = localBusy || isBusy
 
     // Scanning = tunnel started but session not ready yet
@@ -868,13 +932,13 @@ private fun ProfileCard(
     if (showDeleteDialog) {
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
-            title = { Text("Delete profile?") },
-            text = { Text("\"${profile.name}\" will be permanently removed.") },
+            title = { Text(stringResource(R.string.home_delete_profile)) },
+            text = { Text(stringResource(R.string.home_delete_profile_msg, profile.name)) },
             confirmButton = {
-                TextButton(onClick = { showDeleteDialog = false; onDelete() }) { Text("Delete", color = RedError) }
+                TextButton(onClick = { showDeleteDialog = false; onDelete() }) { Text(stringResource(R.string.home_delete), color = RedError) }
             },
             dismissButton = {
-                TextButton(onClick = { showDeleteDialog = false }) { Text("Cancel") }
+                TextButton(onClick = { showDeleteDialog = false }) { Text(stringResource(R.string.home_cancel)) }
             },
         )
     }
@@ -909,9 +973,9 @@ private fun ProfileCard(
                     )
                     // Status sub-text: animated only while scanning, static otherwise.
                     val statusSuffix = when {
-                        isBusy -> " - Processing..."
-                        isReady -> " - Connected"
-                        profile.identityLocked -> " - \uD83D\uDD12 Locked"
+                        isBusy -> " - " + stringResource(R.string.home_processing)
+                        isReady -> " - " + stringResource(R.string.state_connected)
+                        profile.identityLocked -> " - \uD83D\uDD12 " + stringResource(R.string.home_locked)
                         else -> ""
                     }
                     if (isScanning) {
@@ -980,47 +1044,57 @@ private fun ProfileCard(
 
             // Monitor details when running
             if (isRunning && monitorInfo != null) {
-                Surface(
-                    color = DarkSurface.copy(alpha = 0.4f),
-                    shape = RoundedCornerShape(8.dp),
+                // Stats row (Status / Resolvers / Listen). While the resolver
+                // scan runs, its BACKGROUND fills left→right (0→100%, once) with
+                // a red→amber→green gradient at 20% opacity so the user sees how
+                // far the scan has progressed — the progress IS this row's fill.
+                val stats = monitorInfo.stats
+                val scanFraction = scanProgressFraction(stats)
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
+                    if (scanFraction != null) {
+                        ScanFillBackground(fraction = scanFraction)
+                    }
+                    Surface(
+                        color = Color.Transparent,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth(),
                     ) {
-                        val stats = monitorInfo.stats
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("Status", color = TextSecondary, fontSize = 9.sp)
-                            Text(
-                                if (stats?.sessionReady == true) "Ready" else "Init...",
-                                color = if (stats?.sessionReady == true) GreenOnline else Color(0xFFFFAB40),
-                                fontWeight = FontWeight.Medium,
-                                fontSize = 12.sp,
-                            )
-                        }
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("Resolvers", color = TextSecondary, fontSize = 9.sp)
-                            val valid = stats?.validResolverCount ?: 0
-                            val total = remember(profile.resolversText, profile.domains) {
-                                val resolvers = profile.resolversText.lines().count { it.isNotBlank() }
-                                val domainCount = profile.domains.split(",").count { it.isNotBlank() }.coerceAtLeast(1)
-                                resolvers * domainCount
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(stringResource(R.string.home_status), color = TextSecondary, fontSize = 9.sp)
+                                Text(
+                                    if (stats?.sessionReady == true) stringResource(R.string.home_ready)
+                                    else stringResource(R.string.home_init),
+                                    color = if (stats?.sessionReady == true) GreenOnline else Color(0xFFFFAB40),
+                                    fontWeight = FontWeight.Medium,
+                                    fontSize = 12.sp,
+                                )
                             }
-                            Text(
-                                "$valid/$total",
-                                color = if (valid > 0) GreenOnline else Color(0xFFFFAB40),
-                                fontWeight = FontWeight.Medium,
-                                fontSize = 12.sp,
-                            )
-                        }
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("Listen", color = TextSecondary, fontSize = 9.sp)
-                            Text(
-                                stats?.listenAddr?.ifEmpty { "-" } ?: "-",
-                                color = TextPrimary,
-                                fontWeight = FontWeight.Medium,
-                                fontSize = 12.sp,
-                            )
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(stringResource(R.string.home_resolvers), color = TextSecondary, fontSize = 9.sp)
+                                val valid = (stats?.validResolverCount ?: 0L).toInt()
+                                val total = resolverTotalCount(stats, profile, selectedResolverCount)
+                                Text(
+                                    "$valid/$total",
+                                    color = if (valid > 0) GreenOnline else Color(0xFFFFAB40),
+                                    fontWeight = FontWeight.Medium,
+                                    fontSize = 12.sp,
+                                )
+                            }
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(stringResource(R.string.home_listen), color = TextSecondary, fontSize = 9.sp)
+                                Text(
+                                    stats?.listenAddr?.ifEmpty { "-" } ?: "-",
+                                    color = TextPrimary,
+                                    fontWeight = FontWeight.Medium,
+                                    fontSize = 12.sp,
+                                )
+                            }
                         }
                     }
                 }
@@ -1066,7 +1140,7 @@ private fun ProfileCard(
                             Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(18.dp))
                         }
                         Spacer(Modifier.width(4.dp))
-                        Text("Start", fontSize = 13.sp)
+                        Text(stringResource(R.string.home_start), fontSize = 13.sp)
                     }
 
                     // Stop button — disabled when NOT running or busy
@@ -1091,7 +1165,7 @@ private fun ProfileCard(
                             Icon(Icons.Default.Stop, null, modifier = Modifier.size(18.dp))
                         }
                         Spacer(Modifier.width(4.dp))
-                        Text("Stop", fontSize = 13.sp)
+                        Text(stringResource(R.string.home_stop), fontSize = 13.sp)
                     }
                 }
 
@@ -1119,6 +1193,7 @@ private fun MetaProfileCard(
     isRunning: Boolean,
     isBusy: Boolean,
     isReady: Boolean,
+    gateRefused: Boolean = false,
     onStart: () -> Unit,
     onStop: () -> Unit,
     onEdit: () -> Unit,
@@ -1127,6 +1202,8 @@ private fun MetaProfileCard(
     var showDeleteDialog by remember { mutableStateOf(false) }
     var localBusy by remember { mutableStateOf(false) }
     LaunchedEffect(isRunning, isBusy) { localBusy = false }
+    // Resolver-gate refusal: the start never happened, release the button.
+    LaunchedEffect(gateRefused) { if (gateRefused) localBusy = false }
     val effectiveBusy = localBusy || isBusy
 
     // Scanning = running but no sub-profile is sessionReady yet
@@ -1135,13 +1212,13 @@ private fun MetaProfileCard(
     if (showDeleteDialog) {
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
-            title = { Text("Delete meta profile?") },
-            text = { Text("\"${meta.name}\" will be permanently removed.") },
+            title = { Text(stringResource(R.string.home_delete_meta)) },
+            text = { Text(stringResource(R.string.home_delete_profile_msg, meta.name)) },
             confirmButton = {
-                TextButton(onClick = { showDeleteDialog = false; onDelete() }) { Text("Delete", color = RedError) }
+                TextButton(onClick = { showDeleteDialog = false; onDelete() }) { Text(stringResource(R.string.home_delete), color = RedError) }
             },
             dismissButton = {
-                TextButton(onClick = { showDeleteDialog = false }) { Text("Cancel") }
+                TextButton(onClick = { showDeleteDialog = false }) { Text(stringResource(R.string.home_cancel)) }
             },
         )
     }
@@ -1195,8 +1272,8 @@ private fun MetaProfileCard(
                         )
                     } else {
                         val statusSuffix = when {
-                            isBusy -> " - Processing..."
-                            isReady -> " - Active"
+                            isBusy -> " - " + stringResource(R.string.home_processing)
+                            isReady -> " - " + stringResource(R.string.home_active)
                             else -> ""
                         }
                         Text(
@@ -1241,7 +1318,7 @@ private fun MetaProfileCard(
                             Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(18.dp))
                         }
                         Spacer(Modifier.width(4.dp))
-                        Text("Start", fontSize = 13.sp)
+                        Text(stringResource(R.string.home_start), fontSize = 13.sp)
                     }
 
                     Button(
@@ -1265,7 +1342,7 @@ private fun MetaProfileCard(
                             Icon(Icons.Default.Stop, null, modifier = Modifier.size(18.dp))
                         }
                         Spacer(Modifier.width(4.dp))
-                        Text("Stop", fontSize = 13.sp)
+                        Text(stringResource(R.string.home_stop), fontSize = 13.sp)
                     }
                 }
 
@@ -1280,4 +1357,89 @@ private fun MetaProfileCard(
             }
         }
     }
+}
+
+/**
+ * Real scan progress: fraction of PROBED resolvers (valid + rejected) over the
+ * total connections being scanned. Returns null when the scan is NOT running
+ * (session ready or no stats) so the caller can hide the fill.
+ *
+ * The old implementation used valid/total, which stalled at e.g. 40% forever
+ * when 60% of resolvers were correctly REJECTED — the bar must reach 100% when
+ * the scan finishes regardless of how many candidates failed.
+ */
+private fun scanProgressFraction(stats: com.masterdnsvpn.gomobile.mobile.Stats?): Float? {
+    if (stats == null || stats.sessionReady) return null
+    val total = stats.resolverCount
+    if (total <= 0L) return 0f
+    val checked = stats.checkedResolverCount.coerceIn(0L, total)
+    return checked.toFloat() / total.toFloat()
+}
+
+/**
+ * Smoothly-animated glassy fill drawn BEHIND the Status/Resolvers/Listen row.
+ * Animates toward the real progress (0→100% over the scan, one-shot — never
+ * loops) in a red→amber→green gradient at 20% opacity.
+ */
+@Composable
+private fun androidx.compose.foundation.layout.BoxScope.ScanFillBackground(fraction: Float) {
+    // Animate toward the target so the fill grows smoothly as resolvers turn
+    // valid; targetValue is the actual measured progress (no looping).
+    val animated by animateFloatAsState(
+        targetValue = fraction.coerceIn(0f, 1f),
+        animationSpec = tween(durationMillis = 600, easing = androidx.compose.animation.core.LinearEasing),
+        label = "scanFill",
+    )
+    val shape = RoundedCornerShape(8.dp)
+    Box(
+        modifier = Modifier
+            .matchParentSize()
+            .clip(shape)
+            .drawBehind {
+                val w = size.width * animated
+                if (w > 0.5f) {
+                    // Gradient spans the FULL row (red at the scan start edge,
+                    // green at completion) but is painted only up to the
+                    // current progress width — a true one-shot 0→100% fill.
+                    val topLeft = if (layoutDirection == androidx.compose.ui.unit.LayoutDirection.Rtl) {
+                        androidx.compose.ui.geometry.Offset(size.width - w, 0f)
+                    } else {
+                        androidx.compose.ui.geometry.Offset.Zero
+                    }
+                    drawRect(
+                        brush = androidx.compose.ui.graphics.Brush.horizontalGradient(
+                            colors = listOf(
+                                Color(0xFFE53935).copy(alpha = 0.20f),
+                                Color(0xFFFFB300).copy(alpha = 0.20f),
+                                GreenOnline.copy(alpha = 0.20f),
+                            ),
+                            startX = 0f,
+                            endX = size.width,
+                        ),
+                        topLeft = topLeft,
+                        size = androidx.compose.ui.geometry.Size(w, size.height),
+                    )
+                }
+            },
+    )
+}
+
+/**
+ * Total resolver connections shown as "valid/total". Uses the engine's live
+ * resolverCount when connected (it reflects the actual scan set — the merged
+ * selected lists × domains); falls back to the count of resolvers the user
+ * actually selected on the Home card (× domains) before the engine reports,
+ * and only then to the profile's own text.
+ */
+private fun resolverTotalCount(
+    stats: com.masterdnsvpn.gomobile.mobile.Stats?,
+    profile: ProfileEntity,
+    selectedResolverCount: Int = 0,
+): Int {
+    val engineTotal = (stats?.resolverCount ?: 0L).toInt()
+    if (engineTotal > 0) return engineTotal
+    val domainCount = profile.domains.split(",").count { it.isNotBlank() }.coerceAtLeast(1)
+    val resolvers = if (selectedResolverCount > 0) selectedResolverCount
+    else profile.resolversText.lines().count { it.isNotBlank() }
+    return resolvers * domainCount
 }

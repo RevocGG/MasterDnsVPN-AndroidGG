@@ -15,6 +15,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import com.masterdnsvpn.R
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -89,7 +91,7 @@ fun LogViewerScreen(vm: LogViewerViewModel = hiltViewModel()) {
             },
             topBar = {
                 TopAppBar(
-                    title = { Text("Log", color = TealLight) },
+                    title = { Text(stringResource(R.string.log_viewer_title), color = TealLight) },
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = androidx.compose.ui.graphics.Color.Transparent,
                     ),

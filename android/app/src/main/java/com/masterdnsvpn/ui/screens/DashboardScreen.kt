@@ -6,6 +6,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import com.masterdnsvpn.R
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -26,7 +28,7 @@ fun DashboardScreen(
             containerColor = androidx.compose.ui.graphics.Color.Transparent,
             topBar = {
                 TopAppBar(
-                    title = { Text("Dashboard", color = TealLight) },
+                    title = { Text(stringResource(R.string.dashboard_title), color = TealLight) },
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = androidx.compose.ui.graphics.Color.Transparent,
                     ),
@@ -46,7 +48,7 @@ fun DashboardScreen(
             ) {
                 if (stats == null) {
                     GlassCard {
-                        Text("Not running", color = RedError)
+                        Text(stringResource(R.string.dashboard_not_running), color = RedError)
                     }
                 } else {
                     val s = stats!!  // capture delegated property into local val for smart cast

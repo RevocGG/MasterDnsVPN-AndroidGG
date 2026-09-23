@@ -18,8 +18,8 @@ android {
         targetSdk = 35
         // Read from Gradle properties injected by CI (-PversionCode=X -PversionName=Y)
         // Fallback to hardcoded values for local development.
-        versionCode = (project.findProperty("versionCode") as? String)?.toIntOrNull() ?: 10
-        versionName = project.findProperty("versionName") as? String ?: "1.1.0"
+        versionCode = (project.findProperty("versionCode") as? String)?.toIntOrNull() ?: 10101
+        versionName = project.findProperty("versionName") as? String ?: "1.1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -126,6 +126,8 @@ dependencies {
     // AndroidX core
     // -----------------------------------------------------------------------
     implementation(libs.androidx.core.ktx)
+    // Per-app language support (AppCompatDelegate.setApplicationLocales)
+    implementation(libs.androidx.appcompat)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.ktx)
 

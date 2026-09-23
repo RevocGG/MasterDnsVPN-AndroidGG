@@ -14,6 +14,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import com.masterdnsvpn.R
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -39,7 +41,7 @@ fun UpdateScreen(
             containerColor = Color.Transparent,
             topBar = {
                 TopAppBar(
-                    title = { Text("Update", color = TealLight, fontWeight = FontWeight.Bold) },
+                    title = { Text(stringResource(R.string.update_title), color = TealLight, fontWeight = FontWeight.Bold) },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                     navigationIcon = {
                         IconButton(onClick = onNavigateUp) {
@@ -69,7 +71,7 @@ fun UpdateScreen(
                         )
                         Spacer(Modifier.width(12.dp))
                         Column {
-                            Text("Installed Version", color = TextSecondary, fontSize = 11.sp)
+                            Text(stringResource(R.string.update_installed_version), color = TextSecondary, fontSize = 11.sp)
                             Text(
                                 BuildConfig.VERSION_NAME,
                                 color = TextPrimary,
@@ -99,7 +101,7 @@ fun UpdateScreen(
                         ) {
                             Icon(Icons.Default.Refresh, null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("Check for Updates")
+                            Text(stringResource(R.string.update_check))
                         }
                     }
 

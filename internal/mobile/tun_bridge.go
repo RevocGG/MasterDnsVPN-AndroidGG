@@ -1,11 +1,5 @@
 //go:build linux || android
 
-// ==============================================================================
-// MasterDnsVPN
-// Author: MasterkinG32
-// Github: https://github.com/masterking32
-// Year: 2026
-// ==============================================================================
 // Package mobile — tun_bridge.go
 //
 // Implements a tun2socks bridge using gVisor netstack.
@@ -17,7 +11,7 @@ package mobile
 
 import (
 	"context"
-	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -57,25 +51,41 @@ func GetTunBandwidth() (int64, int64) {
 // ── Tuning constants ───────────────────────────────────────────────────────────
 
 const (
-	// relayBufSize — each recycled relay buffer is 64 KB, matching typical
-	// CDN chunk sizes, HTTP/2 DATA frame sizes, and video streaming segments.
-	relayBufSize = 64 * 1024
+	// relayBufSize — each recycled relay buffer. 16 KB keeps per-flow memory
+	// low (report A4): at the old 64 KB a DNS tunnel's tiny bandwidth meant
+	// megabytes accumulated invisibly inside relay + gVisor buffers, making
+	// uploads LOOK complete while they were actually stalled (bufferbloat).
+	relayBufSize = 16 * 1024
 
 	// tcpMaxInFlight — maximum concurrent TCP connections being proxied.
-	tcpMaxInFlight = 4096
+	// Browsers/chat apps easily open dozens of flows; each flow holds relay
+	// buffers plus a full ARQ stream on the DNS tunnel. 4096 allowed SYN
+	// storms and ~512 MB of worst-case relay buffers on weak phones.
+	tcpMaxInFlight = 96
 
-	// tcpDialTimeout — timeout for dialling the local SOCKS5 proxy.
-	tcpDialTimeout = 5 * time.Second
+	// tcpDialTimeout — timeout for dialling the local SOCKS5 proxy (loopback,
+	// sub-millisecond when the engine is healthy).
+	tcpDialTimeout = 10 * time.Second
 
-// socks5HandshakeTimeout — deadline for the entire SOCKS5 handshake.
-	// 10s is generous for a loopback connection; 30s would leave each stalled
-	// goroutine blocking for far too long on a busy or weak device.
-	socks5HandshakeTimeout = 10 * time.Second
+	// relayWriteStallTimeout — max time a single relay Write may block without
+	// progress before the whole flow is torn down. Without this a wedged peer
+	// left goroutines (and orphaned ARQ streams retransmitting to the server)
+	// alive until the profile was stopped (report A1).
+	relayWriteStallTimeout = 90 * time.Second
+
+	// relayIdleTimeout — close a flow after this much total silence in BOTH
+	// directions. Safety net for fully-stalled flows that produce no errors.
+	relayIdleTimeout = 10 * time.Minute
+
+	// relayIdleCheckInterval — how often the per-flow idle watchdog ticks.
+	relayIdleCheckInterval = 15 * time.Second
+
+	// socks5HandshakeTimeout lives in socks5_client.go (portable, shared
+	// with the unit tests that exercise the handshake on any platform).
 
 	// udpReadTimeout is the per-iteration deadline on the UDP relay socket
 	// (allows ctx.Done detection without blocking forever).
 	udpReadTimeout = 5 * time.Second
-
 )
 
 // ── Buffer pool ────────────────────────────────────────────────────────────────
@@ -158,17 +168,20 @@ func runTunBridge(ctx context.Context, tunFd int, mtu int, socksAddr string) err
 	sack := tcpip.TCPSACKEnabled(true)
 	s.SetTransportProtocolOption(tcp.ProtocolNumber, &sack)
 
-	// Auto-tune receive buffer — gVisor will grow the receive window based on
-	// observed bandwidth, mirroring Linux's tcp_moderate_rcvbuf behaviour.
-	moderate := tcpip.TCPModerateReceiveBufferOption(true)
+	// Keep receive buffering static (report A3): auto-tuning lets the window
+	// balloon far beyond what a DNS tunnel can drain, hiding stalls from the
+	// uploading app (bufferbloat) and delaying error propagation on cancel.
+	moderate := tcpip.TCPModerateReceiveBufferOption(false)
 	s.SetTransportProtocolOption(tcp.ProtocolNumber, &moderate)
 
-	// Larger send buffer: 256 KB default, 8 MB ceiling.
-	sendBuf := tcpip.TCPSendBufferSizeRangeOption{Min: 4096, Default: 262144, Max: 8388608}
+	// Sized for the tunnel's real throughput (~tens of KB/s): 64 KB default,
+	// 256 KB ceiling. Small windows give the app honest backpressure so a
+	// stalled upload surfaces quickly instead of piling into local buffers.
+	sendBuf := tcpip.TCPSendBufferSizeRangeOption{Min: 4096, Default: 64 << 10, Max: 256 << 10}
 	s.SetTransportProtocolOption(tcp.ProtocolNumber, &sendBuf)
 
 	// Matching receive buffer range.
-	recvBuf := tcpip.TCPReceiveBufferSizeRangeOption{Min: 4096, Default: 262144, Max: 8388608}
+	recvBuf := tcpip.TCPReceiveBufferSizeRangeOption{Min: 4096, Default: 64 << 10, Max: 256 << 10}
 	s.SetTransportProtocolOption(tcp.ProtocolNumber, &recvBuf)
 
 	ep, err := fdbased.New(&fdbased.Options{
@@ -214,6 +227,26 @@ func runTunBridge(ctx context.Context, tunFd int, mtu int, socksAddr string) err
 	tcpFwd := tcp.NewForwarder(s, 0, tcpMaxInFlight, func(r *tcp.ForwarderRequest) {
 		id := r.ID()
 		dstAddr := net.JoinHostPort(id.LocalAddress.String(), fmt.Sprintf("%d", id.LocalPort))
+
+		// DNS-over-TCP (53) and DoT (853) cannot be served by this bridge: the
+		// engine resolves DNS in-process over UDP only, so a CONNECT for the
+		// virtual DNS IP (or any :53/:853 TCP flow) would travel to the tunnel
+		// server, time out there, and stall app startup for seconds (report C1).
+		// RST immediately so clients fall back to UDP/53 (handled in-process).
+		if id.LocalPort == 853 || id.LocalPort == 53 {
+			r.Complete(true)
+			return
+		}
+
+		// "Disable IPv6" (default ON): RST IPv6 destinations on the spot. Apps
+		// with cached AAAA answers (e.g. YouTube/Cronet) otherwise send every
+		// IPv6 CONNECT through the SOCKS/tunnel and only learn of the failure
+		// after a full tunnel round-trip with "connect refused code 3". An
+		// immediate RST makes them fall back to the IPv4 address right away.
+		if id.LocalAddress.Len() == 16 && ipv6Blocked() {
+			r.Complete(true)
+			return
+		}
 
 		var wq waiter.Queue
 		ep, tcpErr := r.CreateEndpoint(&wq)
@@ -325,13 +358,16 @@ func proxyTCPDirect(ctx context.Context, src net.Conn, dstAddr string, socksAddr
 	}
 	defer proxy.Close()
 
+	// Apply the local proxy's credentials (no-op when auth is disabled).
+	proxy = socks5CredentialsDialer(proxy)
+
 	if err := socks5ConnectTCP(proxy, host, port); err != nil {
 		bridgeErr("TCP SOCKS5 CONNECT %s: %v", dstAddr, err)
 		return
 	}
 
 	bridgeLog("TCP connected: %s", dstAddr)
-	bidirectionalRelay(src, proxy)
+	bidirectionalRelay(ctx, src, proxy)
 }
 
 // ── DNS proxy (direct in-process call) ─────────────────────────────────────
@@ -403,6 +439,9 @@ func proxyDNSDirect(ctx context.Context, src net.Conn, dstAddr string) {
 		// in this single goroutine (ProcessDNSQuery calls the callback synchronously).
 		var responseWritten bool
 		writeResp := func(resp []byte) {
+			// Strip AAAA records: the tunnel has no IPv6 egress, so advertising
+			// IPv6 addresses makes apps try (and get RST on) dead connections.
+			resp = filterDNSAAAA(resp)
 			_, _ = src.Write(resp)
 			tunBytesDown.Add(int64(len(resp)))
 			responseWritten = true
@@ -450,99 +489,8 @@ func proxyDNSDirect(ctx context.Context, src net.Conn, dstAddr string) {
 	}
 }
 
-// ── SOCKS5 helpers ─────────────────────────────────────────────────────────────
-
-// socks5ConnectTCP performs SOCKS5 method negotiation (no-auth) then CONNECT.
-func socks5ConnectTCP(conn net.Conn, host string, port uint16) error {
-	_ = conn.SetDeadline(time.Now().Add(socks5HandshakeTimeout))
-	defer func() { _ = conn.SetDeadline(time.Time{}) }()
-
-	// Method negotiation — request no-auth (0x00)
-	if _, err := conn.Write([]byte{0x05, 0x01, 0x00}); err != nil {
-		return fmt.Errorf("auth write: %w", err)
-	}
-	authResp := make([]byte, 2)
-	if _, err := io.ReadFull(conn, authResp); err != nil {
-		return fmt.Errorf("auth read: %w", err)
-	}
-	if authResp[0] != 0x05 {
-		return fmt.Errorf("SOCKS5: unexpected version in auth response: %d", authResp[0])
-	}
-	if authResp[1] == 0xff {
-		return fmt.Errorf("SOCKS5: proxy rejected all auth methods (no acceptable method)")
-	}
-	if authResp[1] != 0x00 {
-		return fmt.Errorf("SOCKS5: unexpected auth method selected: %d", authResp[1])
-	}
-
-	// CONNECT request
-	req := buildSocks5ConnectRequest(host, port)
-	if _, err := conn.Write(req); err != nil {
-		return fmt.Errorf("connect write: %w", err)
-	}
-
-	// Response header: VER REP RSV ATYP
-	hdr := make([]byte, 4)
-	if _, err := io.ReadFull(conn, hdr); err != nil {
-		return fmt.Errorf("connect read: %w", err)
-	}
-	if hdr[1] != 0x00 {
-		return fmt.Errorf("CONNECT refused, code=%d", hdr[1])
-	}
-	// Drain bound address
-	if err := drainSocks5Addr(conn, hdr[3]); err != nil {
-		return fmt.Errorf("drain addr: %w", err)
-	}
-	return nil
-}
-
-// buildSocks5ConnectRequest builds a SOCKS5 CONNECT request for host:port.
-func buildSocks5ConnectRequest(host string, port uint16) []byte {
-	if ip := net.ParseIP(host); ip != nil {
-		if ip4 := ip.To4(); ip4 != nil {
-			req := make([]byte, 10)
-			req[0], req[1], req[2], req[3] = 0x05, 0x01, 0x00, 0x01
-			copy(req[4:8], ip4)
-			binary.BigEndian.PutUint16(req[8:10], port)
-			return req
-		}
-		ip6 := ip.To16()
-		req := make([]byte, 22)
-		req[0], req[1], req[2], req[3] = 0x05, 0x01, 0x00, 0x04
-		copy(req[4:20], ip6)
-		binary.BigEndian.PutUint16(req[20:22], port)
-		return req
-	}
-	// Domain name
-	h := []byte(host)
-	req := make([]byte, 7+len(h))
-	req[0], req[1], req[2], req[3] = 0x05, 0x01, 0x00, 0x03
-	req[4] = byte(len(h))
-	copy(req[5:], h)
-	binary.BigEndian.PutUint16(req[5+len(h):], port)
-	return req
-}
-
-// drainSocks5Addr reads and discards the bound address from a SOCKS5 reply.
-func drainSocks5Addr(conn net.Conn, atyp byte) error {
-	var size int
-	switch atyp {
-	case 0x01:
-		size = 4 + 2
-	case 0x03:
-		lenBuf := make([]byte, 1)
-		if _, err := io.ReadFull(conn, lenBuf); err != nil {
-			return err
-		}
-		size = int(lenBuf[0]) + 2
-	case 0x04:
-		size = 16 + 2
-	default:
-		return fmt.Errorf("socks5: unknown atyp=%d", atyp)
-	}
-	_, err := io.ReadFull(conn, make([]byte, size))
-	return err
-}
+// ── SOCKS5 dialer wiring and the DNS AAAA filter live in tun_state.go
+// (portable, unit-tested on every platform) ───────
 
 // ── Relay ──────────────────────────────────────────────────────────────────────
 
@@ -553,18 +501,59 @@ type halfCloser interface {
 }
 
 // bidirectionalRelay copies data between a (TUN/gVisor side) and b (SOCKS5
-// proxy side) until either connection closes.
+// proxy side) until the flow finishes or is aborted.
 //
 //	a -> b  =  upload   (device -> internet)
 //	b -> a  =  download (internet -> device)
 //
-// Uses pooled 64 KB buffers to avoid per-goroutine allocations.
-// Sends TCP FIN in each direction independently (half-close) so that
-// HTTP/1.1 request-response patterns complete cleanly.
-func bidirectionalRelay(a, b net.Conn) {
+// Uses pooled 16 KB buffers to bound per-flow memory.
+//
+// Abort semantics (report A1 — previously a cancelled/stalled upload left the
+// SOCKS connection and its ARQ stream retransmitting to the server until the
+// whole profile was stopped):
+//   - ctx cancelled (bridge bounce / VPN stop) → both sides closed at once.
+//   - Write stalled longer than relayWriteStallTimeout → both sides closed.
+//   - non-EOF read error (RST / reset / closed) → BOTH sides closed, so an
+//     app-side abort propagates to the tunnel instead of half-closing and
+//     waiting for the server to close its half forever.
+//   - clean EOF → graceful half-close of the peer's write side only, keeping
+//     correct HTTP/1.1 request-response completion.
+//   - total silence in both directions for relayIdleTimeout → both closed
+//     (watchdog for flows that stall without producing any error).
+func bidirectionalRelay(ctx context.Context, a, b net.Conn) {
+	var lastActivity atomic.Int64
+	lastActivity.Store(time.Now().UnixNano())
+
+	closeBoth := func() {
+		_ = a.Close()
+		_ = b.Close()
+	}
+
+	// Bridge teardown (bounce/stop) must tear down every live relay so no
+	// orphaned SOCKS streams survive the bridge.
+	stopWatch := context.AfterFunc(ctx, closeBoth)
+	defer stopWatch()
+
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		ticker := time.NewTicker(relayIdleCheckInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				if time.Since(time.Unix(0, lastActivity.Load())) > relayIdleTimeout {
+					closeBoth()
+					return
+				}
+			}
+		}
+	}()
+
 	var wg sync.WaitGroup
 	wg.Add(2)
-
 	copyHalf := func(dst, src net.Conn, counter *atomic.Int64) {
 		defer wg.Done()
 		buf := getRelayBuf()
@@ -573,27 +562,40 @@ func bidirectionalRelay(a, b net.Conn) {
 		for {
 			n, readErr := src.Read(buf)
 			if n > 0 {
+				_ = dst.SetWriteDeadline(time.Now().Add(relayWriteStallTimeout))
 				wrote, writeErr := dst.Write(buf[:n])
+				_ = dst.SetWriteDeadline(time.Time{})
 				if wrote > 0 {
 					counter.Add(int64(wrote))
 				}
+				lastActivity.Store(time.Now().UnixNano())
 				if writeErr != nil {
-					break
+					// Stalled write or peer reset: abort the whole flow.
+					closeBoth()
+					return
 				}
 			}
 			if readErr != nil {
-				break
+				if errors.Is(readErr, io.EOF) {
+					// Clean half-close: this direction finished normally.
+					if hc, ok := dst.(halfCloser); ok {
+						_ = hc.CloseWrite()
+					} else {
+						_ = dst.Close()
+					}
+					return
+				}
+				// Reset/timeout/closed: tear down BOTH directions now. The old
+				// behaviour only stopped this half, leaving the SOCKS side (and
+				// the server's stream) alive — the stuck-upload bug.
+				closeBoth()
+				return
 			}
-		}
-		if hc, ok := dst.(halfCloser); ok {
-			_ = hc.CloseWrite()
-		} else {
-			_ = dst.Close()
 		}
 	}
 
-	go copyHalf(b, a, &tunBytesUp)  // upload:   TUN -> proxy
-	copyHalf(a, b, &tunBytesDown)   // download: proxy -> TUN
+	go copyHalf(b, a, &tunBytesUp)   // upload:   TUN -> proxy
+	go copyHalf(a, b, &tunBytesDown) // download: proxy -> TUN
 	wg.Wait()
 }
 

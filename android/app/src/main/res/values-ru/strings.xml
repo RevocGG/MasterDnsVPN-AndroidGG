@@ -1,0 +1,203 @@
+<resources>
+    <string name="state_connected">Подключено</string>
+    <string name="state_connecting">Подключение…</string>
+    <string name="state_disconnected">Отключено</string>
+    <string name="state_error">Ошибка</string>
+
+    <string name="mode_socks5_proxy">SOCKS5 прокси</string>
+    <string name="mode_tun_vpn">TUN / VPN</string>
+
+    <string name="nav_home">Профили</string>
+    <string name="nav_log">Журнал</string>
+    <string name="nav_dashboard">Панель</string>
+
+    <string name="profile_new">Новый профиль</string>
+    <string name="profile_edit">Изменить профиль</string>
+    <string name="profile_name">Название профиля</string>
+    <string name="profile_delete_confirm">Удалить этот профиль?</string>
+    <string name="profile_export">Экспорт профиля</string>
+    <string name="profile_import">Импорт профиля</string>
+    <string name="profile_export_warning">Этот файл содержит ваш ключ шифрования. Храните его в безопасности.</string>
+
+    <string name="section_identity">Идентификация туннеля</string>
+    <string name="section_proxy">Прокси / Слушатель</string>
+    <string name="section_dns">Локальный DNS</string>
+    <string name="section_balancing">Балансировка и дублирование</string>
+    <string name="section_health">Работоспособность резолверов</string>
+    <string name="section_encoding">Кодирование и сжатие</string>
+    <string name="section_mtu">MTU</string>
+    <string name="section_workers">Воркеры и таймауты</string>
+    <string name="section_arq">ARQ</string>
+    <string name="section_advanced">Расширенные</string>
+
+    <string name="resolver_editor_title">Список резолверов</string>
+    <string name="resolver_editor_hint">Один резолвер в строке.\nФорматы: IP, IP:порт, CIDR, CIDR:порт, [IPv6], [IPv6]:порт</string>
+
+    <string name="log_viewer_title">Журнал</string>
+    <string name="log_filter_all">ВСЕ</string>
+    <string name="log_filter_debug">DEBUG</string>
+    <string name="log_filter_info">INFO</string>
+    <string name="log_filter_warn">WARN</string>
+    <string name="log_filter_error">ERROR</string>
+    <string name="log_export">Экспорт журнала</string>
+    <string name="log_clear">Очистить</string>
+
+    <string name="dashboard_title">Панель состояния</string>
+    <string name="dashboard_streams">Активные потоки</string>
+    <string name="dashboard_resolvers">Резолверы</string>
+    <string name="dashboard_session_id">ID сессии</string>
+    <string name="dashboard_listen_addr">Адрес прослушивания</string>
+
+    <string name="meta_profile_title">Мета-профиль</string>
+    <string name="meta_profile_new">Новый мета-профиль</string>
+    <string name="meta_strategy_rr_default">Round-Robin (по умолчанию)</string>
+    <string name="meta_strategy_random">Случайно</string>
+    <string name="meta_strategy_rr">Round-Robin</string>
+    <string name="meta_strategy_least_loss">Минимальные потери</string>
+    <string name="meta_strategy_lowest_latency">Минимальная задержка</string>
+
+    <string name="notif_channel_tunnel">VPN-туннель</string>
+    <string name="notif_connected">MasterDnsVPN-GG активен</string>
+    <string name="notif_connecting">Подключение…</string>
+    <string name="notif_action_disconnect">Отключить</string>
+
+    <string name="btn_connect">Подключить</string>
+    <string name="btn_disconnect">Отключить</string>
+    <string name="btn_save">Сохранить</string>
+    <string name="btn_cancel">Отмена</string>
+    <string name="btn_delete">Удалить</string>
+    <string name="btn_ok">ОК</string>
+
+    <string name="err_vpn_permission">Для режима TUN требуется разрешение VPN.</string>
+    <string name="err_already_running">Уже запущен другой туннель.</string>
+    <string name="err_start_failed">Не удалось запустить туннель.</string>
+
+    <string name="nav_add">Добавить</string>
+    <string name="nav_logs">Журналы</string>
+    <string name="nav_settings">Настройки</string>
+
+    <string name="settings_title">Настройки</string>
+    <string name="settings_per_app_vpn">VPN для приложений</string>
+    <string name="settings_per_app_vpn_sub">Выберите приложения, которые будут использовать VPN-туннель</string>
+    <string name="settings_language">Язык</string>
+    <string name="settings_language_sub">Язык интерфейса приложения — по умолчанию английский</string>
+    <string name="settings_disable_ipv6">Отключить IPv6</string>
+    <string name="settings_disable_ipv6_sub">Блокировать IPv6 (AAAA) ответы и соединения — рекомендуется для серверов без IPv6</string>
+
+    <!-- Карта резолверов на главном экране -->
+    <string name="resolver_card_title">Резолверы</string>
+    <string name="resolver_add">Добавить</string>
+    <string name="resolver_add_title">Новый список резолверов</string>
+    <string name="resolver_edit_title">Изменить список резолверов</string>
+    <string name="resolver_refresh_best">Обновить Best Match</string>
+    <string name="resolver_best_empty">Best Match заполняется автоматически во время работы профиля — сохраняются лучшие резолверы.</string>
+    <string name="resolver_count">%1$d резолверов</string>
+    <string name="resolver_count_zero">пусто</string>
+    <string name="resolver_export">Экспорт</string>
+    <string name="resolver_edit">Изменить</string>
+    <string name="resolver_delete">Удалить</string>
+    <string name="resolver_delete_title">Удалить список?</string>
+    <string name="resolver_delete_msg">Список резолверов «%1$s» будет удалён.</string>
+    <string name="resolver_cancel">Отмена</string>
+    <string name="resolver_name_label">Название списка</string>
+    <string name="resolver_text_label">Резолверы (по одному в строке)</string>
+    <string name="resolver_import_files">Импорт из файла…</string>
+    <string name="resolver_imported_count">Импортировано файлов: %1$d ✓</string>
+    <string name="resolver_save">Сохранить</string>
+    <string name="settings_updates">Проверить обновления</string>
+    <string name="settings_updates_sub">Скачать и установить последнюю версию с GitHub</string>
+
+    <string name="home_ok">ОК</string>
+    <string name="home_hotspot_sharing">Раздача через точку доступа</string>
+    <string name="home_hotspot_error">Ошибка: %1$s</string>
+    <string name="home_starting_hotspot">Запуск прокси точки доступа…</string>
+    <string name="home_stop">Стоп</string>
+    <string name="home_close">Закрыть</string>
+    <string name="home_dismiss">Скрыть</string>
+    <string name="home_skip">Пропустить</string>
+    <string name="home_apply">Применить</string>
+    <string name="home_scanning">Сканирование</string>
+    <string name="home_delete_profile">Удалить профиль?</string>
+    <string name="home_delete_profile_msg">\"%1$s\" будет удалён безвозвратно.</string>
+    <string name="home_delete">Удалить</string>
+    <string name="home_cancel">Отмена</string>
+    <string name="home_delete_meta">Удалить мета-профиль?</string>
+    <string name="home_status">Статус</string>
+    <string name="home_resolvers">Резолверы</string>
+    <string name="home_listen">Прослушивание</string>
+    <string name="home_start">Запустить</string>
+    <string name="home_profiles_active">%1$d профил(ей) активно</string>
+    <string name="home_processing">Обработка…</string>
+    <string name="home_ready">Готово</string>
+    <string name="home_init">Запуск…</string>
+    <string name="home_active">Активно</string>
+    <string name="home_locked">Заблокирован</string>
+    <string name="home_edit">Изменить</string>
+    <string name="home_no_resolver_title">Резолвер не выбран</string>
+
+    <!-- Hardware compatibility warnings -->
+    <string name="warn_title">Предупреждение о совместимости оборудования</string>
+    <string name="warn_label_rx_tx_workers">Потоки RX/TX</string>
+    <string name="warn_label_tunnel_workers">Потоки обработки туннеля</string>
+    <string name="warn_label_tx_buffer">Буфер канала TX</string>
+    <string name="warn_label_rx_buffer">Буфер канала RX</string>
+    <string name="warn_label_arq_window">Размер окна ARQ</string>
+    <string name="warn_label_dns_cache">Макс. записей кэша локального DNS</string>
+    <string name="warn_label_udp_pool">Размер пула UDP-соединений</string>
+    <string name="warn_label_ping_interval">Агрессивный интервал пинга</string>
+    <string name="warn_label_upload_zlib">Сжатие отдачи (ZLIB)</string>
+    <string name="warn_label_download_zlib">Сжатие загрузки (ZLIB)</string>
+    <string name="warn_label_log_level">Уровень журналирования</string>
+    <string name="warn_reason_workers">Текущее значение (%1$s) поднимет загрузку CPU на устройстве с %2$s ядрами значительно выше 70%%, вызывая перегрев и расход батареи. Максимальное безопасное значение для этого устройства — %3$s.</string>
+    <string name="warn_reason_buffer_ram">Большой буфер расходует память на устройствах с ограниченной ОЗУ (%1$s МБ).</string>
+    <string name="warn_reason_arq_ram">Пакеты в полёте удерживаются в ОЗУ. Уменьшение значения снижает нагрузку на ОЗУ устройства (%1$s МБ).</string>
+    <string name="warn_reason_dns_cache_ram">Каждая DNS-запись хранится в ОЗУ. %1$s записей достаточно для вашего устройства (%2$s МБ ОЗУ).</string>
+    <string name="warn_reason_udp_pool">Каждое соединение занимает системный сокет. Уменьшение значения снижает нагрузку на дескрипторы и ОЗУ.</string>
+    <string name="warn_reason_ping_interval">Интервал %1$s с означает более %2$s пингов в секунду — нагрузка на слабый CPU.</string>
+    <string name="warn_reason_zlib">ZLIB потребляет значительный CPU на каждый пакет и не рекомендуется на устройствах менее чем с 4 ядрами.</string>
+    <string name="warn_reason_log_level">Уровень %1$s создаёт и пишет большие строки для каждого пакета, сильно расходуя CPU и ввод-вывод устройства.</string>
+    <string name="home_no_resolver_msg">Перед запуском выберите список резолверов. Откройте карточку «Резолверы» и добавьте или выберите список — профили используют выбранные списки.</string>
+    <string name="perapp_sel_count">Выбрано: %1$d</string>
+    <string name="perapp_saved">Сохранено ✓</string>
+    <string name="perapp_save">Сохранить</string>
+    <string name="perapp_all_apps">Все приложения (без фильтра)</string>
+    <string name="perapp_include">Только выбранные приложения используют VPN</string>
+    <string name="perapp_exclude">Все приложения, КРОМЕ выбранных</string>
+    <string name="perapp_selected_section">Выбранные приложения</string>
+    <string name="monitor_title">Монитор системы</string>
+    <string name="monitor_none">Нет активных профилей</string>
+    <string name="meta_name_label">Имя мета-профиля</string>
+    <string name="meta_tunnel_mode">Режим туннеля</string>
+    <string name="meta_socks_port">Выходной порт SOCKS (0 = авто)</string>
+    <string name="meta_socks_port_hint">напр. 1080</string>
+    <string name="meta_socks_port_support">Оставьте 0 для автоматического назначения порта</string>
+    <string name="meta_bind_label">Адрес привязки SOCKS</string>
+    <string name="meta_bind_hint">напр. 127.0.0.1 или 0.0.0.0</string>
+    <string name="meta_bind_support">IP-адрес для прослушивания SOCKS5</string>
+    <string name="meta_balancing">Стратегия балансировки</string>
+    <string name="meta_subprofiles">Подпрофили</string>
+    <string name="meta_none_yet">Профилей ещё нет. Сначала создайте профили.</string>
+    <string name="meta_new_title">Новый мета-профиль</string>
+    <string name="meta_edit_title">Изменить мета-профиль</string>
+    <string name="meta_name_required">Пожалуйста, введите имя</string>
+    <string name="update_checking">Проверка последней версии на GitHub…</string>
+    <string name="update_uptodate">У вас последняя версия!</string>
+    <string name="update_latest">Версия %1$s — последняя.</string>
+    <string name="update_recheck">Проверить снова</string>
+    <string name="update_downloading">Загрузка…</string>
+    <string name="update_complete">Загрузка завершена!</string>
+    <string name="update_install">Установить обновление</string>
+    <string name="update_error">Ошибка</string>
+    <string name="update_try_again">Повторить</string>
+    <string name="update_download">Скачать</string>
+
+    <string name="dashboard_not_running">Не запущено</string>
+    <string name="perapp_mode">Режим</string>
+    <string name="perapp_search">Поиск приложений…</string>
+    <string name="perapp_system">Системные</string>
+    <string name="perapp_all">Все</string>
+    <string name="perapp_none">Ничего</string>
+    <string name="update_check">Проверить обновления</string>
+    <string name="update_installed_version">Установленная версия</string>
+    <string name="update_title">Обновление</string>
+</resources>

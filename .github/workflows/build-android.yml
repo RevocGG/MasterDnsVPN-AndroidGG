@@ -217,20 +217,36 @@ jobs:
           files: android/app/build/outputs/apk/release/*.apk
           body: |
             ## MasterDnsVPN-GG ${{ steps.version.outputs.version_name }}
+            Upstream engine: `${{ steps.version.outputs.upstream }}` · Commit: [`${{ github.sha }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}) · Build #${{ github.run_number }}
 
-            | | |
-            |---|---|
-            | **Version Code** | `${{ steps.version.outputs.version_code }}` |
-            | **Upstream Engine** | `${{ steps.version.outputs.upstream }}` |
-            | **Commit** | [`${{ github.sha }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}) |
-            | **Build** | #${{ github.run_number }} |
-            | **Triggered by** | `${{ github.event_name }}` |
+            ### 📌 Resolver management moved to the Home screen (please read)
+            Starting with this version, resolvers are **no longer managed inside the profile editor** — they are managed from the new **Resolvers card on the Home screen**.
 
-            ## APK Downloads
+            **Your data is safe:** existing profiles load exactly as before and their stored resolver lists are **kept and still used** whenever no Home-screen list is selected. Nothing is deleted during the update. (Backing up before updating is always a good habit anyway.)
 
-            | File | Architecture | Use |
-            |------|-------------|-----|
-            | `...-arm64-v8a.apk`   | ARM 64-bit | Most modern phones |
-            | `...-armeabi-v7a.apk` | ARM 32-bit | Older phones |
-            | `...-x86_64.apk`      | x86 64-bit | Chromebook / emulator |
-            | `...-universal.apk`   | Universal  | When not sure |
+            How the new system works:
+            - Open the **Resolvers** card on the Home screen to create one or more named resolver lists (e.g. "Resolvers 1", "My list"), add resolvers by hand or **import** resolver files, and **export** any list to a file.
+            - Select **one or several lists** — every profile you start will use the selected lists (merged & deduplicated) instead of its own built-in text.
+            - If **no list is selected**, profiles automatically fall back to the resolver list stored inside the profile (the old behavior).
+            - **Best Match** is an automatic list: while a profile is running, the engine continuously scores resolvers (ACK success rate + latency) and keeps the best ones. Persistently failing resolvers are pruned automatically, so the list always reflects the resolvers that actually work for you right now.
+            - Starting a profile with no selected list shows a hint asking you to pick or create one first.
+
+            ### ✨ What's Changed
+            **Tunnel / engine (Go layer of this app):**
+            - Cancelled uploads no longer leave orphan streams: TUN-bridge relays now honor cancellation, per-write deadlines and an idle watchdog — the tunnel (and server CPU/RAM) is released promptly instead of retrying for an hour (TUN and SOCKS modes).
+            - SOCKS5 authentication path fixed.
+            - TUN bridge stability hardening for Android 16 (HTTPS connection resets).
+            - **Best Match**: engine maintains a shared, scored best-resolver snapshot, auto-updates it while running and auto-prunes resolvers that fail repeatedly; fixed the "empty list" display and the silent fallback to 1.1.1.1.
+            - **Disable IPv6** option (default ON): AAAA results are filtered so apps connect over IPv4 only — fixes `connect refused code 3` timeouts in apps like YouTube.
+
+            **App / UI:**
+            - **App language selection**: English (default), Persian, Chinese and Russian.
+            - New **Resolvers card** on the Home screen: named lists, multi-select, file import, per-list export, and the automatic **Best Match** list with quality percentages.
+            - Profiles start with the selected Home-screen lists; the old per-profile resolver editor was removed.
+            - Startup scan bar added
+
+            ### 📥 Downloads
+            - `MasterDnsVPN-GG-<version>-arm64-v8a.apk` — ARM 64-bit (most modern phones)
+            - `MasterDnsVPN-GG-<version>-armeabi-v7a.apk` — ARM 32-bit (older phones)
+            - `MasterDnsVPN-GG-<version>-x86_64.apk` — x86 64-bit (Chromebook / emulator)
+            - `MasterDnsVPN-GG-<version>-universal.apk` — Universal (when not sure)

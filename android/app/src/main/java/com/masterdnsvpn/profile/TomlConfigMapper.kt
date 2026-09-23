@@ -162,6 +162,8 @@ object TomlConfigMapper {
             logLevel = str("LOG_LEVEL") ?: base.logLevel,
             // Identity lock flag (app-specific, not a Go config key)
             identityLocked = bool("IDENTITY_LOCKED") ?: base.identityLocked,
+            // "Disable IPv6" toggle (app-specific, default ON)
+            disableIPv6 = bool("DISABLE_IPV6") ?: base.disableIPv6,
         )
     }
 
@@ -229,6 +231,11 @@ object TomlConfigMapper {
             appendLine("SOCKS5_AUTH = ${b(p.socks5Auth)}")
             appendLine("SOCKS5_USER = ${q(p.socks5User)}")
             appendLine("SOCKS5_PASS = ${q(p.socks5Pass)}")
+            appendLine()
+            // App-specific toggle (parsed on import; not a core Go client key):
+            // strips AAAA answers / RSTs IPv6 CONNECTs in the TUN bridge.
+            appendLine("# App-only: block IPv6 (AAAA) so apps use IPv4 through the tunnel")
+            appendLine("DISABLE_IPV6 = ${b(p.disableIPv6)}")
             appendLine()
             appendLine("# ------------------------------------------------------------------------------")
             appendLine("# 3) Local DNS Service")

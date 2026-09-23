@@ -552,6 +552,16 @@ func (c *Client) Balancer() *Balancer {
 	return c.balancer
 }
 
+// LocalSocksCredentials returns the local SOCKS5 listener configuration
+// (auth required, username, password). Used by the mobile TUN bridge so its
+// internal dialer can authenticate against the proxy it fronts.
+func (c *Client) LocalSocksCredentials() (auth bool, user, pass string) {
+	if c == nil {
+		return false, "", ""
+	}
+	return c.cfg.SOCKS5Auth, c.cfg.SOCKS5User, c.cfg.SOCKS5Pass
+}
+
 func (c *Client) ShortPrintBanner() {
 	if c.log == nil {
 		return

@@ -1,9 +1,3 @@
-// ==============================================================================
-// MasterDnsVPN
-// Author: MasterkinG32
-// Github: https://github.com/masterking32
-// Year: 2026
-// ==============================================================================
 // Package mobile — socks_balancer.go
 //
 // A lightweight SOCKS5 load-balancer that accepts connections on a single

@@ -169,12 +169,19 @@ class GoMobileBridge @Inject constructor(
      *
      * Must be called AFTER [startInstance] so the proxy port is ready.
      *
+     * @param instanceID The instance key passed to [startInstance]. The Go
+     *        bridge resolves the local SOCKS5 credentials (SOCKS5_AUTH,
+     *        SOCKS5_USER, SOCKS5_PASS) from it so TUN mode works when the
+     *        profile enables SOCKS5 authentication.
      * @param tunFd      Raw fd from [android.os.ParcelFileDescriptor.getFd].
      * @param mtu        MTU of the TUN interface (1500 is the default).
      * @param listenAddr "host:port" of the running SOCKS5 proxy, e.g. "127.0.0.1:1080".
      */
-    fun startTunBridge(tunFd: Int, mtu: Int, listenAddr: String) {
-        Mobile.startTunBridge(tunFd, mtu, listenAddr)
+    fun startTunBridge(instanceID: String, tunFd: Int, mtu: Int, listenAddr: String, disableIPv6: Boolean = true) {
+        // Apply the global "Disable IPv6" toggle (app Settings) right before the
+        // bridge starts so a flipped switch takes effect on the next bridge start.
+        Mobile.setTunDisableIPv6(disableIPv6)
+        Mobile.startTunBridge(instanceID, tunFd, mtu, listenAddr)
     }
 
     /** Stop the tun2socks bridge. Safe to call if the bridge was never started. */

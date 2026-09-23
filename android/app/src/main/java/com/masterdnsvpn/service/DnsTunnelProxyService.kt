@@ -13,6 +13,7 @@ import com.masterdnsvpn.bridge.ProfileConfigMapper
 import com.masterdnsvpn.log.LogEntry
 import com.masterdnsvpn.log.LogLevel
 import com.masterdnsvpn.log.LogManager
+import com.masterdnsvpn.profile.BEST_MATCH_LIST_ID
 import com.masterdnsvpn.profile.ProfileRepository
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
@@ -38,10 +39,30 @@ class DnsTunnelProxyService : Service() {
 
     @Inject lateinit var bridge: GoMobileBridge
     @Inject lateinit var repo: ProfileRepository
+    @Inject lateinit var resolverSelectionPrefs: com.masterdnsvpn.settings.ResolverSelectionPrefs
     @Inject lateinit var tunnelStateManager: TunnelStateManager
     @Inject lateinit var logManager: LogManager
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** Same resolver override as the VPN service (user-selected Home-card lists). */
+    private suspend fun effectiveResolvers(profile: com.masterdnsvpn.profile.ProfileEntity): String {
+        val ids = resolverSelectionPrefs.selectedIds
+        if (ids.isEmpty()) return profile.resolversText
+        val texts = ids.mapNotNull { id ->
+            if (id == BEST_MATCH_LIST_ID) {
+                // Shared _best_match dir — see DnsTunnelVpnService for rationale.
+                try {
+                    com.masterdnsvpn.gomobile.mobile.Mobile.readBestMatchGlobalText(filesDir.absolutePath)
+                        .takeIf { it.isNotBlank() }
+                } catch (_: Exception) { null }
+            } else {
+                repo.getResolverList(id)?.resolversText?.takeIf { it.isNotBlank() }
+            }
+        }
+        return com.masterdnsvpn.settings.ResolverSelectionPrefs.mergeResolverTexts(texts)
+            .ifBlank { profile.resolversText }
+    }
     private var activeProfileId: String? = null
     private var activeMetaId: String? = null
     private var activeSubProfileIds: List<String> = emptyList()
@@ -93,7 +114,7 @@ class DnsTunnelProxyService : Service() {
                         java.io.File(dir).mkdirs()
                         try {
                             val cfg = ProfileConfigMapper.toMobileConfig(profile)
-                            bridge.startInstance(profile.id, dir, cfg, profile.resolversText)
+                            bridge.startInstance(profile.id, dir, cfg, effectiveResolvers(profile))
                             if (profile.identityLocked) bridge.setLockedDomains(profile.id, profile.domains.split(","))
                             tunnelStateManager.onTunnelStarted(profile.id)
                             upstreamAddrs.add("${cfg.listenIP}:${cfg.listenPort}")
@@ -150,7 +171,7 @@ class DnsTunnelProxyService : Service() {
                         profileId = profile.id,
                         profileDir = profileDir,
                         config = ProfileConfigMapper.toMobileConfig(profile),
-                        resolversText = profile.resolversText,
+                        resolversText = effectiveResolvers(profile),
                     )
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e  // Never swallow coroutine cancellation

@@ -2,20 +2,26 @@ package com.masterdnsvpn.hardware
 
 import android.app.ActivityManager
 import android.content.Context
+import androidx.annotation.StringRes
+import com.masterdnsvpn.R
 import com.masterdnsvpn.profile.ProfileEntity
 
 /**
  * Represents a single setting that may cause hardware pressure on the current device.
  *
+ * [labelRes]/[reasonRes] are localized string resources so warnings follow the
+ * user's selected app language; [reasonArgs] carries the dynamic values
+ * (current value, recommended value, device numbers…).
  * [applyTo] is a pure function that returns a new [ProfileEntity] with the recommended
  * value applied. It is only held in memory (never serialized).
  */
 data class ProfileWarning(
     val fieldKey: String,
-    val fieldLabel: String,
+    @StringRes val labelRes: Int,
+    @StringRes val reasonRes: Int,
+    val reasonArgs: List<String>,
     val currentValue: String,
     val recommendedValue: String,
-    val reason: String,
     val applyTo: (ProfileEntity) -> ProfileEntity,
 )
 
@@ -51,10 +57,11 @@ object HardwareAdvisor {
         if (profile.rxTxWorkers > safeMaxWorkers) {
             warnings += ProfileWarning(
                 fieldKey = "rxTxWorkers",
-                fieldLabel = "RX/TX Workers",
+                labelRes = R.string.warn_label_rx_tx_workers,
+                reasonRes = R.string.warn_reason_workers,
+                reasonArgs = listOf(profile.rxTxWorkers.toString(), cpuCores.toString(), safeMaxWorkers.toString()),
                 currentValue = profile.rxTxWorkers.toString(),
                 recommendedValue = safeMaxWorkers.toString(),
-                reason = "Current value (${profile.rxTxWorkers}) will push CPU usage well above 70% on a ${cpuCores}-core device, causing thermal throttling and battery drain. Max safe value for this device is $safeMaxWorkers.",
                 applyTo = { it.copy(rxTxWorkers = safeMaxWorkers) },
             )
         }
@@ -63,10 +70,11 @@ object HardwareAdvisor {
         if (profile.tunnelProcessWorkers > safeMaxWorkers) {
             warnings += ProfileWarning(
                 fieldKey = "tunnelProcessWorkers",
-                fieldLabel = "Tunnel Process Workers",
+                labelRes = R.string.warn_label_tunnel_workers,
+                reasonRes = R.string.warn_reason_workers,
+                reasonArgs = listOf(profile.tunnelProcessWorkers.toString(), cpuCores.toString(), safeMaxWorkers.toString()),
                 currentValue = profile.tunnelProcessWorkers.toString(),
                 recommendedValue = safeMaxWorkers.toString(),
-                reason = "Current value (${profile.tunnelProcessWorkers}) will push CPU usage well above 70% on a ${cpuCores}-core device, causing thermal throttling and battery drain. Max safe value for this device is $safeMaxWorkers.",
                 applyTo = { it.copy(tunnelProcessWorkers = safeMaxWorkers) },
             )
         }
@@ -78,10 +86,11 @@ object HardwareAdvisor {
             if (profile.txChannelSize > 6000) {
                 warnings += ProfileWarning(
                     fieldKey = "txChannelSize",
-                    fieldLabel = "TX Channel Buffer",
+                    labelRes = R.string.warn_label_tx_buffer,
+                    reasonRes = R.string.warn_reason_buffer_ram,
+                    reasonArgs = listOf(totalRamMb.toString()),
                     currentValue = profile.txChannelSize.toString(),
                     recommendedValue = "4096",
-                    reason = "Large buffer wastes memory on devices with limited RAM (${totalRamMb}MB).",
                     applyTo = { it.copy(txChannelSize = 4096) },
                 )
             }
@@ -90,10 +99,11 @@ object HardwareAdvisor {
             if (profile.rxChannelSize > 6000) {
                 warnings += ProfileWarning(
                     fieldKey = "rxChannelSize",
-                    fieldLabel = "RX Channel Buffer",
+                    labelRes = R.string.warn_label_rx_buffer,
+                    reasonRes = R.string.warn_reason_buffer_ram,
+                    reasonArgs = listOf(totalRamMb.toString()),
                     currentValue = profile.rxChannelSize.toString(),
                     recommendedValue = "4096",
-                    reason = "Large buffer wastes memory on devices with limited RAM (${totalRamMb}MB).",
                     applyTo = { it.copy(rxChannelSize = 4096) },
                 )
             }
@@ -104,10 +114,11 @@ object HardwareAdvisor {
             if (profile.arqWindowSize > arqThreshold) {
                 warnings += ProfileWarning(
                     fieldKey = "arqWindowSize",
-                    fieldLabel = "ARQ Window Size",
+                    labelRes = R.string.warn_label_arq_window,
+                    reasonRes = R.string.warn_reason_arq_ram,
+                    reasonArgs = listOf(totalRamMb.toString()),
                     currentValue = profile.arqWindowSize.toString(),
                     recommendedValue = arqRec.toString(),
-                    reason = "In-flight packets are held in RAM. Reducing this value lowers RAM pressure on your device (${totalRamMb}MB).",
                     applyTo = { it.copy(arqWindowSize = arqRec) },
                 )
             }
@@ -119,10 +130,11 @@ object HardwareAdvisor {
                 if (profile.localDnsCacheMaxRecords > localThreshold) {
                     warnings += ProfileWarning(
                         fieldKey = "localDnsCacheMaxRecords",
-                        fieldLabel = "Local DNS Cache Max Records",
+                        labelRes = R.string.warn_label_dns_cache,
+                        reasonRes = R.string.warn_reason_dns_cache_ram,
+                        reasonArgs = listOf(localRec.toString(), totalRamMb.toString()),
                         currentValue = profile.localDnsCacheMaxRecords.toString(),
                         recommendedValue = localRec.toString(),
-                        reason = "Each DNS record is stored in RAM. $localRec records is sufficient for your device (${totalRamMb}MB RAM).",
                         applyTo = { it.copy(localDnsCacheMaxRecords = localRec) },
                     )
                 }
@@ -133,10 +145,11 @@ object HardwareAdvisor {
                 val rec = if (isVeryWeakDevice) 24 else 32
                 warnings += ProfileWarning(
                     fieldKey = "resolverUdpConnectionPoolSize",
-                    fieldLabel = "UDP Connection Pool Size",
+                    labelRes = R.string.warn_label_udp_pool,
+                    reasonRes = R.string.warn_reason_udp_pool,
+                    reasonArgs = listOf(),
                     currentValue = profile.resolverUdpConnectionPoolSize.toString(),
                     recommendedValue = rec.toString(),
-                    reason = "Each connection occupies a system socket. Reducing this value lowers file descriptor and RAM pressure.",
                     applyTo = { it.copy(resolverUdpConnectionPoolSize = rec) },
                 )
             }
@@ -146,10 +159,14 @@ object HardwareAdvisor {
                 val pingsPerSec = (1.0 / profile.pingAggressiveIntervalSeconds).toInt()
                 warnings += ProfileWarning(
                     fieldKey = "pingAggressiveIntervalSeconds",
-                    fieldLabel = "Aggressive Ping Interval",
+                    labelRes = R.string.warn_label_ping_interval,
+                    reasonRes = R.string.warn_reason_ping_interval,
+                    reasonArgs = listOf(
+                        "%.3f".format(profile.pingAggressiveIntervalSeconds),
+                        pingsPerSec.toString(),
+                    ),
                     currentValue = "%.3fs".format(profile.pingAggressiveIntervalSeconds),
                     recommendedValue = "0.3s",
-                    reason = "Interval of ${profile.pingAggressiveIntervalSeconds}s means more than $pingsPerSec pings/sec, stressing a weak CPU.",
                     applyTo = { it.copy(pingAggressiveIntervalSeconds = 0.3) },
                 )
             }
@@ -161,20 +178,22 @@ object HardwareAdvisor {
             if (profile.uploadCompressionType == 3) {
                 warnings += ProfileWarning(
                     fieldKey = "uploadCompressionType",
-                    fieldLabel = "Upload Compression (ZLIB)",
+                    labelRes = R.string.warn_label_upload_zlib,
+                    reasonRes = R.string.warn_reason_zlib,
+                    reasonArgs = listOf(),
                     currentValue = "ZLIB",
                     recommendedValue = "Disabled",
-                    reason = "ZLIB consumes significant CPU per packet and is not recommended on devices with fewer than 4 cores.",
                     applyTo = { it.copy(uploadCompressionType = 0) },
                 )
             }
             if (profile.downloadCompressionType == 3) {
                 warnings += ProfileWarning(
                     fieldKey = "downloadCompressionType",
-                    fieldLabel = "Download Compression (ZLIB)",
+                    labelRes = R.string.warn_label_download_zlib,
+                    reasonRes = R.string.warn_reason_zlib,
+                    reasonArgs = listOf(),
                     currentValue = "ZLIB",
                     recommendedValue = "Disabled",
-                    reason = "ZLIB consumes significant CPU per packet and is not recommended on devices with fewer than 4 cores.",
                     applyTo = { it.copy(downloadCompressionType = 0) },
                 )
             }
@@ -185,10 +204,11 @@ object HardwareAdvisor {
         if (profile.logLevel.uppercase() in setOf("DEBUG", "TRACE")) {
             warnings += ProfileWarning(
                 fieldKey = "logLevel",
-                fieldLabel = "Log Level",
+                labelRes = R.string.warn_label_log_level,
+                reasonRes = R.string.warn_reason_log_level,
+                reasonArgs = listOf(profile.logLevel),
                 currentValue = profile.logLevel,
                 recommendedValue = "INFO",
-                reason = "${profile.logLevel} level generates and writes large strings per packet, heavily consuming device CPU and I/O.",
                 applyTo = { it.copy(logLevel = "INFO") },
             )
         }

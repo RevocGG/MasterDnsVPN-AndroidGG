@@ -1,5 +1,6 @@
 package com.masterdnsvpn
 
+import android.content.Context
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -27,9 +28,31 @@ import com.masterdnsvpn.ui.screens.*
 import com.masterdnsvpn.ui.theme.DarkBg
 import com.masterdnsvpn.ui.theme.MasterDnsVpnTheme
 import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+    @Inject
+    lateinit var languagePrefs: com.masterdnsvpn.settings.AppLanguagePrefs
+
+    override fun attachBaseContext(newBase: android.content.Context) {
+        // Localize the very first frame: the base context is wrapped with the
+        // saved language (default English) BEFORE any resource is resolved.
+        // Hilt injection happens after attachBaseContext, so use a lightweight
+        // direct read of the same SharedPreferences AppLanguagePrefs owns.
+        val tag = newBase.getSharedPreferences("app_settings", Context.MODE_PRIVATE)
+            .getString("app_language", "en") ?: "en"
+        val locale = java.util.Locale.forLanguageTag(tag)
+        java.util.Locale.setDefault(locale)
+        val config = android.content.res.Configuration(newBase.resources.configuration)
+        config.setLocale(locale)
+        config.setLocales(android.os.LocaleList(locale))
+        // setLocales does NOT derive layout direction — set it explicitly so
+        // Persian (fa) lays out right-to-left across every Compose screen.
+        config.setLayoutDirection(locale)
+        super.attachBaseContext(newBase.createConfigurationContext(config))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Disable window-level inset handling so Compose can manage IME insets
@@ -56,7 +79,7 @@ class MainActivity : ComponentActivity() {
                             .fillMaxSize()
                             .background(DarkBg.copy(alpha = 0.55f)),
                     )
-                    MainNavHost()
+                    MainNavHost(languagePrefs = languagePrefs)
                 }
             }
         }
@@ -64,7 +87,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun MainNavHost() {
+private fun MainNavHost(languagePrefs: com.masterdnsvpn.settings.AppLanguagePrefs) {
     val navController = rememberNavController()
 
     Scaffold(
@@ -102,6 +125,7 @@ private fun MainNavHost() {
                 SettingsScreen(
                     onNavigateToUpdate = { navController.navigate(Screen.Update.route) },
                     onNavigateToPerAppVpn = { navController.navigate(Screen.PerAppVpn.route) },
+                    languagePrefs = languagePrefs,
                 )
             }
 
@@ -124,21 +148,11 @@ private fun MainNavHost() {
                 ProfileEditScreen(
                     profileId = profileId,
                     onNavigateUp = { navController.popBackStack() },
-                    onEditResolvers = { id -> navController.navigate(Screen.ResolverEditor.withId(id)) },
                 )
             }
 
-            // Resolver editor
-            composable(
-                route = Screen.ResolverEditor.route,
-                arguments = listOf(navArgument("profileId") { type = NavType.StringType }),
-            ) { backStackEntry ->
-                val profileId = backStackEntry.arguments?.getString("profileId") ?: ""
-                ResolverEditorScreen(
-                    profileId = profileId,
-                    onNavigateUp = { navController.popBackStack() },
-                )
-            }
+            // NOTE: the per-profile ResolverEditor route was retired — resolver
+            // lists live on the Home-screen Resolvers card now.
 
             // Dashboard
             composable(

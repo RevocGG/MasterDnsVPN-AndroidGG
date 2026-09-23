@@ -1,0 +1,203 @@
+<resources>
+    <string name="state_connected">متصل</string>
+    <string name="state_connecting">در حال اتصال…</string>
+    <string name="state_disconnected">قطع شده</string>
+    <string name="state_error">خطا</string>
+
+    <string name="mode_socks5_proxy">پروکسی SOCKS5</string>
+    <string name="mode_tun_vpn">TUN / VPN</string>
+
+    <string name="nav_home">پروفایل‌ها</string>
+    <string name="nav_log">لاگ</string>
+    <string name="nav_dashboard">داشبورد</string>
+
+    <string name="profile_new">پروفایل جدید</string>
+    <string name="profile_edit">ویرایش پروفایل</string>
+    <string name="profile_name">نام پروفایل</string>
+    <string name="profile_delete_confirm">این پروفایل حذف شود؟</string>
+    <string name="profile_export">خروجی گرفتن پروفایل</string>
+    <string name="profile_import">ورود پروفایل</string>
+    <string name="profile_export_warning">این فایل شامل کلید رمزنگاری شماست. آن را امن نگه دارید.</string>
+
+    <string name="section_identity">هویت تونل</string>
+    <string name="section_proxy">پروکسی / شنونده</string>
+    <string name="section_dns">DNS محلی</string>
+    <string name="section_balancing">توزیع بار و تکرار بسته</string>
+    <string name="section_health">سلامت ریزالورها</string>
+    <string name="section_encoding">کدگذاری و فشرده‌سازی</string>
+    <string name="section_mtu">MTU</string>
+    <string name="section_workers">ورکرها و تایم‌اوت‌ها</string>
+    <string name="section_arq">ARQ</string>
+    <string name="section_advanced">پیشرفته</string>
+
+    <string name="resolver_editor_title">فهرست ریزالورها</string>
+    <string name="resolver_editor_hint">هر ریزالور در یک خط.\nقالب‌ها: IP، IP:port، CIDR، CIDR:port، [IPv6]، [IPv6]:port</string>
+
+    <string name="log_viewer_title">لاگ</string>
+    <string name="log_filter_all">همه</string>
+    <string name="log_filter_debug">DEBUG</string>
+    <string name="log_filter_info">INFO</string>
+    <string name="log_filter_warn">WARN</string>
+    <string name="log_filter_error">ERROR</string>
+    <string name="log_export">خروجی لاگ</string>
+    <string name="log_clear">پاک کردن</string>
+
+    <string name="dashboard_title">داشبورد</string>
+    <string name="dashboard_streams">استریم‌های فعال</string>
+    <string name="dashboard_resolvers">ریزالورها</string>
+    <string name="dashboard_session_id">شناسه نشست</string>
+    <string name="dashboard_listen_addr">آدرس شنونده</string>
+
+    <string name="meta_profile_title">پروفایل متا</string>
+    <string name="meta_profile_new">پروفایل متای جدید</string>
+    <string name="meta_strategy_rr_default">Round-Robin (پیش‌فرض)</string>
+    <string name="meta_strategy_random">تصادفی</string>
+    <string name="meta_strategy_rr">Round-Robin</string>
+    <string name="meta_strategy_least_loss">کمترین اتلاف</string>
+    <string name="meta_strategy_lowest_latency">کمترین تأخیر</string>
+
+    <string name="notif_channel_tunnel">تونل VPN</string>
+    <string name="notif_connected">MasterDnsVPN-GG فعال است</string>
+    <string name="notif_connecting">در حال اتصال…</string>
+    <string name="notif_action_disconnect">قطع اتصال</string>
+
+    <string name="btn_connect">اتصال</string>
+    <string name="btn_disconnect">قطع</string>
+    <string name="btn_save">ذخیره</string>
+    <string name="btn_cancel">لغو</string>
+    <string name="btn_delete">حذف</string>
+    <string name="btn_ok">باشه</string>
+
+    <string name="err_vpn_permission">برای استفاده از حالت TUN، مجوز VPN لازم است.</string>
+    <string name="err_already_running">یک تونل دیگر در حال اجراست.</string>
+    <string name="err_start_failed">شروع تونل ناموفق بود.</string>
+
+    <string name="nav_add">افزودن</string>
+    <string name="nav_logs">لاگ‌ها</string>
+    <string name="nav_settings">تنظیمات</string>
+
+    <string name="settings_title">تنظیمات</string>
+    <string name="settings_per_app_vpn">VPN برای هر برنامه</string>
+    <string name="settings_per_app_vpn_sub">انتخاب برنامه‌هایی که از تونل VPN استفاده می‌کنند</string>
+    <string name="settings_language">زبان</string>
+    <string name="settings_language_sub">زبان نمایش برنامه — پیش‌فرض انگلیسی است</string>
+    <string name="settings_disable_ipv6">غیرفعال‌سازی IPv6</string>
+    <string name="settings_disable_ipv6_sub">مسدودسازی پاسخ‌ها و اتصال‌های IPv6 — برای سرورهای بدون IPv6 توصیه می‌شود</string>
+
+    <!-- کارت ریزالورهای صفحه اصلی -->
+    <string name="resolver_card_title">ریزالورها</string>
+    <string name="resolver_add">افزودن</string>
+    <string name="resolver_add_title">لیست ریزالور جدید</string>
+    <string name="resolver_edit_title">ویرایش لیست ریزالور</string>
+    <string name="resolver_refresh_best">به‌روزرسانی Best Match</string>
+    <string name="resolver_best_empty">Best Match هنگام اجرای پروفایل به‌طور خودکار پر می‌شود — بهترین ریزالورها ذخیره می‌شوند.</string>
+    <string name="resolver_count">%1$d ریزالور</string>
+    <string name="resolver_count_zero">خالی</string>
+    <string name="resolver_export">اکسپورت</string>
+    <string name="resolver_edit">ویرایش</string>
+    <string name="resolver_delete">حذف</string>
+    <string name="resolver_delete_title">حذف لیست؟</string>
+    <string name="resolver_delete_msg">لیست ریزالور «%1$s» حذف خواهد شد.</string>
+    <string name="resolver_cancel">انصراف</string>
+    <string name="resolver_name_label">نام لیست</string>
+    <string name="resolver_text_label">ریزالورها (هر خط یک آی‌پی)</string>
+    <string name="resolver_import_files">واردکردن از فایل…</string>
+    <string name="resolver_imported_count">%1$d فایل وارد شد ✓</string>
+    <string name="resolver_save">ذخیره</string>
+    <string name="settings_updates">بررسی به‌روزرسانی</string>
+    <string name="settings_updates_sub">دانلود و نصب آخرین نسخه از گیت‌هاب</string>
+
+    <string name="home_ok">باشه</string>
+    <string name="home_hotspot_sharing">اشتراک هات‌اسپات</string>
+    <string name="home_hotspot_error">خطا: %1$s</string>
+    <string name="home_starting_hotspot">در حال راه‌اندازی پروکسی هات‌اسپات…</string>
+    <string name="home_stop">توقف</string>
+    <string name="home_close">بستن</string>
+    <string name="home_dismiss">بستن</string>
+    <string name="home_skip">رد کردن</string>
+    <string name="home_apply">اعمال</string>
+    <string name="home_scanning">اسکن</string>
+    <string name="home_delete_profile">پروفایل حذف شود؟</string>
+    <string name="home_delete_profile_msg">\"%1$s\" برای همیشه حذف خواهد شد.</string>
+    <string name="home_delete">حذف</string>
+    <string name="home_cancel">لغو</string>
+    <string name="home_delete_meta">پروفایل متا حذف شود؟</string>
+    <string name="home_status">وضعیت</string>
+    <string name="home_resolvers">ریزالورها</string>
+    <string name="home_listen">شنونده</string>
+    <string name="home_start">شروع</string>
+    <string name="home_profiles_active">%1$d پروفایل فعال</string>
+    <string name="home_processing">در حال پردازش…</string>
+    <string name="home_ready">آماده</string>
+    <string name="home_init">راه‌اندازی…</string>
+    <string name="home_active">فعال</string>
+    <string name="home_locked">قفل‌شده</string>
+    <string name="home_edit">ویرایش</string>
+    <string name="home_no_resolver_title">ریزالوری انتخاب نشده</string>
+
+    <!-- Hardware compatibility warnings -->
+    <string name="warn_title">هشدار سازگاری سخت‌افزار</string>
+    <string name="warn_label_rx_tx_workers">ورکرهای RX/TX</string>
+    <string name="warn_label_tunnel_workers">ورکرهای پردازش تانل</string>
+    <string name="warn_label_tx_buffer">بافر کانال TX</string>
+    <string name="warn_label_rx_buffer">بافر کانال RX</string>
+    <string name="warn_label_arq_window">اندازه پنجره ARQ</string>
+    <string name="warn_label_dns_cache">حداکثر رکورد کش DNS محلی</string>
+    <string name="warn_label_udp_pool">اندازه استخر اتصال UDP</string>
+    <string name="warn_label_ping_interval">فاصله پینگ تهاجمی</string>
+    <string name="warn_label_upload_zlib">فشرده‌سازی آپلود (ZLIB)</string>
+    <string name="warn_label_download_zlib">فشرده‌سازی دانلود (ZLIB)</string>
+    <string name="warn_label_log_level">سطح لاگ</string>
+    <string name="warn_reason_workers">مقدار فعلی (%1$s) مصرف CPU را روی دستگاه %2$s هسته‌ای خیلی بالای ۷۰٪ می‌برد و باعث داغی و مصرف باتری می‌شود. حداکثر مقدار امن برای این دستگاه %3$s است.</string>
+    <string name="warn_reason_buffer_ram">بافر بزرگ روی دستگاه‌های با رم محدود (%1$s مگابایت) حافظه هدر می‌دهد.</string>
+    <string name="warn_reason_arq_ram">بسته‌های در انتظار در رم نگه داشته می‌شوند. کم کردن این مقدار فشار رم دستگاه شما (%1$s مگابایت) را کم می‌کند.</string>
+    <string name="warn_reason_dns_cache_ram">هر رکورد DNS در رم ذخیره می‌شود. %1$s رکورد برای دستگاه شما (%2$s مگابایت رم) کافی است.</string>
+    <string name="warn_reason_udp_pool">هر اتصال یک سوکت سیستمی اشغال می‌کند. کم کردن این مقدار فشار فایل‌دیسکریپتور و رم را کم می‌کند.</string>
+    <string name="warn_reason_ping_interval">فاصله %1$s ثانیه یعنی بیش از %2$s پینگ در ثانیه و فشار روی CPU ضعیف.</string>
+    <string name="warn_reason_zlib">ZLIB برای هر بسته CPU زیادی مصرف می‌کند و روی دستگاه‌های کمتر از ۴ هسته توصیه نمی‌شود.</string>
+    <string name="warn_reason_log_level">سطح %1$s برای هر بسته رشته‌های بزرگ می‌سازد و روی دیسک می‌نویسد؛ CPU و I/O دستگاه را سنگین مصرف می‌کند.</string>
+    <string name="home_no_resolver_msg">قبل از شروع، یک لیست ریزالور انتخاب کنید. کارت «ریزالورها» را باز کنید و لیستی اضافه کنید یا یکی را انتخاب کنید — پروفایل‌ها از لیست‌های انتخابی استفاده می‌کنند.</string>
+    <string name="perapp_sel_count">%1$d انتخاب‌شده</string>
+    <string name="perapp_saved">ذخیره شد ✓</string>
+    <string name="perapp_save">ذخیره</string>
+    <string name="perapp_all_apps">همه برنامه‌ها (بدون فیلتر)</string>
+    <string name="perapp_include">فقط برنامه‌های انتخابی از VPN استفاده می‌کنند</string>
+    <string name="perapp_exclude">همه برنامه‌ها به‌جز انتخاب‌شده‌ها</string>
+    <string name="perapp_selected_section">برنامه‌های انتخاب‌شده</string>
+    <string name="monitor_title">مانیتور سیستم</string>
+    <string name="monitor_none">پروفایل فعالی وجود ندارد</string>
+    <string name="meta_name_label">نام متاپروفایل</string>
+    <string name="meta_tunnel_mode">حالت تانل</string>
+    <string name="meta_socks_port">پورت خروجی SOCKS (0 = خودکار)</string>
+    <string name="meta_socks_port_hint">مثلاً 1080</string>
+    <string name="meta_socks_port_support">برای تخصیص خودکار پورت، 0 بگذارید</string>
+    <string name="meta_bind_label">آدرس اتصال SOCKS</string>
+    <string name="meta_bind_hint">مثلاً 127.0.0.1 یا 0.0.0.0</string>
+    <string name="meta_bind_support">آدرس IP برای گوش‌دادن SOCKS5</string>
+    <string name="meta_balancing">استراتژی توزیع بار</string>
+    <string name="meta_subprofiles">زیرپروفایل‌ها</string>
+    <string name="meta_none_yet">هنوز پروفایلی ساخته نشده. اول پروفایل بسازید.</string>
+    <string name="meta_new_title">متاپروفایل جدید</string>
+    <string name="meta_edit_title">ویرایش متاپروفایل</string>
+    <string name="meta_name_required">لطفاً نام را وارد کنید</string>
+    <string name="update_checking">بررسی آخرین نسخه در گیت‌هاب…</string>
+    <string name="update_uptodate">به‌روز هستید!</string>
+    <string name="update_latest">نسخه %1$s آخرین نسخه است.</string>
+    <string name="update_recheck">بررسی دوباره</string>
+    <string name="update_downloading">در حال دانلود…</string>
+    <string name="update_complete">دانلود کامل شد!</string>
+    <string name="update_install">نصب به‌روزرسانی</string>
+    <string name="update_error">خطا</string>
+    <string name="update_try_again">تلاش دوباره</string>
+    <string name="update_download">دانلود</string>
+
+    <string name="dashboard_not_running">در حال اجرا نیست</string>
+    <string name="perapp_mode">حالت</string>
+    <string name="perapp_search">جستجوی برنامه‌ها…</string>
+    <string name="perapp_system">سیستمی</string>
+    <string name="perapp_all">همه</string>
+    <string name="perapp_none">هیچ‌کدام</string>
+    <string name="update_check">بررسی به‌روزرسانی</string>
+    <string name="update_installed_version">نسخه نصب‌شده</string>
+    <string name="update_title">به‌روزرسانی</string>
+</resources>

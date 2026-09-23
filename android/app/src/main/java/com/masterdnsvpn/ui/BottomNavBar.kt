@@ -2,6 +2,8 @@ package com.masterdnsvpn.ui
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
+import androidx.compose.ui.res.stringResource
+import com.masterdnsvpn.R
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -41,8 +43,8 @@ fun BottomNavBar(navController: NavHostController, onNewProfile: () -> Unit) {
                     }
                 }
             },
-            icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
-            label = { Text("Home") },
+            icon = { Icon(Icons.Default.Home, contentDescription = stringResource(R.string.nav_home)) },
+            label = { Text(stringResource(R.string.nav_home)) },
             colors = NavigationBarItemDefaults.colors(
                 selectedIconColor = GoldPrimary,
                 selectedTextColor = GoldPrimary,
@@ -59,8 +61,8 @@ fun BottomNavBar(navController: NavHostController, onNewProfile: () -> Unit) {
                     navController.navigate(Screen.LogViewer.route) { launchSingleTop = true }
                 }
             },
-            icon = { Icon(Icons.Default.List, contentDescription = "Logs") },
-            label = { Text("Logs") },
+            icon = { Icon(Icons.Default.List, contentDescription = stringResource(R.string.nav_logs)) },
+            label = { Text(stringResource(R.string.nav_logs)) },
             colors = NavigationBarItemDefaults.colors(
                 selectedIconColor = GoldPrimary,
                 selectedTextColor = GoldPrimary,
@@ -90,7 +92,7 @@ fun BottomNavBar(navController: NavHostController, onNewProfile: () -> Unit) {
                     }
                 }
             },
-            label = { Text("Add") },
+            label = { Text(stringResource(R.string.nav_add)) },
             colors = NavigationBarItemDefaults.colors(
                 selectedIconColor = GoldPrimary,
                 selectedTextColor = GoldPrimary,
@@ -107,8 +109,8 @@ fun BottomNavBar(navController: NavHostController, onNewProfile: () -> Unit) {
                     navController.navigate(Screen.Settings.route) { launchSingleTop = true }
                 }
             },
-            icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
-            label = { Text("Settings") },
+            icon = { Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.nav_settings)) },
+            label = { Text(stringResource(R.string.nav_settings)) },
             colors = NavigationBarItemDefaults.colors(
                 selectedIconColor = GoldPrimary,
                 selectedTextColor = GoldPrimary,

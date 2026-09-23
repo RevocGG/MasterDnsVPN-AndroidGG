@@ -46,6 +46,7 @@ class MonitorViewModel @Inject constructor(
     private val repo: ProfileRepository,
     private val tunnelStateManager: TunnelStateManager,
     val bandwidthPrefs: com.masterdnsvpn.settings.ProfileBandwidthPrefs,
+    private val resolverSelectionPrefs: com.masterdnsvpn.settings.ResolverSelectionPrefs,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(MonitorUiState())
@@ -174,6 +175,12 @@ class MonitorViewModel @Inject constructor(
         // Active profiles
         val activeProfileIds = tunnelStateManager.runningProfileIds.value
         val profiles = if (activeProfileIds.isNotEmpty()) {
+            // Precompute the resolver connection count the user actually chose:
+            // selected Home-card lists merged (deduped) × domains. When no list
+            // is selected the profile's own resolver text is the scan set. This
+            // matches what the services pass to StartInstance, so the card can
+            // show the correct "valid/total" from the very first frame.
+            val mergedResolverCount = countSelectedResolvers()
             activeProfileIds.mapNotNull { id ->
                 val profile = repo.getProfile(id) ?: return@mapNotNull null
                 val stats = try { bridge.getStats(id) } catch (_: Exception) { null }
@@ -221,5 +228,30 @@ class MonitorViewModel @Inject constructor(
         return if (wallDelta > 0 && cpuDelta >= 0) {
             ((cpuDelta.toFloat() / wallDelta.toFloat()) * 100f).coerceIn(0f, 100f)
         } else 0f
+    }
+
+    /**
+     * Number of distinct resolver endpoints in the user's selected Home-card
+     * lists (0 when nothing is selected — profiles then use their own text).
+     * Mirrors the merge the VPN/proxy services perform at start time.
+     */
+    suspend fun countSelectedResolvers(): Int {
+        val ids = resolverSelectionPrefs.selectedIds
+        if (ids.isEmpty()) return 0
+        val merged = com.masterdnsvpn.settings.ResolverSelectionPrefs.mergeResolverTexts(
+            ids.mapNotNull { id ->
+                try {
+                    if (id == com.masterdnsvpn.profile.BEST_MATCH_LIST_ID) {
+                        // Shared _best_match dir (same source the services use).
+                        com.masterdnsvpn.gomobile.mobile.Mobile.readBestMatchGlobalText(
+                            appContext.filesDir.absolutePath
+                        ).takeIf { it.isNotBlank() }
+                    } else {
+                        repo.getResolverList(id)?.resolversText?.takeIf { it.isNotBlank() }
+                    }
+                } catch (_: Exception) { null }
+            }
+        )
+        return merged.lines().count { it.isNotBlank() }
     }
 }
